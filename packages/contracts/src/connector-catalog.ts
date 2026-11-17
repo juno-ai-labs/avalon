@@ -274,6 +274,20 @@ export function connectorConnectionServesProduct(
     product.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
 }
 
+/**
+ * The product half of a connection's stored name: the one product its grants
+ * serve. A connection serving none or several (a Google grant of both mail and
+ * Drive) is named after its provider, which the caller passes because a
+ * provider's name is its manifest's, not the catalog's.
+ */
+export function connectorConnectionProductName(
+  connection: { connectorType: string; capabilities: readonly string[] },
+  providerName: string,
+): string {
+  const products = connectorProductsForConnection(connection);
+  return products.length === 1 ? ConnectorProductCatalog[products[0]!].name : providerName;
+}
+
 const CONNECTION_NAME_SEPARATOR = " · ";
 /** A connection's stored name is bounded where it is reserved; this is that bound. */
 const CONNECTION_NAME_MAX_CHARS = 180;
@@ -364,7 +378,8 @@ export type ConnectorConnectionRecord = {
  * Each product's state from the caller's saved connections. Pure: the caller
  * reads the rows and says which providers this deployment registers; a product
  * whose provider it does not is `unavailable` in every scope. Disabled
- * connections are not connections.
+ * connections are not connections. Every other saved connection counts, even
+ * in a scope the product no longer offers for new ones.
  */
 export function foldConnectorProductStates(
   productIds: readonly ConnectorProductId[],
@@ -387,7 +402,7 @@ export function foldConnectorProductStates(
     }
     const accounts = connections.flatMap((connection) => {
       const authorization = connectorAuthorizationStatus(connection.status);
-      if (authorization === "disabled" || !product.scopes.includes(connection.scope)) return [];
+      if (authorization === "disabled") return [];
       if (!connectorConnectionServesProduct(connectorId, connection)) return [];
       return [{
         scope: connection.scope,
@@ -395,7 +410,12 @@ export function foldConnectorProductStates(
         account: connectorConnectionAccount(product.instance, connection.displayName),
       }];
     });
-    const scopeStates = product.scopes.map((scope) => {
+    // Offered scopes, plus any scope a saved connection still holds: a scope
+    // closed to new connections (a Fireflies workspace key) keeps the ones
+    // made before, and they still work.
+    const scopes = ConnectorScopes.filter((scope) =>
+      (product.scopes as readonly ConnectorScope[]).includes(scope) || accounts.some((account) => account.scope === scope));
+    const scopeStates = scopes.map((scope) => {
       const states = accounts.filter((account) => account.scope === scope).map(({ state }) => state);
       return {
         scope,

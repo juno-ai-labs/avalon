@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorProductCatalog,
   ConnectorOAuthProviderSchema,
+  connectorProductsForConnection,
   connectorConnectionCardInputFromToolEvent,
   connectorResourceAuthorizationRequestFromToolEvent,
   type ConnectorConnectionCardInput,
@@ -18,7 +19,6 @@ import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import {
   CANVA_CONNECTION_DISCLOSURE,
   connectorProviderById,
-  connectorProviders,
   isOAuthConnectorProvider,
   type OAuthConnectorProviderCatalogEntry,
 } from '../lib/connector-catalog';
@@ -186,10 +186,8 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
   const providerName = request.provider === 'google'
     ? 'Google'
     : `${request.provider.charAt(0).toUpperCase()}${request.provider.slice(1)}`;
-  const providerEntry = connectorProviders.find((entry) =>
-    entry.provider === request.provider
-    && (entry.capabilities as readonly string[]).includes(request.capability));
-  const providerMark = providerEntry && 'mark' in providerEntry ? providerEntry.mark : null;
+  const [productId] = connectorProductsForConnection({ connectorType: request.provider, capabilities: [request.capability] });
+  const providerMark = productId ? ConnectorProductCatalog[productId].iconName : null;
   const resourceNoun = request.resource.type === 'document'
     ? 'file'
     : request.resource.type.replaceAll('_', ' ');
@@ -330,10 +328,9 @@ export function useConnectorConnectionAction(
   const connections = useConnectorConnections();
 
   const scope = request.scope === 'personal' ? 'you' : 'workspace';
-  const catalog = ConnectorProductCatalog[request.connectorId];
   const scopeState = connections === undefined
     ? undefined
-    : connectorScopeStates(provider.provider, connections, catalog.capabilityPrefixes)
+    : connectorScopeStates(provider.provider, connections, request.connectorId)
         .find((candidate) => candidate.scope === scope);
   const [selectedConnectionId, setSelectedConnectionId] = useState('');
   const workspaceSocket = useOptionalWorkspaceSocket();
@@ -606,7 +603,7 @@ export function ConnectorMentionChip({
     : connectorAggregateStatus(connectorScopeStates(
         connectorType,
         connections,
-        presentation.capabilityPrefixes,
+        presentation.productId,
       ));
   const displayLabel = label.replace(/^@/u, '');
   return (
@@ -645,7 +642,7 @@ export function ConnectorEmbedCard({
   const presentation = connectorPresentation(connectorType, label);
   const scopes = connections === undefined
     ? undefined
-    : connectorScopeStates(connectorType, connections, presentation.capabilityPrefixes);
+    : connectorScopeStates(connectorType, connections, presentation.productId);
   const title = label?.replace(/^@/u, '') || presentation.name;
   const capabilityCount = (scopes ?? [])
     .flatMap((scope) => scope.capabilities)

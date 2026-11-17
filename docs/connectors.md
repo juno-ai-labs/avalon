@@ -206,9 +206,10 @@ Everything else is a view of that catalog, never a copy of it:
 
 A connection's stored name is `<product> · <account>`, built only by
 `connectorConnectionName` and read back only by `connectorConnectionAccount`,
-so the account an agent reads is the one Settings shows. A Google connection is
-named after the product its grants serve, or Google Workspace when they serve
-both. Names written before a product's name changed keep the old first half;
+so the account an agent reads is the one Settings shows. The product half comes
+from `connectorConnectionProductName`: the one product the connection's grants
+serve, or, for a connection serving several (a Google grant of mail and Drive
+together), the provider's name, which for Google is Google Workspace. Names written before a product's name changed keep the old first half;
 the account half is all that is read back. A product whose connections a person
 names (a custom MCP server, an inbound webhook) reads the whole name.
 
@@ -216,14 +217,27 @@ names (a custom MCP server, an inbound webhook) reads the whole name.
 see and the providers this deployment registers, it returns each product's
 state, a row per offered scope with `connectIn` (`conversation` when a card can
 connect it, `settings` otherwise), and an account per saved connection.
-Disabled connections are not connections, a connection in a scope its product
-no longer offers (a Fireflies workspace key) is ignored, and a product whose
-provider is not registered is `unavailable` in every scope. The desktop keeps
-its own fold (`connectorScopeStates`) because Settings shows **Disabled**, which
-the agent's states do not; it reads the same prefixes.
+Disabled connections are not connections. Every other saved connection counts,
+even in a scope the product no longer offers for new ones: a Fireflies
+workspace key pasted before that scope closed still serves tools, so it reports
+connected, under a scope row only Settings can make. A product whose provider is
+not registered is `unavailable` in every scope. The desktop keeps its own fold
+(`connectorScopeStates`) because Settings shows **Disabled**, which the agent's
+states do not; it selects connections with the same
+`connectorConnectionServesProduct`.
+
+**The catalog is checked against the adapters at startup.** Building the
+connector registry runs `connectorCatalogConsistencyIssue` on each adapter,
+after its own checks: every registered provider has a product, a product
+offers only scopes its adapter supports, a card connects only scopes the
+adapter still accepts (`connectableScopes`), and every grant the manifest
+declares belongs to a product. A disagreement is an `invalid_configuration`
+error naming the product and scope or grant, so a catalog edit that the server
+would refuse fails the Worker's start rather than a person's connection.
 
 Adding a product is one catalog entry: its card, Settings row, transcript
-presentation and place in the agent's list follow. A new family is added with
+presentation and place in the agent's list follow, and the registry refuses to
+start until it agrees with its adapter. A new family is added with
 its first product; none is listed empty.
 
 ### Pasting an API key
@@ -1776,11 +1790,17 @@ names a provider (Google, X), which is a different thing from a product.
 
 **Consequences:** a product's name, sentence, scopes and families change in one
 entry and every surface follows; the card's ids and description are unchanged.
-One product name did change: a run's connection question now says **Google
-Mail + Calendar**, the name Settings already used, rather than "Gmail and
-Google Calendar". The grants the desktop requests stay on the desktop. A
-connection name not built by `connectorConnectionName` will read back as no
-account, so a new producer must use it.
+One name changed: a run's connection question now says **Google Mail +
+Calendar**, the name Settings already used, rather than "Gmail and Google
+Calendar". Stored connection names do not change: every single-product
+provider's manifest name already equals its product's, and X's shared-key
+connection keeps the product name alone. The grants the desktop requests stay on the desktop, with both
+Google presets in contracts. A connection name not built by
+`connectorConnectionName` will read back as no account, so a new producer must
+use it. A first-principles review of the result found the primitives right and
+asked for four follow-ups, made in the same change: closed scopes keep their
+connections, the state check takes every product id, one function names the
+product half, and the startup check above.
 
 ### 2026-11-16 — Only the session that started a connector authorization can complete it
 

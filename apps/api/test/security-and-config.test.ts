@@ -173,7 +173,7 @@ describe("API security utilities", () => {
     );
     expect(reconciled).toMatchObject({
       providerAccountId: "google-account-1",
-      displayName: "Google · adam@example.com",
+      accountLabel: "adam@example.com",
       credentials: { refreshToken: "offline-token", accessToken: "new-access-token" },
     });
     expect(() =>
@@ -188,15 +188,15 @@ describe("API security utilities", () => {
   it("labels each Google capability preset distinctly", () => {
     expect(__connectionServiceTesting.googleConnectionDisplayName(
       ["gmail.read", "calendar.read", "calendar.write"],
-      "Google · adam@example.com",
+      "adam@example.com",
     )).toBe("Google Mail + Calendar · adam@example.com");
     expect(__connectionServiceTesting.googleConnectionDisplayName(
       ["drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write"],
-      "Google · adam@example.com",
+      "adam@example.com",
     )).toBe("Google Drive + Docs + Sheets · adam@example.com");
     expect(__connectionServiceTesting.googleConnectionDisplayName(
       ["gmail.read", "drive.read"],
-      "Google · adam@example.com",
+      "adam@example.com",
     )).toBe("Google Workspace · adam@example.com");
   });
 

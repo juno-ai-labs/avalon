@@ -36,12 +36,12 @@ describe('connectorPresentation', () => {
     expect(connectorPresentation('google', '@Gmail')).toMatchObject({
       name: 'Gmail',
       mark: 'google',
-      capabilityPrefixes: ['gmail.', 'calendar.'],
+      productId: 'google-mail-calendar',
     });
     expect(connectorPresentation('google', '@Google Drive')).toMatchObject({
       name: 'Google Drive',
       mark: 'google-drive',
-      capabilityPrefixes: ['drive.', 'docs.', 'sheets.'],
+      productId: 'google-drive',
     });
   });
 });
@@ -109,8 +109,8 @@ describe('connectorScopeStates', () => {
       status: 'healthy',
       capabilities: ['calendar.write'],
     };
-    const first = connectorScopeStates('google', [reconnecting, healthy], ['gmail.', 'calendar.'])[0];
-    const reversed = connectorScopeStates('google', [healthy, reconnecting], ['gmail.', 'calendar.'])[0];
+    const first = connectorScopeStates('google', [reconnecting, healthy], 'google-mail-calendar')[0];
+    const reversed = connectorScopeStates('google', [healthy, reconnecting], 'google-mail-calendar')[0];
 
     expect(first.status).toBe('healthy');
     expect(reversed.status).toBe('healthy');
@@ -132,8 +132,8 @@ describe('connectorScopeStates', () => {
       capabilities: ['drive.read', 'docs.read'],
     };
 
-    expect(connectorScopeStates('google', [mailOnly], drive.capabilityPrefixes)[0].status).toBe('missing');
-    expect(connectorScopeStates('google', [driveOnly], mail.capabilityPrefixes)[0].status).toBe('missing');
-    expect(connectorScopeStates('google', [driveOnly], drive.capabilityPrefixes)[0].status).toBe('healthy');
+    expect(connectorScopeStates('google', [mailOnly], drive.productId)[0].status).toBe('missing');
+    expect(connectorScopeStates('google', [driveOnly], mail.productId)[0].status).toBe('missing');
+    expect(connectorScopeStates('google', [driveOnly], drive.productId)[0].status).toBe('healthy');
   });
 });
