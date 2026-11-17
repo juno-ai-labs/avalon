@@ -31,6 +31,19 @@ between provider acceptance and settlement or concurrent queue delivery may
 produce duplicates. Permanent provider refusals do not retry. Access
 acknowledgements keep their own generation-fenced reconciliation flow.
 
+## Who gets email
+
+Email that is about what happened in Rally goes only to people who have signed
+in at least once: a session was ever issued to them (`hasSignedIn`,
+`apps/api/src/services/signed-in.ts`). Someone an administrator added by
+address before they ever signed in gets none of it. Their notices are dropped,
+not queued, and their Activity rows are kept, so they find what happened when
+they first open Rally. Two senders read the rule: the notice sink
+(`sendNoticeEmail`, which skips with `recipient_never_signed_in`) and the
+usage-allowance email to administrators. It does not apply to the email that
+tells someone they were added, which is the one way they learn to sign in,
+nor to sign-in codes, nor to a Canvas shared with an address.
+
 ## Verification and operation
 
 `apps/api/test/email.test.ts` covers provider failures and durable sends;
@@ -42,6 +55,27 @@ without evidence may duplicate a transactional message. Never log message bodies
 or recipient details in transport diagnostics.
 
 ## Changelog
+
+### 2026-11-17 — No notification email until someone has signed in
+
+**What changed:** The notice sink and the usage-allowance email skip anyone
+who has never been issued a session. Their notices are dropped and their
+Activity rows kept.
+
+**Why:** Adding a member by address makes them a member at once, with no
+invitation to accept. Without this, an administrator adding a list of
+addresses would have Rally email each of them every mention, request and
+reply from then on, before they had ever chosen to use it. The owner asked
+for nothing to reach their inbox until they sign in, with no queue to flush
+when they do.
+
+**Considered and rejected:** Holding the email and sending it at first sign-in:
+a backlog of stale notices in the inbox at the moment the person arrives,
+which Activity already shows them in the app.
+
+**What a future change has to respect:** A new sender of email about activity
+in Rally reads `hasSignedIn`. Sessions are never deleted, so it means "ever
+signed in", not "signed in now".
 
 ### 2026-11-09 — Keep outbound delivery independent
 

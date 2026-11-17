@@ -516,7 +516,9 @@ A **sink** takes a notice and adds only its transport's form. There are two:
   matching event starts the Sidekick, which reads that event's content and
   nothing else in the account) and that either button answers at once. It goes
   through `sendEmail` and the native Cloudflare `EMAIL` binding (production
-  only). `rally-notice/<organization>/<intent>` is its correlation reference;
+  only). It sends nothing to someone who has never signed in
+  (`recipient_never_signed_in`, [`email-delivery.md`](email-delivery.md#who-gets-email)):
+  their Activity rows stay, and nothing is held to send later. `rally-notice/<organization>/<intent>` is its correlation reference;
   Cloudflare does not deduplicate it. D1 `email_delivery_receipts` records a
   completed send so a later queue delivery skips the provider. Internal and
   unknown failures retry; explicit permanent refusals are acknowledged. Retries
