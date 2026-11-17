@@ -34,8 +34,9 @@ changelog: each date sits in a left column with a small sage dot beside the
 post. Dates stay sticky. A serif-and-pencil cover opens the index; individual
 posts use the same paper and type in a narrower reading column. The newest post
 shows in full; each older one shows its
-title, its first paragraph, and a Read more link. The index uses the home page's
-social card; each post gets its own. The header does not link to the blog; the
+title, its first paragraph, and a Read more link. The index's card is in
+`page-cards.ts` with the other hand-written pages' (see
+[`site-design-system.md`](site-design-system.md)); each post gets its own. The header does not link to the blog; the
 footer does. The footer's Blog column links to the index and the newest
 post only, so it stays two links long however many posts accumulate.
 
