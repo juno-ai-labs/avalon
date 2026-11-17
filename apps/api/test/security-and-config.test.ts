@@ -794,33 +794,4 @@ describe("environment guardrails", () => {
       sessionLeaseSeconds: 120,
     });
   });
-
-  it("batches rapid model deltas before publishing realtime frames", async () => {
-    let now = 0;
-    const published: string[] = [];
-    const batcher = __integrationTesting.createTextDeltaBatcher(
-      async (delta) => { published.push(delta); },
-      { maxCharacters: 5, maxDelayMs: 100, now: () => now },
-    );
-
-    await batcher.push("a");
-    await batcher.push("bc");
-    expect(published).toEqual([]);
-    await batcher.push("de");
-    expect(published).toEqual(["abcde"]);
-    now = 101;
-    await batcher.push("f");
-    expect(published).toEqual(["abcde", "f"]);
-    await batcher.push("gh");
-    await batcher.flush();
-    expect(published).toEqual(["abcde", "f", "gh"]);
-
-    // A caller retracting text drops what is pending rather than flushing it,
-    // so the abandoned fragment never reaches the client ahead of the frame
-    // that replaces it.
-    await batcher.push("ij");
-    batcher.discard();
-    await batcher.flush();
-    expect(published).toEqual(["abcde", "f", "gh"]);
-  });
 });

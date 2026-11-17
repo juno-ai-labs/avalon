@@ -74,9 +74,11 @@ The [regional browser adapter](browser-sessions.md) owns authentication and
 Origin validation; the host has no signing key or identity database.
 
 Scoped invitation emails link to the shared conversation's own address under
-`BROWSER_APP_ORIGIN`. A workspace invitation's email still links to the site's
-`/invite` page, which offers **Continue in browser** beside the desktop deep
-link; the browser then lists the invitation by the signed-in address
+`BROWSER_APP_ORIGIN`. The "you were added" email links to
+`BROWSER_APP_ORIGIN/app/workspaces/<region>/<id>`, falling back to
+`PUBLIC_WEB_BASE_URL`; signing in lands the person in the Organization. An
+invitation sent before 2026-11-16 still links to the site's `/invite` page,
+and the browser lists it by the signed-in address
 ([Organization invitations](#organization-invitations)).
 
 An email request carries a client operation ID. A failed issuance can retry that
@@ -324,7 +326,7 @@ replaces the address with `/app/workspaces/<region>/<id>` (replaced, not
 pushed, since nothing in the entry answers Back), makes that the destination
 a later restore reopens, and opens it through `/workspace/select` like any
 other organization. The shell runs the creator's setup journey there: "This
-is you in Rally", then inviting teammates.
+is you in Rally", then "Add your teammates".
 Any account can create one, whatever it signed in with; see
 [multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
 deployment links the account.
@@ -482,8 +484,11 @@ history, and posts it once to
 the fragment as an email sign-in's is. Then it says how the request stands
 (`sourceDecisionWords`): "Approved" with what was asked, "Declined", or, when
 the link changed nothing, that the request was already answered the other way
-or was replaced by a newer one. A refusal shows Rally's own sentence
-("Connect that account first…"); an address with no decision in it says to
+or was replaced by a newer one. A refusal shows Rally's own sentence. An
+Approve from a person whose account is not connected, or whose sign-in
+lapsed, is titled "Connect your account first" or "Reconnect your account
+first" and sends them to the request in its conversation, where it connects
+the account before they approve: a link cannot run an OAuth flow. An address with no decision in it says to
 open the button from the email again. The fragment is read by the page, never
 as the module loads, because every page of the client imports that module and
 an email sign-in's fragment is not its to drop.

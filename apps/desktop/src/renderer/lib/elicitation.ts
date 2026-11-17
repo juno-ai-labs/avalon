@@ -1,4 +1,4 @@
-import type { ConnectorConnectionCardInput } from '@rally/contracts';
+import type { ConnectorConnectionCardInput, MemberCardInput } from '@rally/contracts';
 
 import type { ElicitationData, Message } from './types';
 
@@ -19,6 +19,7 @@ interface ElicitationSource {
   answer?: unknown;
   createdAt?: string;
   connection?: ConnectorConnectionCardInput;
+  member?: MemberCardInput;
 }
 
 export function elicitationMessageId(elicitationId: string): string {
@@ -47,6 +48,7 @@ export function normalizeElicitation(source: ElicitationSource): ElicitationData
     ...(source.answer === undefined ? {} : { answer: source.answer }),
     ...(source.createdAt ? { createdAt: source.createdAt } : {}),
     ...(source.connection ? { connection: source.connection } : {}),
+    ...(source.member ? { member: source.member } : {}),
   };
 }
 

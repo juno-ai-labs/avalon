@@ -342,7 +342,9 @@ Transactional mail uses Cloudflare Email Service through the Global Worker's
 acknowledgements retain their frozen `hi@rallywith.ai` sender. An unset notification
 sender falls back to the transactional one; `/health` reports `email` and
 `emailNotificationSender`. Acceptance means queued by Cloudflare, not delivered
-to an inbox. A provider failure still revokes a newly created invitation.
+to an inbox. A provider failure no longer undoes anything: the person stays a member, the
+failure is logged as `workspace_member_added_email_failed`, and the response
+says `emailDelivery: "failed"`.
 
 To configure outbound delivery, enable Email Sending and verify `rallywith.ai`
 in Cloudflare. Preserve its provider bounce MX, SPF and DKIM records and its
@@ -685,7 +687,7 @@ For ordinary releases after both entrypoints exist:
    required secret answers `503` here and names the keys, rather than reporting
    healthy while every other route returns `service_misconfigured`.
 
-8. Send a workspace invitation to a real test inbox, confirm Cloudflare accepts it, and complete the one-time email-bound acceptance flow.
+8. Add a real test inbox as a member, confirm Cloudflare accepts the "you were added" email, and sign in with that address to land in the Organization.
 
 9. Complete one Google identity login in a provider test account.
 

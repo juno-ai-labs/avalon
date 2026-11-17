@@ -26,6 +26,11 @@ const REQUEST_ELICITATION_PROSE: ToolProse = {
   settled: "Asked for a decision",
   failed: "Could not ask for a decision",
 };
+const OFFER_TO_ADD_MEMBER_PROSE: ToolProse = {
+  started: "Checking whether someone is a member",
+  settled: "Checked whether someone is a member",
+  failed: "Could not check whether someone is a member",
+};
 const CONNECTOR_CONNECTION_STATE_PROSE: ToolProse = {
   started: "Checking a connector's connection",
   settled: "Checked a connector's connection",
@@ -306,6 +311,7 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   },
   current_time: CURRENT_TIME_PROSE,
   request_elicitation: REQUEST_ELICITATION_PROSE,
+  offer_to_add_member: OFFER_TO_ADD_MEMBER_PROSE,
   [CONNECTOR_CONNECTION_STATE_WIRE_NAME]: CONNECTOR_CONNECTION_STATE_PROSE,
   [CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
   // Rally's browser and the conversation import: the import window lists

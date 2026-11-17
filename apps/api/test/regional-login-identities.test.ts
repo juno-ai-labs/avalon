@@ -64,3 +64,24 @@ it("refuses a returning user's profile whose verified email another regional use
   await expect(service().discover(identity(platformUserId,[{ provider:"google",subject:"google-returning" }],"taken@example.test")))
     .rejects.toMatchObject({ status:409, code:"regional_identity_conflict" });
 });
+
+it("links an account an administrator added by address to a Google-only sign-in, by the address Global verified",async () => {
+  // As `addMember` makes it outside Global: no platform id, and only an email sign-in method.
+  const added = crypto.randomUUID();
+  db.prepare("INSERT INTO users(id,email,name,created_at,updated_at) VALUES (?,'nancy@example.test','nancy@example.test',?,?)").run(added,at,at);
+  db.prepare("INSERT INTO user_verified_emails(email,user_id,verified_at) VALUES ('nancy@example.test',?,?)").run(added,at);
+  db.prepare("INSERT INTO user_login_identities(provider,subject,user_id,verified_at) VALUES ('email','nancy@example.test',?,?)").run(added,at);
+  const platformUserId = crypto.randomUUID();
+  await service().discover({ ...identity(platformUserId,[{ provider:"google",subject:"g-nancy" }],"nancy@example.test"),
+    verifiedEmails:["nancy@example.test"] });
+  expect(db.prepare("SELECT id,platform_user_id FROM users").all().map((row) => ({ ...row })))
+    .toEqual([{ id:added,platform_user_id:platformUserId }]);
+});
+
+it("mirrors the addresses Global verified, so the deployment can name the account by them",async () => {
+  const platformUserId = crypto.randomUUID();
+  await service().discover({ ...identity(platformUserId,[{ provider:"google",subject:"g-1" }]), verifiedEmails:["person@example.test"] });
+  const user = db.prepare("SELECT id FROM users WHERE platform_user_id=?").get(platformUserId) as { id:string };
+  expect(db.prepare("SELECT email,user_id FROM user_verified_emails").all().map((row) => ({ ...row })))
+    .toEqual([{ email:"person@example.test",user_id:user.id }]);
+});

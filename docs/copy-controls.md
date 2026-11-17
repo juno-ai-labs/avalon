@@ -1,7 +1,7 @@
 # Copy controls
 
 Every place the desktop renderer offers to put a value on the clipboard for a
-person — a webhook endpoint, a signing secret, an invite link, a Canvas's
+person — a webhook endpoint, a signing secret, a Canvas's
 email address or id, a run's request id, a site's public link, a table as CSV,
 a note's summary or transcript, a code block — renders the same control: an
 icon beside the value, named by its tooltip, whose glyph says what the copy
@@ -130,7 +130,7 @@ files clears the outcome and discards feedback from a write that finishes later.
 Attachment action tiles share the artifact menu's wrapping labels, including
 the longer failed-copy retry label.
 
-The surfaces' own tests — the inbound-webhook dialog, the invite link, the
+The surfaces' own tests — the inbound-webhook dialog, the
 inspector rail, the run-failure notice, the site detail, the code block —
 assert on the control by its accessible name.
 

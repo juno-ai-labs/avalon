@@ -2,6 +2,7 @@ import { useReportMessageIssue } from './message-issue-dialog';
 import { primaryShortcutLabel } from '../lib/shortcut-label';
 import { MessageAnnotations } from './artifact-annotations';
 import { rehypeAnnotationSource } from '../lib/annotation-source';
+import { rehypeStreamingCaret, STREAMING_CARET_CLASS } from '../lib/streaming-caret';
 import clsx from 'clsx';
 import { personalColor, personalColorInk } from './personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -20,7 +21,8 @@ import {
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import { CONNECTION_QUESTION_CONTINUE_ANSWER, personalColorKey, type AutomationPluginActivity } from '@rally/contracts';
+import { CONNECTION_QUESTION_CONTINUE_ANSWER, MEMBER_QUESTION_ADDED_ANSWER, personalColorKey, type AutomationPluginActivity } from '@rally/contracts';
+import { MemberAddCard } from './member-add-card';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
   Check,
@@ -1568,12 +1570,14 @@ export function MarkdownBody({
       source: string,
       extra: MarkdownComponents = components,
       plugins: MarkdownRemarkPlugins = remarkPlugins,
+      caret = false,
     ): React.JSX.Element => {
       const { resolved, used } = componentsFor(source, extra);
+      const rehype = sourcePositions ? [...rehypePlugins, rehypeAnnotationSource] : rehypePlugins;
       return (
         <ReactMarkdown
           components={used}
-          rehypePlugins={sourcePositions ? [...rehypePlugins, rehypeAnnotationSource] : rehypePlugins}
+          rehypePlugins={caret ? [...rehype, rehypeStreamingCaret] : rehype}
           remarkPlugins={plugins}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}
@@ -1603,7 +1607,7 @@ export function MarkdownBody({
           {/* Only here is the source still arriving, so only here can a
               link's hostname be a prefix of the one being typed. */}
           <HostFaviconHold.Provider value={true}>
-            {renderMarkdown(tail, extra, tailRemarkPlugins)}
+            {renderMarkdown(tail, extra, tailRemarkPlugins, true)}
           </HostFaviconHold.Provider>
         </>
       );
@@ -1975,7 +1979,8 @@ export function AssistantMessageContent({
           text={text}
         />
       )}
-      {streaming && <span className="streaming-caret" aria-hidden="true" />}
+      {/* With text, the markdown body draws the caret after its last character. */}
+      {streaming && !text && <span className={STREAMING_CARET_CLASS} aria-hidden="true" />}
     </>
   );
 }
@@ -2706,7 +2711,9 @@ export function ElicitationPanel({
     }
   };
 
-  const options = elicitation.options ?? [];
+  // On a question adding someone, Added is the card's own answer, sent by the press that adds them:
+  // offered as a choice it would let anyone resume the run with nobody added.
+  const options = (elicitation.options ?? []).filter((option) => !(elicitation.member && option.value === MEMBER_QUESTION_ADDED_ANSWER));
   // The question is a label, not a body: it is shown as plain text, so it takes
   // the plain-text repair rather than being sent through `MarkdownBody`.
   const prompt = normalizeModelText(elicitation.prompt);
@@ -2769,6 +2776,17 @@ export function ElicitationPanel({
               setError('Your response couldn’t be saved. Try again.');
             }); } }
             : {})}
+        />
+      )}
+      {elicitation.member && (
+        // A question adding someone answers: the press adds them and answers
+        // `added` for the person, so the run resumes and can ask them things.
+        <MemberAddCard
+          member={elicitation.member}
+          onAdded={() => onAnswer(MEMBER_QUESTION_ADDED_ANSWER).catch((error: unknown) => {
+            setError('Your response couldn’t be saved. Try again.');
+            throw error;
+          })}
         />
       )}
       {isText ? (

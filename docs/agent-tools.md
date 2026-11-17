@@ -151,6 +151,35 @@ carrying the card's selection and pauses the run in `needs_input` until a person
 connects it, chooses Continue, or declines
 ([`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks)).
 
+`offer_to_add_member` takes an email address, and a name if the model knows
+one. It is the membership check as well as the offer: it reads the address's
+account (by its verified address only) and its membership here, and a member comes back at once as `status: "member"` with
+their `userId`, with nothing shown. For anyone else, guests included, it opens
+a question asked by address (`Add nancy@example.com as a member?`: the name is
+the model's, and may come from what it read, so the card shows it second)
+(`Elicitation.member`, options Added and Not now, no typed answer,
+no Skip; the panel offers only Not now as a choice, since Added is the card's
+press) and pauses the loop in `needs_input`. The question's panel draws
+`MemberAddCard`: an Organization owner's or administrator's press adds the
+address as a member at once (`POST /workspace/members`,
+[`workspace-member-roles.md`](workspace-member-roles.md#how-it-works)) and
+answers `added` for them; anyone else sees who can press it. On `added` the
+model calls the tool again and gets the `userId`, so it can ask the new member
+things, such as a Sidekick source. An address an account holds unverified is
+refused by name (`member_address_unverified`) with no card, since an
+administrator's press could only fail. Where answers go to an agent, it
+still answers the check and refuses only the card, by name and with the route
+to a turn that may show it (rule 14). A guest's turn is refused the whole tool
+(`member_offer_from_guest`): a guest cannot read the member list over HTTP, so
+its turn cannot read it here. A Sidekick run a person reads may show the card,
+as it may ask any question; the administrator's press, made on an address the
+card leads with, is the gate. It is a core tool and a loop control: a program
+cannot call it. The core plugin's system message tells the model to call it
+when the work needs someone named by email to be a member of the Organization,
+such as to ask them for a Sidekick source, and never for people the work only
+emails or reads mail from (customers, leads, vendors), since adding opens the
+Organization to them.
+
 `check_resource_access` takes a connector and a resource link or id and asks
 every connection of that connector in the run how far it reaches the resource,
 in parallel: `edit`, `read` (with `editNeedsGrant` when Google's one-file grant
@@ -1329,6 +1358,31 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-16 — An agent can check membership and offer to add someone
+
+**What changed:** `offer_to_add_member` joins the core tools. It answers a
+member's `userId` at once, and otherwise asks a question whose card an
+administrator presses to add them.
+
+**Why:** A Canvas asked to follow two people's mail had no way to bring the
+second person in: they were not a member, so no source could be asked of them,
+and the agent could only tell the person to invite them somewhere else.
+
+**Considered and rejected:** Adding the member from the tool directly: it
+would grow the Organization from a model's choice, where an administrator's
+press is the decision. A separate lookup tool beside the card: the check is
+the first half of the offer, and one call keeps the model from skipping it.
+
+**What a future change has to respect:** The press, not the model, adds the
+person, and only an owner or administrator can press it. The card leads with
+the address, not the model's name for them, since a run may have read the name
+from mail. A guest's turn gets no membership answer.
+
+**Considered and rejected, in review:** Refusing the card in every Sidekick
+run, as `request_source` refuses: a run a person reads may already ask them
+any question, and here the press of an administrator who sees the address is
+the decision.
 
 ### 2026-11-15 — A refused tool is offered, and refuses by name
 

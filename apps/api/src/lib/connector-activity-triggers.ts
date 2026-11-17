@@ -1,4 +1,4 @@
-import type { ConnectorActivityTriggerDescriptorV2, Scope } from "@rally/contracts";
+import { googleActivityCapability, type ConnectorActivityTriggerDescriptorV2, type Scope } from "@rally/contracts";
 import { connectorActivitySupportsScope } from "@rally/connectors";
 
 
@@ -66,12 +66,7 @@ export function connectorActivityTriggerDescriptors(
   // has nothing to do yet.
   if (!connectorActivitySupportsScope(adapter, connectionScope)) return [];
   if (adapter.manifest.type === "google" && grantedScopes) {
-    return adapter.manifest.activityTriggers.filter((descriptor) => {
-      // Docs and Sheets changes arrive through the Drive polling stream.
-      const capability = descriptor.eventType.startsWith("email.") ? "gmail.read"
-        : descriptor.eventType.startsWith("calendar.") ? "calendar.read" : "drive.read";
-      return grantedScopes.includes(capability);
-    });
+    return adapter.manifest.activityTriggers.filter((descriptor) => grantedScopes.includes(googleActivityCapability(descriptor.eventType)));
   }
   if (adapter.manifest.type === "ashby") {
     const selected = new Set(configuredEventTypes(connectionConfigJson, "selectedEvents"));

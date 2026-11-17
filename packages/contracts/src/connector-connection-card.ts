@@ -62,6 +62,35 @@ export const ConnectorConnectionCardIds = Object.keys(ConnectorConnectionCardCat
   ...ConnectorConnectionCardId[],
 ];
 
+/**
+ * The grant a Google connection needs to carry one of its activity events.
+ * Google is one connector type with two connections (Mail and Calendar;
+ * Drive, Docs and Sheets), and which one announces an event is which grant
+ * it holds. Docs and Sheets changes arrive through the Drive polling stream.
+ */
+export function googleActivityCapability(eventType: string): "gmail.read" | "calendar.read" | "drive.read" {
+  return eventType.startsWith("email.") ? "gmail.read" : eventType.startsWith("calendar.") ? "calendar.read" : "drive.read";
+}
+
+/**
+ * The personal connection card that connects or reconnects the account a
+ * connector's events come from, for a person asked to let those events in
+ * (`docs/sidekick-sources.md`). Null when no card can make that connection
+ * here (a webhook, X, a custom MCP server), or when the events span both
+ * Google connections, which no one card answers.
+ */
+export function sourceConnectionCardId(connectorType: string, eventTypes: readonly string[]): ConnectorConnectionCardId | null {
+  const cards = ConnectorConnectionCardIds.filter((connectorId) => {
+    const entry = ConnectorConnectionCardCatalog[connectorId];
+    return entry.providerType === connectorType && (entry.scopes as readonly string[]).includes("personal");
+  });
+  if (connectorType !== "google") return cards.length === 1 ? cards[0]! : null;
+  const prefixes = new Set(eventTypes.map((eventType) => googleActivityCapability(eventType).split(".")[0]! + "."));
+  const covering = cards.filter((connectorId) =>
+    [...prefixes].every((prefix) => (ConnectorConnectionCardCatalog[connectorId].capabilityPrefixes as readonly string[]).includes(prefix)));
+  return covering.length === 1 ? covering[0]! : null;
+}
+
 const personalOnlyConnectorIds = ConnectorConnectionCardIds.filter((connectorId) =>
   !ConnectorConnectionCardCatalog[connectorId].scopes.includes("workspace" as never));
 const personalOrWorkspaceConnectorIds = ConnectorConnectionCardIds.filter((connectorId) =>

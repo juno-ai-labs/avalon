@@ -12,7 +12,10 @@ import {
   ConnectorEmbedCard,
   ConnectorMentionChip,
   connectorConnectionCardInput,
+  connectorConnectionCardProvider,
   connectorResourceAuthorizationRequest,
+  useConnectorConnectionAction,
+  type ConnectorConnectionAction,
 } from './connector-mentions';
 
 const mocks = vi.hoisted(() => ({
@@ -636,5 +639,32 @@ describe('connector connection resolution', () => {
 
     expect(await screen.findByRole('button', { name: 'Connect Slack' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Admin required' })).not.toBeInTheDocument();
+  });
+
+  it('hands its caller the attempt it started, names it while it waits, and rejects a start that failed', async () => {
+    const request = { connectorId: 'slack', scope: 'personal' } as const;
+    const provider = connectorConnectionCardProvider(request)!;
+    let action!: ConnectorConnectionAction;
+    const Probe = () => { action = useConnectorConnectionAction(request, provider); return null; };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = () => <QueryClientProvider client={queryClient}><ConnectorConnectionsProvider connections={[]}><Probe /></ConnectorConnectionsProvider></QueryClientProvider>;
+    const view = render(tree());
+    let started: string | undefined;
+    await act(async () => { started = await action.start(); });
+    expect(started).toBe('attempt-one');
+    // The pending slot is the session's; while it holds this attempt, the action names it.
+    mocks.pendingConnectorOAuth = {
+      attemptId: 'attempt-one', connectorId: 'slack', provider: 'slack',
+      region: 'global', scope: 'personal', source: 'conversation', workspaceId: 'workspace-one',
+    };
+    mocks.getConnectorOAuthAttempt.mockResolvedValue({ status: 'pending' });
+    view.rerender(tree());
+    expect(action.attemptId).toBe('attempt-one');
+    // Another connection's sign-in takes the slot: this one is no longer waited on here.
+    mocks.pendingConnectorOAuth = { ...mocks.pendingConnectorOAuth, connectorId: 'github', provider: 'github', attemptId: 'attempt-two' };
+    view.rerender(tree());
+    expect(action.attemptId).toBeNull();
+    mocks.startProviderConnection.mockRejectedValueOnce(new Error('Rally could not reach Slack.'));
+    await act(async () => { await expect(action.start()).rejects.toThrow('Rally could not reach Slack.'); });
   });
 });

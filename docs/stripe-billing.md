@@ -94,7 +94,8 @@ existing Stripe subscription to a new price.
 The no-card trial starts at Organization creation. Defaults match the landing
 page: 14 days, extended to 60 total days when three active members (the creator
 and two teammates) join before expiry. Guests and pending invitations do not
-qualify. The extension is earned once before a subscription is created; leaving
+qualify. A member added by address counts from the moment they are added,
+whether or not they have signed in. The extension is earned once before a subscription is created; leaving
 and rejoining cannot restart it. Membership triggers retain the active-member count at each qualifying transition,
 even before a billing account exists. The first billing read can recover a team
 formed on day 13 after a teammate leaves. Guest promotion and reactivation count

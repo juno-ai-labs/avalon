@@ -120,8 +120,30 @@ now stands, written into every open read that holds it
 what an approval added. Both writes use `networkMode: 'always'`, so a press
 while offline fails at once instead of being held and sent on reconnect. A
 refusal is an acknowledged popup in the contract's own words
-(`SIDEKICK_SOURCE_ERRORS`); an approval with nothing connected names the
-account to connect. A card's failed read is not a popup: it is a stored row,
+(`SIDEKICK_SOURCE_ERRORS`); an approval with nothing connected, or with a
+lapsed sign-in, names the account to connect or reconnect.
+
+A request whose person still has to connect (`connection` is not
+`connected`) takes a `connectStep` from the host on the conversation's card
+only. The slot answers `{ control, connectsHere }`: the card view draws
+`control` in that person's Approve's place (`approveSlot`), and the card's
+title becomes "Connect Gmail and approve Deals" only when `connectsHere` says a
+button is drawn, not when the step is a line pointing at Settings. There and in the
+Sources list, `SourceDecisionButtons` holds Approve with `approveBlocked` (its
+reason on hover) while Decline stays live; the Sources list says to connect
+from the request in its conversation. Every other reader's row says "Needs to
+connect" or "Needs to reconnect", or, for a connector only the Organization
+connects (`connect.scope: "workspace"`), "Needs an admin to connect" or
+"Needs an admin to reconnect". The desktop's step is
+one button driven by `useConnectorConnectionAction`, mounted only once the
+provider and its setup are known, reading the conversation surface's own
+connections. Its press is consent for the one sign-in attempt it starts: the
+approval goes out only when that attempt ends `succeeded` and the request then
+reads `connected`. A start that fails, an attempt that ends any other way, or a
+success that still leaves the request unconnected drops the consent, and a
+cancelled sign-in says nothing was approved. A connection made any other way
+only re-reads the Sidekick's sources. The
+Activity row is unchanged. A card's failed read is not a popup: it is a stored row,
 so it offers Details.
 
 The connector and events are worded by the host and handed in (`SourceWords`):

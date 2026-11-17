@@ -259,10 +259,12 @@ open even when nothing moved it, at the cursor the room already holds
 (`conversationReadAcknowledgement`'s `reportedThisOpen`). The open's report is
 what Activity's run and add rows clear on (`activity.md`).
 
-A resource panel closes when the conversation's resources no longer list it
-(archived or removed), but only on the room's own detail: the device cache's
-copy (`feedFromLocalCache`) may predate the artifact, and closing on it shut a
-Canvas's newly opened artifact on a first visit.
+An ordinary resource panel closes when the live conversation detail no longer
+lists the resource. The device cache can predate recent attachments, so only
+the live detail can trigger that close. For a resource the Canvas lists as an
+artifact, the panel can load its metadata independently of the Chat and keeps
+the artifact's title visible if the read needs retrying. Archive in this panel
+only detaches Chat resources, so it is offered for ordinary resources.
 
 Human message dots, avatars and bubble backgrounds resolve the sender's current account
 color from the live member-presentation context. The sender's bubble uses the

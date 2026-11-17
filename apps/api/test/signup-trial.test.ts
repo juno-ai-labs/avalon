@@ -169,6 +169,9 @@ it('emails each owner and administrator once a week when the allowance runs out,
   for (const [id, role] of [['owner', 'owner'], ['admin', 'admin'], ['member', 'member']] as const) {
     if (id !== 'owner') db.prepare("INSERT INTO users(id,google_subject,email,name,created_at,updated_at) VALUES (?,?,?,?,'2027-01-31','2027-01-31')").run(id, id, `${id}@example.test`, `${id} person`);
     db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,joined_at) VALUES (?,?,?,'active','2027-01-31')").run(ORG, id, role);
+    // Each has signed in: email about activity goes only to people who have.
+    db.prepare("INSERT INTO sessions(id,user_id,workspace_id,region,refresh_token_hash,expires_at,created_at) VALUES (?,?,?,'global',?,'2099-01-01','2027-01-31')")
+      .run(`session-${id}`, id, ORG, `hash-${id}`);
   }
   usage.prepare("INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd) VALUES (?, '2027-01-31T10:30:00.000Z','2027-01-31T10:30:00.000Z',50000000,50000000,0)").run(ORG);
 
