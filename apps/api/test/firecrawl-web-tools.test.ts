@@ -8,6 +8,7 @@ import {
   parseRetryAfter,
 } from "../src/lib/firecrawl";
 import type { FirecrawlError } from "../src/lib/firecrawl";
+import { faviconFailureReason } from "../src/services/favicon-service";
 import { __integrationTesting } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
@@ -161,6 +162,44 @@ describe("Firecrawl API client", () => {
       maxAge: 0,
       storeInCache: false,
     });
+  });
+
+  it("reads a favicon whose page metadata carries fields the branding call does not read", async () => {
+    const fetcher = mockFetchResponse(jsonResponse({
+      success: true,
+      data: {
+        branding: { images: { favicon: "https://cdn.example.com/icon.png" } },
+        metadata: {
+          title: ["Docs", "Docs · Example"],
+          error: ["first", "second"],
+          url: "https://docs.example.com/",
+          statusCode: 200,
+        },
+      },
+    }));
+    const client = new FirecrawlClient({ apiKey: "fc-test-key", fetch: fetcher as typeof globalThis.fetch });
+
+    await expect(client.scrapeBranding("https://docs.example.com/")).resolves.toEqual({
+      faviconUrl: "https://cdn.example.com/icon.png",
+      url: "https://docs.example.com/",
+      statusCode: 200,
+    });
+  });
+
+  it("names the field a refused branding response failed on", async () => {
+    const fetcher = mockFetchResponse(jsonResponse({
+      success: true,
+      data: { branding: { images: { favicon: 42 } }, metadata: { statusCode: 200 } },
+    }));
+    const client = new FirecrawlClient({
+      apiKey: "fc-test-key",
+      fetch: fetcher as typeof globalThis.fetch,
+      retry: { maxAttempts: 1 },
+    });
+
+    const failure = await client.scrapeBranding("https://docs.example.com/").catch((error: unknown) => error);
+    expect(faviconFailureReason(failure))
+      .toBe("firecrawl_branding_invalid:data.branding.images.favicon:invalid_type");
   });
 
   it("retries transient responses, including a non-JSON 5xx, within Retry-After", async () => {
