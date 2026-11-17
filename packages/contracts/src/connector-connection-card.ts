@@ -4,16 +4,9 @@ import {
   ConnectorProductCatalog,
   ConnectorProductIds,
   ConnectorScopes,
-  ConnectorConnectionStateSchema,
-  ConnectorProductStateSchema,
-  connectorProductStateSummary,
   type ConnectorProductId,
-  type ConnectorProductState,
   type ConnectorScope,
 } from "./connector-catalog";
-
-export const ConnectorConnectionCardScopes = ConnectorScopes;
-export type ConnectorConnectionCardScope = ConnectorScope;
 
 /**
  * The products a card in a conversation can connect: those with a card scope
@@ -77,7 +70,7 @@ const ConnectorConnectionCardShape = z.strictObject({
     `Connector to check or show. Personal only: ${personalOnlyConnectorIds.join(", ")}. Personal or workspace: ${personalOrWorkspaceConnectorIds.join(", ")}.`
     + " google-drive is Google Drive, Docs and Sheets.",
   ),
-  scope: z.enum(ConnectorConnectionCardScopes).describe(
+  scope: z.enum(ConnectorScopes).describe(
     "Use personal for the current user's account. Use workspace only for an id described as personal or workspace.",
   ),
 });
@@ -118,33 +111,14 @@ export const ConnectorConnectionStateInputSchema = z.strictObject({
   connectorId: z.enum(ConnectorProductIds).describe(
     "Connector to check: any connectorId list_connectors returns. google-drive is Google Drive, Docs and Sheets.",
   ),
-  scope: z.enum(ConnectorConnectionCardScopes).optional().describe(
+  scope: z.enum(ConnectorScopes).optional().describe(
     "Leave out. Every scope this connector offers is checked whatever is sent.",
   ),
 });
 export type ConnectorConnectionStateInput = z.infer<typeof ConnectorConnectionStateInputSchema>;
 
-/**
- * One saved connection the caller can use: the person's own, or the
- * Organization's. `account` is which account it is (an email, a handle, a team)
- * as the connection's name in Settings shows it, or null when that name carries
- * none.
- */
-export const ConnectorConnectionAccountSchema = z.strictObject({
-  scope: z.enum(ConnectorConnectionCardScopes),
-  state: z.enum(["connected", "reconnect_required"]),
-  account: z.string().nullable(),
-});
-export type ConnectorConnectionAccount = z.infer<typeof ConnectorConnectionAccountSchema>;
-
 /** `list_connectors` takes nothing: the whole catalog is a dozen rows. */
 export const ConnectorListInputSchema = z.strictObject({});
-
-/** The state check answers with the product's state, as each row of the connector list does. */
-export const ConnectorConnectionStateResultSchema = ConnectorProductStateSchema;
-export type ConnectorConnectionStateResult = ConnectorProductState;
-export const connectorConnectionStateSummary = connectorProductStateSummary;
-export { ConnectorConnectionStateSchema };
 
 /**
  * The canonical definition names, which are also the model-facing wire names:
@@ -205,14 +179,14 @@ export function connectorConnectionCardInputFromToolEvent(event: {
     if (parsed.success) return parsed.data;
   }
   for (const connectorId of ConnectorConnectionCardIds) {
-    for (const scope of ConnectorConnectionCardScopes) {
+    for (const scope of ConnectorScopes) {
       const candidate = { connectorId, scope };
       if (event.summary !== connectorConnectionCardSummary(candidate)) continue;
       const parsed = ConnectorConnectionCardInputSchema.safeParse(candidate);
       if (parsed.success) return parsed.data;
     }
   }
-  for (const scope of ConnectorConnectionCardScopes) {
+  for (const scope of ConnectorScopes) {
     if (event.summary === `Presented the ${LEGACY_GOOGLE_DRIVE_CARD_ID} ${scope} connection card`) {
       return { connectorId: "google-drive", scope };
     }

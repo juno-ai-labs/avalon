@@ -193,23 +193,19 @@ sales, recruiting, design, social media, and custom tools and events. A product
 lists its families most fitting first and may have several (GitHub is code and
 issue tracking).
 
-Everything else is a view of that catalog, never a copy of it:
-
-| View | Reads |
-| --- | --- |
-| The connection card's ids, enum and scope check (`connector-connection-card.ts`) | Products with a card scope, and those scopes. |
-| `get_connector_connection_state` and `list_connectors` | `foldConnectorProductStates` over the caller's rows; see [`agent-tools.md`](agent-tools.md). |
-| Settings' Connections list (`apps/desktop/src/renderer/lib/connector-catalog.ts`) | Name, description, mark, scopes, desktop-only. It keeps only the grants it asks a provider for. |
-| The transcript's connector presentation (`connector-presentation.ts`) | Name and description, with two deliberate mention blurbs. |
-| Google's per-product plugins (`connector-plugin-views.ts`) | The two products' prefixes. |
-| A connection's stored name (`connection-service.ts`) | `connectorConnectionName(product, account)`. |
+Everything else is a view of that catalog, never a copy of it: the connection
+card's ids and scope check, the agent's state check and connector list, Settings'
+Connections list (which keeps only the grants it requests), the transcript's
+connector presentation, Google's per-product plugins, and every connection's
+stored name.
 
 A connection's stored name is `<product> · <account>`, built only by
 `connectorConnectionName` and read back only by `connectorConnectionAccount`,
 so the account an agent reads is the one Settings shows. The product half comes
 from `connectorConnectionProductName`: the one product the connection's grants
 serve, or, for a connection serving several (a Google grant of mail and Drive
-together), the provider's name, which for Google is Google Workspace. Names written before a product's name changed keep the old first half;
+together), the provider's name, which for Google is Google Workspace. Names
+written before a product's name changed keep the old first half;
 the account half is all that is read back. A product whose connections a person
 names (a custom MCP server, an inbound webhook) reads the whole name.
 
@@ -1797,10 +1793,7 @@ provider's manifest name already equals its product's, and X's shared-key
 connection keeps the product name alone. The grants the desktop requests stay on the desktop, with both
 Google presets in contracts. A connection name not built by
 `connectorConnectionName` will read back as no account, so a new producer must
-use it. A first-principles review of the result found the primitives right and
-asked for four follow-ups, made in the same change: closed scopes keep their
-connections, the state check takes every product id, one function names the
-product half, and the startup check above.
+use it.
 
 ### 2026-11-16 — Only the session that started a connector authorization can complete it
 

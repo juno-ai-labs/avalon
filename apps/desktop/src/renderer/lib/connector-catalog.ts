@@ -28,11 +28,12 @@ function fromCatalog<Id extends ProductId>(id: Id) {
   };
 }
 
-/** The same card with the product's mark; only a product that has one. */
-function withMark<Id extends ProductId>(id: Id) {
-  const mark = ConnectorProductCatalog[id].iconName;
-  if (mark === null) throw new Error(`${id} has no mark in the connector catalog`);
-  return { ...fromCatalog(id), mark: mark as Exclude<Product<Id>['iconName'], null> };
+/** Products the catalog gives a mark; a webhook has none, and Settings draws a glyph for it. */
+type MarkedProductId = { [Id in ProductId]: Product<Id>['iconName'] extends null ? never : Id }[ProductId];
+
+/** The same card with the product's mark. */
+function withMark<Id extends MarkedProductId>(id: Id) {
+  return { ...fromCatalog(id), mark: ConnectorProductCatalog[id].iconName as Product<Id>['iconName'] };
 }
 
 export const connectorProviders = [
