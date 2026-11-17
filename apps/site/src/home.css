@@ -603,8 +603,13 @@ h2 {
   color: #60694f;
 }
 
+.prompt-number,
+.reactive-number {
+  font-family: "Instrument Serif"; font-style: italic; font-size: 17px; color: #a1a88e;
+}
+
 .prompt-number {
-  width: 30px; font-family: "Instrument Serif"; font-style: italic; font-size: 17px; color: #a1a88e;
+  width: 30px;
 }
 
 .prompt-type {
@@ -629,36 +634,16 @@ h2 {
 }
 
 .reactive-number {
-  display: block; font-family: "Instrument Serif"; font-style: italic; font-size: 17px; color: #a1a88e;
+  display: block;
 }
 
 .reactive-list h3 {
-  font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.02em;
+  font-family: var(--note); font-weight: 400; letter-spacing: -0.02em;
   font-size: 30px; line-height: 1.1; margin: 12px 0 14px;
 }
 
 .reactive-list p {
   color: var(--muted); font-size: 14px; line-height: 1.9; margin: 0; max-width: 360px;
-}
-
-@media (max-width: 900px) {
-  .reactive-list {
-    grid-template-columns: 1fr; gap: 28px; margin-top: 36px;
-  }
-}
-
-@media (max-width: 650px) {
-  .reactive-section {
-    padding-block: 50px 20px;
-  }
-
-  .reactive-list h3 {
-    font-size: 26px;
-  }
-
-  .reactive-list p {
-    font-size: 13px;
-  }
 }
 
 .pricing-section {
@@ -1305,6 +1290,10 @@ h2 {
 }
 
 @media (max-width: 900px) {
+  .reactive-list {
+    grid-template-columns: 1fr; gap: 28px; margin-top: 36px;
+  }
+
   .home-logo {
     font-size: 33px;
   }
@@ -1498,6 +1487,18 @@ h2 {
 }
 
 @media (max-width: 650px) {
+  .reactive-section {
+    padding-block: 50px 20px;
+  }
+
+  .reactive-list h3 {
+    font-size: 26px;
+  }
+
+  .reactive-list p {
+    font-size: 13px;
+  }
+
   html {
     scroll-padding-top: 20px;
   }

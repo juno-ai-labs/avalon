@@ -41,10 +41,9 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   and the acquisition action IDs. The historical offer action is now an inline
   browser-entry link; the timed offer card was removed.
 - **What a reactive artifact can do:** Section 02 of the homepage, after the
-  example Canvas, lists those features as a numbered three-column list
-  (`.reactive-list` in `home.css`), one column below 900px. Each item is a
-  feature the product ships today; the product owner confirms an item before
-  it is added.
+  example Canvas, lists reactive artifact capabilities as a numbered list
+  (`.reactive-list` in `home.css`). Each item names a capability the product
+  ships today, not an outcome.
 - **One plan catalog:** Homepage pricing reads `@rally/contracts/plans`, also
   re-exported by the usage module. The separate, dependency-free entry lets
   native Node site builds consume the catalog without traversing the runtime
