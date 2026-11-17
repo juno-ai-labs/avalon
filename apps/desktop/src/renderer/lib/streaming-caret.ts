@@ -5,11 +5,12 @@ interface CaretParent extends CaretNode { children: CaretNode[] }
  * Blocks the caret descends into. An inline element (a link, a citation pill,
  * emphasis) is not one: the caret follows it in its paragraph rather than
  * taking on its styling. Nor is a `div`: the citation pass groups embeds into
- * rows whose children must all be cells.
+ * rows whose children must all be cells. Nor is a code block: `MarkdownCode`
+ * stringifies its children as the source, so the caret follows the block.
  */
 const CARET_CONTAINERS = new Set([
   'p', 'li', 'ul', 'ol', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'table', 'thead', 'tbody', 'tr', 'td', 'th', 'pre', 'code',
+  'table', 'thead', 'tbody', 'tr', 'td', 'th',
 ]);
 
 export const STREAMING_CARET_CLASS = 'streaming-caret';
