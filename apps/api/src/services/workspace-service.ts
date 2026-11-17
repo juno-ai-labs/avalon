@@ -996,11 +996,13 @@ export class WorkspaceService {
     if (person.kind === "none") {
       const id = newId();
       const at = nowIso();
-      // Converges with a sign-in racing it through the unique email, as two first sign-ins do.
+      // Converges with a sign-in racing it through the unique email, as two first sign-ins do. Outside
+      // Global the platform id is Global's to give: left empty, the first sign-in links this row to it
+      // (`linkOrCreateRegionalUser`) instead of finding a different id and refusing.
       await this.env.DB.batch([
         this.env.DB.prepare(`INSERT INTO users (id, email, name, platform_user_id, onboarding_eligible, created_at, updated_at)
           SELECT ?, ?, ?, ?, 0, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE)`)
-          .bind(id, normalizedEmail, normalizedEmail, id, at, at, normalizedEmail),
+          .bind(id, normalizedEmail, normalizedEmail, this.env.AVALON_REGION === "global" ? id : null, at, at, normalizedEmail),
         this.env.DB.prepare(`INSERT OR IGNORE INTO user_verified_emails (email, user_id, verified_at) SELECT email, id, ? FROM users WHERE id = ?`)
           .bind(at, id),
         this.env.DB.prepare(`INSERT OR IGNORE INTO user_login_identities (provider, subject, user_id, verified_at)
@@ -1028,6 +1030,15 @@ export class WorkspaceService {
         `UPDATE workspace_invitations SET revoked_at = ?
           WHERE workspace_id = ? AND email = ? COLLATE NOCASE AND accepted_at IS NULL AND revoked_at IS NULL`,
       ).bind(at, this.auth.workspaceId, normalizedEmail),
+      // Their first Organization sends them through setup, as accepting an invitation to it did
+      // (`makeFirstOrganizationEligible`): not someone established in another one.
+      this.env.DB.prepare(
+        `UPDATE users SET onboarding_eligible = 1 WHERE id = ? AND onboarding_eligible = 0
+           AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE user_id = users.id AND workspace_id <> ?
+             AND access_class = 'member' AND status = 'active')
+           AND NOT EXISTS (SELECT 1 FROM platform_workspace_bindings b WHERE b.platform_user_id = users.platform_user_id
+             AND b.status = 'active' AND NOT (b.region = ? AND b.workspace_id = ?))`,
+      ).bind(person.id, this.auth.workspaceId, workspace.region, this.auth.workspaceId),
     ]);
     if (Number(added?.meta?.changes ?? 0) === 0) throw new ApiError(404, "workspace_not_found", "This Organization no longer exists");
     const userId = person.id;

@@ -15,11 +15,12 @@ export function MemberAddCard({ member, onAdded }: { member: MemberCardInput; on
   const admin = useViewerIsWorkspaceAdmin(collaboration ?? null);
   const queryClient = useQueryClient();
   const add = useMutation({
-    mutationFn: async () => {
-      try { await api!.addWorkspaceMember(member.email, 'member'); }
+    mutationFn: async (): Promise<{ emailed: boolean }> => {
+      try { return { emailed: (await api!.addWorkspaceMember(member.email, 'member')).emailDelivery !== 'failed' }; }
       catch (error) {
         // Already a member is what the press was for.
         if (!(error instanceof ApiError && error.code === 'already_workspace_member')) throw error;
+        return { emailed: true };
       }
     },
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['workspace-members'] }); },
@@ -38,6 +39,7 @@ export function MemberAddCard({ member, onAdded }: { member: MemberCardInput; on
         <strong>{who}</strong>
         {member.name && <p>{member.email}</p>}
         {!admin && <small>Only admins can add members.</small>}
+        {add.data && !add.data.emailed && <small>Added, but their email could not be sent. Tell them to sign in with this address.</small>}
       </div>
       <div className="connector-connection-card-controls">
         <Button
