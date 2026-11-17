@@ -665,6 +665,7 @@ const EmailReplyArgsSchema = z.strictObject(EmailReplyFields).superRefine(valida
 const GmailReplyDraftArgsSchema = z.strictObject({ ...EmailReplyFields, attachmentResourceIds: GmailDraftArgsSchema.shape.attachmentResourceIds }).superRefine(validateMailTarget);
 const emailToolInputSchema = googleToolInputSchema(EmailNewArgsSchema);
 const emailReplyInputSchema = googleToolInputSchema(EmailReplyArgsSchema);
+const gmailReplyDraftInputSchema = googleToolInputSchema(GmailReplyDraftArgsSchema);
 
 const CalendarBusyIntervalsSchema = z.object({
   busy: z.array(z.object({
@@ -829,6 +830,8 @@ const CalendarEventUpdateArgsSchema = z.strictObject({
   }
 });
 
+const calendarReadInputSchema = googleToolInputSchema(CalendarReadArgsSchema);
+const calendarEventUpdateInputSchema = googleToolInputSchema(CalendarEventUpdateArgsSchema);
 export const googleTools: ToolDefinition[] = [
   ...googleWorkflowTools,
   {
@@ -936,7 +939,7 @@ export const googleTools: ToolDefinition[] = [
     capability: "gmail.draft",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: gmailDraftToolInputSchema
+    get inputSchema() { return gmailDraftToolInputSchema(); },
   },
   {
     name: "gmail.send",
@@ -944,17 +947,17 @@ export const googleTools: ToolDefinition[] = [
     capability: "gmail.send",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: emailToolInputSchema
+    get inputSchema() { return emailToolInputSchema(); },
   },
   {
     name: "gmail.create_reply_draft",
     description: "Draft a reply to the email identified by an exact known messageId or unique Gmail query. The connector finds the message and resolves recipients, subject and threading internally. Multiple matches require a narrower query. Supply to only to override reply recipients. Nothing is sent.",
-    capability: "gmail.draft", mode: "write", idempotency: "record_before_execute", inputSchema: googleToolInputSchema(GmailReplyDraftArgsSchema),
+    capability: "gmail.draft", mode: "write", idempotency: "record_before_execute", get inputSchema() { return gmailReplyDraftInputSchema(); },
   },
   {
     name: "gmail.reply",
     description: "Send a threaded reply to the email identified by an exact known messageId or unique Gmail query. The connector resolves reply recipients, subject and threading internally. Multiple matches require a narrower query. Supply to only to override recipients. Sends immediately.",
-    capability: "gmail.send", mode: "write", idempotency: "record_before_execute", inputSchema: emailReplyInputSchema,
+    capability: "gmail.send", mode: "write", idempotency: "record_before_execute", get inputSchema() { return emailReplyInputSchema(); },
   },
   {
     name: "calendar.list_calendars",
@@ -1022,7 +1025,7 @@ export const googleTools: ToolDefinition[] = [
     capability: "calendar.read",
     mode: "read",
     idempotency: "safe",
-    inputSchema: googleToolInputSchema(CalendarReadArgsSchema)
+    get inputSchema() { return calendarReadInputSchema(); },
   },
   calendarCreationTool("calendar.create_event", "timed"),
   calendarCreationTool("calendar.create_all_day_event", "all_day"),
@@ -1033,7 +1036,7 @@ export const googleTools: ToolDefinition[] = [
     capability: "calendar.write",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: googleToolInputSchema(CalendarEventUpdateArgsSchema)
+    get inputSchema() { return calendarEventUpdateInputSchema(); },
   },
   {
     name: "drive.search",
@@ -1331,7 +1334,7 @@ export const GoogleAgentPluginDescriptor = defineConnectorAgentPlugin({
 
 function calendarCreationTool(name: string, kind: "timed" | "all_day" | "recurring"): ToolDefinition {
   const inputSchema = googleToolInputSchema(kind === "timed" ? CalendarEventCreateArgsSchema : kind === "all_day" ? CalendarAllDayCreateArgsSchema : CalendarRecurringCreateArgsSchema);
-  return { name, description: kind === "timed" ? "Create a single timed calendar event. For all-day events use create_all_day_event; for a recurring series use create_recurring_event. Guests receive invitations by default." : kind === "all_day" ? "Create a single all-day calendar event using local dates and an exclusive end date. Use create_recurring_event for a repeating all-day series. Guests receive invitations by default." : "Create a recurring calendar series from a repeat schedule (daily, weekly, monthly or yearly) and an explicit IANA timeZone. The connector builds Google recurrence rules. The connector creates the first occurrence and recurrence in one write. Date-only start/end create an all-day series; timestamps create a timed series. Guests receive invitations by default.", capability: "calendar.write", mode: "write", idempotency: "provider_key", inputSchema };
+  return { name, description: kind === "timed" ? "Create a single timed calendar event. For all-day events use create_all_day_event; for a recurring series use create_recurring_event. Guests receive invitations by default." : kind === "all_day" ? "Create a single all-day calendar event using local dates and an exclusive end date. Use create_recurring_event for a repeating all-day series. Guests receive invitations by default." : "Create a recurring calendar series from a repeat schedule (daily, weekly, monthly or yearly) and an explicit IANA timeZone. The connector builds Google recurrence rules. The connector creates the first occurrence and recurrence in one write. Date-only start/end create an all-day series; timestamps create a timed series. Guests receive invitations by default.", capability: "calendar.write", mode: "write", idempotency: "provider_key", get inputSchema() { return inputSchema(); } };
 }
 
 function sheetValuesWriteInputSchema(append: boolean): Record<string, unknown> {

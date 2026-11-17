@@ -75,8 +75,9 @@ googleWorkflowSchemas["gmail.label"] = z.strictObject({ ...ConversationTargetFie
 googleWorkflowSchemas["gmail.remove_label"] = z.strictObject({ ...ConversationTargetFields, labels: labels.min(1).describe("Custom label names to remove, for example Projects/Alpha. The connector resolves names internally.") }).superRefine(validateMailTarget);
 
 function tool(name: string, description: string, capability: string, write = false, paginated = false): ToolDefinition {
+  const inputSchema = googleToolInputSchema(googleWorkflowSchemas[name]!);
   return { name, description, capability, mode: write ? "write" : "read", idempotency: write ? "record_before_execute" : "safe",
-    inputSchema: googleToolInputSchema(googleWorkflowSchemas[name]!),
+    get inputSchema() { return inputSchema(); },
     ...(paginated ? { pagination: { cursorParameter: "pageToken" } } : {}),
   };
 }

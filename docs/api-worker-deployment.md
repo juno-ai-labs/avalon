@@ -287,7 +287,10 @@ shells backed by memoized factories. Static imports and exported schema
 contracts stay intact, but telemetry property schemas, WorkspaceDO protocol
 families, engineering inspection, object-port envelopes, and selected tool
 catalog schemas no longer construct their inner graphs together at module
-evaluation. Tool JSON Schema conversion follows the same first-use boundary.
+evaluation. Tool JSON Schema conversion follows the same first-use boundary:
+a tool definition built at module scope exposes `inputSchema` through a getter
+over a `memoizedValue`, never a converted object, so the conversion runs when a
+tool list is first serialized rather than during startup.
 Twelve sequential Wrangler 4.126.0 profiles of the exact API bundle before and
 after this change measured median active startup at 154.2 ms and 131.5 ms,
 respectively; median garbage collection was 60.8 ms and 59.6 ms. The new bundle
@@ -334,6 +337,30 @@ for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
 ## Changelog
+
+### 2026-11-17 — Defer Google tool JSON Schema conversion to first use
+
+**What changed:** `googleToolInputSchema` returns a memoized reader, and every
+Google tool definition reads it through `get inputSchema()`, the pattern GitHub
+and the harness tools already used.
+
+**Why:** The deploy of #1650 failed its Global upload with the startup-budget
+form of error 10021, as 91155099 had the day before, with an unchanged-size
+graph. Cloudflare-reported startup for the ~13.6 MiB API graph ranged from
+321 ms to 929 ms across the preceding twenty deploys, so the graph has no
+dependable margin and fails on timing alone. The retained profile showed the
+Google family converting all of its tool schemas with `z.toJSONSchema` at
+module scope, the largest single application-owned cost left at startup. Six
+alternating local samples measured mean active startup at 323.9 ms on baseline
+versus 283.0 ms with the change. Like the figures above, these diagnose graph
+shape and are not a platform-time promise.
+
+**Considered and rejected:** Rerunning the failed deploy until timing passes,
+which this document already rules out.
+
+**What to respect:** A module-scope tool definition must not hold a converted
+JSON Schema; anything that reads `inputSchema` at module scope reintroduces the
+cost.
 
 ### 2026-11-11 — Bridge app invocations to Sidekick admission
 
