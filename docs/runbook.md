@@ -541,8 +541,11 @@ rolling 24-hour window. The JSON receipt records when Stable last moved.
 Production retention is automated by the private `avalon-release-retention`
 Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
 URL, or application secret. Its only capabilities are bindings to the active and
-archive release buckets. No workflow deploys it; a merged change is not live
-until someone runs, from the repository root:
+archive release buckets. `.github/workflows/deploy-release-retention.yml`
+deploys it on a merge to `main` matching that workflow's `paths:` filter, and on
+manual dispatch; to redeploy, dispatch that workflow. A local deploy is for
+emergencies only, from an up-to-date `main`, followed by a dispatch so the live
+Worker matches `main` again. From the repository root:
 
 ```text
 pnpm deploy:release-retention
@@ -612,7 +615,8 @@ verified archive copies. A successful admitted run logs
 exception is a failed Cron event and must be investigated before manually
 deleting any object.
 
-Before deploying a change, run:
+Before merging a change to `apps/release-retention`, run these (the deploy
+workflow runs the test and typecheck again):
 
 ```text
 pnpm --filter @rally/release-retention test
@@ -631,8 +635,8 @@ curl "http://localhost:8799/cdn-cgi/handler/scheduled?cron=0+9+*+*+*&time=178609
 ```
 
 The timestamp above simulates 02:00 PDT on 2026-08-07. Require an `ok` outcome
-and a structured completion log with `dryRun: true`. After deployment, preserve
-the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
+and a structured completion log with `dryRun: true`. After deployment, check
+the deploy step's log in the workflow run shows both Cron Triggers, and inspect Workers & Pages →
 `avalon-release-retention` → Cron Events after the next window, and check its
 deployed version is the one Wrangler printed. Alert on failed
 events, unexpected `dry-run` production reports, a non-five retained set, or any
