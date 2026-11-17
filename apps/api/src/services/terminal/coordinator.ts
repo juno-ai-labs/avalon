@@ -469,11 +469,12 @@ export class TerminalSandboxCoordinator {
     // some run's preparation still in flight, and a read of a half-made
     // checkout is a read of the wrong files.
     if (repository && repository.bootstrappedSandboxGeneration !== row.generation) return null;
-    // A `planned` import whose run holds a live lease is that run's import in
-    // flight: its call holds the lease and settles the row. A read may see its
-    // files half copied, as it may see any file mid-write. Any other `planned`
-    // import is left over, whoever holds the lease now, and readiness cleans
-    // it up.
+    // A read passes over a `planned` import while the run that wrote it holds
+    // a live lease: that run's call settles the row, and a read may see its
+    // files half copied, as it may see any file mid-write. The key is the run,
+    // not the call, so an import that run's own call already failed also
+    // passes until the run's lease ends. Any other `planned` import is left
+    // over, whoever holds the lease now, and readiness cleans it up.
     const leaseHolder = row.operationRunId !== null
       && (row.operationLeaseExpiresAt ?? 0) > this.clock.now().getTime()
       ? row.operationRunId : null;
@@ -1102,9 +1103,8 @@ export class TerminalSandboxCoordinator {
     leaseHolderRunId: string | null = null,
   ): Promise<boolean> {
     const all = await this.terminal(context).importedResources(row.generation);
-    const inFlight = (candidate: { state: string; importRunId: string | null }) =>
-      leaseHolderRunId !== null && candidate.importRunId === leaseHolderRunId;
-    if (all.some((candidate) => candidate.state !== "completed" && !inFlight(candidate))) return true;
+    if (all.some((candidate) => candidate.state !== "completed"
+      && (leaseHolderRunId === null || candidate.importRunId !== leaseHolderRunId))) return true;
     const links = all.filter((candidate) => candidate.state === "completed");
     if (links.length === 0) return false;
     // Completed imports are retained Sidekick state, like its shared history.
