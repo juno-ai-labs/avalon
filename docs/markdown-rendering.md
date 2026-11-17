@@ -631,6 +631,15 @@ whole-body re-parse, in the client only, where the message flows through
 constant; anything feeding `MarkdownBody` per-render object identities gets
 the same failure back.
 
+The streaming caret is drawn by the open tail's render, not after the body:
+`rehypeStreamingCaret` (`apps/desktop/src/renderer/lib/streaming-caret.ts`)
+descends through the last text blocks and appends it there, after any inline
+element such as a link or citation pill rather than inside it.
+`CARET_CONTAINERS` in that file lists the blocks it may enter. It never enters
+a `div`, whose citation embed rows must hold only cells, or a code block, whose
+children `MarkdownCode` reads as the source, and it skips GFM's footnote list.
+A streaming message with no text yet draws the caret on its own.
+
 ### Styling
 
 The `.markdown-body` group in `app.css` styles every element markdown produces.
@@ -993,6 +1002,24 @@ renderer keeps its existing parsing and code behavior. Source/range mapping and
 restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-17 — The streaming caret sits after the last character
+
+**What changed:** The caret moved from after the markdown body into the open
+tail's hast tree, through `rehypeStreamingCaret`.
+
+**Why:** `MessageBody` drew the caret after the body's block `<p>`, so it
+dropped to a line of its own. On the mobile client's larger text, a lone
+2px bar under a reply's first word read as a second letter ("I", then "I").
+
+**Considered and rejected:** Making the body's last block `display: inline`
+in CSS. That breaks when the last block is a list, table or code block, and
+changes the layout of text that is not the caret.
+
+**What a future change has to respect:** Only the open tail gets the plugin,
+so settled segments keep their memoised parse. A wrapper element the rehype
+passes add around blocks must stay out of `CARET_CONTAINERS` unless it can
+hold a stray span.
 
 ### 2026-11-12 — An artifact card opens, copies and shares from the feed
 

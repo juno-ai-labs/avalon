@@ -152,7 +152,8 @@ socket — it breaks hibernation, quietly, and the bill is where you find out**:
   nothing.
 - **High-frequency output is batched before it is sent.** Model fragments
   coalesce into one frame every 100 ms or 2,048 characters. Each frame is a wake
-  and a message, so token-sized frames are token-sized wakes.
+  and a message, so token-sized frames are token-sized wakes. Held text leaves
+  within 100 ms even when no later fragment arrives: a trailing timer sends it.
 
 None of this is a reason to hold fewer sockets or to push less. It is the
 opposite: hibernation is what buys the responsiveness, and the way to keep it is
@@ -813,6 +814,30 @@ surface. This is event-driven revalidation, not polling and not a second socket.
   made to wait for.
 
 ## Changelog
+
+### 2026-11-17 — Batched model text leaves within the batch window
+
+**What changed:** `createSequencedStreamDeltaBatcher` sets a trailing timer when
+it holds text, so held text is sent within `maxDelayMs` even if no later
+fragment arrives. Push, flush and the timer share one publish chain, so frames
+keep their order. The harness's `createTextDeltaBatcher`, written for the
+retired automation compiler, had no production caller and was deleted rather
+than given the timer.
+
+**Why:** The batcher only sent held text when a later fragment arrived after the
+window, or when a non-text event flushed it. The first fragment of a reply
+always went out alone, and the rest of a short sentence waited for the next
+event, usually a tool call whose input the model was still streaming. Readers
+saw one word, often "I", for one to two seconds.
+
+**Considered and rejected:** Flushing every fragment, or shortening the window.
+Both raise the room's wake rate for every token, and neither sends text that is
+already held when the model goes quiet.
+
+**What a future change has to respect:** The window bounds how long text may
+wait, not only how often frames go out. Canvas Chats and Sidekick
+conversations, the Sidekick builder included, all stream through this one
+batcher.
 
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 
