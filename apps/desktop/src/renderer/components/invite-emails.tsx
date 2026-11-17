@@ -51,6 +51,11 @@ export function useInviteEmails(): InviteEmails {
 }
 
 /** Why the list cannot be sent yet, or null when it can. */
+/** What to tell the person adding when some were added but their email could not be sent. */
+export function unemailedNotice(unemailed: readonly string[]): string {
+  return `Added, but the email to ${unemailed.join(', ')} could not be sent. Tell them to sign in to Rally with that address.`;
+}
+
 export function inviteEmailsProblem(invite: InviteEmails): string | null {
   if (!invite.addresses.length) return 'Enter at least one email address.';
   if (invite.invalid) return 'One or more of the addresses are not a valid email address.';
@@ -90,15 +95,22 @@ export async function inviteMembers(
   api: InviteMembersApi,
   addresses: readonly string[],
   onInvited: (email: string) => void,
-): Promise<{ failures: string[] }> {
+): Promise<{ failures: string[]; unemailed: string[] }> {
   const currentMembers = await api.getWorkspaceMembers();
   const alreadyMembers = new Set(currentMembers
     .filter((member) => member.status === 'active' && member.accessClass !== 'guest')
     .map((member) => member.email.toLowerCase()));
   const failures: string[] = [];
+  // Added, but not told: the membership stands, so the person adding has to tell them.
+  const unemailed: string[] = [];
   for (const email of addresses) {
-    try { if (!alreadyMembers.has(email)) await api.addWorkspaceMember(email, 'member'); onInvited(email); }
-    catch { failures.push(email); }
+    try {
+      if (!alreadyMembers.has(email)) {
+        const added = await api.addWorkspaceMember(email, 'member');
+        if (added.emailDelivery === 'failed') unemailed.push(email);
+      }
+      onInvited(email);
+    } catch { failures.push(email); }
   }
-  return { failures };
+  return { failures, unemailed };
 }

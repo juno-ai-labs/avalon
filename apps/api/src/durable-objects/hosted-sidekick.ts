@@ -1183,7 +1183,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    */
   private sourceConnections(workspaceId: string, userId: string, connectorType: string, eventTypes: readonly string[]):
     { id: string; status: string; eventTypes: string[] }[] {
-    const adapter = connectorRegistryForEnv(this.env).get(connectorType);
+    const adapter = this.sourceAdapter(connectorType);
+    // A connector this deployment no longer serves carries nothing; the request stays readable.
+    if (!adapter) return [];
     return this.sql.exec<{ id: string; status: string; scope: string; granted_scopes_json: string; config_json: string | null }>(
       `SELECT id, status, scope, granted_scopes_json, config_json FROM connector_connections
         WHERE workspace_id = ?1 AND connector_type = ?3 AND status <> 'disabled'
@@ -1198,13 +1200,20 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     });
   }
 
+  /** The connector's adapter, or null where this deployment does not serve it (the registry throws). */
+  private sourceAdapter(connectorType: string): ReturnType<ReturnType<typeof connectorRegistryForEnv>["get"]> | null {
+    const registry = connectorRegistryForEnv(this.env);
+    return registry.list().some((manifest) => manifest.type === connectorType) ? registry.get(connectorType) : null;
+  }
+
   /**
    * Which connection carries a request's events, and the card that makes it.
    * A connector whose events arrive only on its Organization connection is
    * made by an administrator in Settings, so no person's card can answer it.
    */
   private sourceConnect(connectorType: string, eventTypes: readonly string[]): SidekickSourceRequestView["connect"] {
-    const adapter = connectorRegistryForEnv(this.env).get(connectorType);
+    const adapter = this.sourceAdapter(connectorType);
+    if (!adapter) return { scope: "personal", card: null };
     if (!connectorActivitySupportsScope(adapter, "personal")) return { scope: "workspace", card: null };
     return { scope: "personal", card: sourceConnectionCardId(connectorType, eventTypes) };
   }

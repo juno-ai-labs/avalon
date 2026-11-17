@@ -405,6 +405,19 @@ describe("the Sidekick source routes' refusals, by name", () => {
     expect(await storedSources()).toEqual([{ user_id: OTHER, connection_id: lapsed, condition: CONDITION, requested: 1 }]);
   });
 
+  it("still lists a request whose connector this deployment no longer serves", async () => {
+    // Asked when the connector was served; it has since been removed from this deployment.
+    await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `INSERT INTO sidekick_source_requests (request_id, sidekick_id, user_id, connector_type, event_types_json, condition, state,
+         requested_by_user_id, requested_by_name, person_name, place_parent_kind, place_parent_id, created_at, decided_at)
+       VALUES (?, ?, ?, 'retired-crm', '["deal.created"]', NULL, 'pending', ?, 'Avery', NULL, NULL, NULL, 1, NULL)`,
+      UNKNOWN_ID, SIDEKICK_ID, PERSON, MANAGER));
+    const listed = await as(MANAGER, "GET", sources());
+    expect(listed.status, JSON.stringify(listed.body)).toBe(200);
+    expect((listed.body as { requests: unknown[] }).requests).toEqual([expect.objectContaining({
+      requestId: UNKNOWN_ID, connection: "not_connected", connect: { scope: "personal", card: null } })]);
+  });
+
   it("says a connector whose events arrive only on the Organization's connection is the Organization's to connect", async () => {
     const answer = await as(MANAGER, "POST", requests(), { userIds: [PERSON], connectorType: "granola", eventTypes: ["note.generated"] });
     expect(answer.status, JSON.stringify(answer.body)).toBe(201);

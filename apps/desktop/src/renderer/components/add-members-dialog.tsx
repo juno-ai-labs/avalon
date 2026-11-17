@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button, ErrorNotice, Modal } from './primitives';
-import { InviteEmailField, inviteEmailsProblem, inviteMembers, useInviteEmails, type InviteMembersApi } from './invite-emails';
+import { InviteEmailField, inviteEmailsProblem, inviteMembers, unemailedNotice, useInviteEmails, type InviteMembersApi } from './invite-emails';
 
 /**
  * The account menu's **Add new member**: the onboarding invite list in a
@@ -31,9 +31,11 @@ function AddMembersForm({ api, onClose }: { api: InviteMembersApi | null; onClos
     const addresses = invite.addresses;
     invite.replace(addresses);
     try {
-      const { failures } = await inviteMembers(api, addresses, () => undefined);
+      const { failures, unemailed } = await inviteMembers(api, addresses, () => undefined);
       invite.replace(failures);
       if (failures.length) throw new Error(`Could not add: ${failures.join(', ')}. Check the addresses and retry.`);
+      // Stays open on the notice: closing would hide that these people were never told.
+      if (unemailed.length) throw new Error(unemailedNotice(unemailed));
       onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught : new Error('Something went wrong. Try again.'));
