@@ -63,6 +63,31 @@ build, serve `dist` with `vite preview`, and screenshot the footer at 1440px and
 
 ## Changelog
 
+### 2026-11-17: Every header links the GitHub repository
+
+**What changed:** Rally is open source, so every site header links
+`github.com/juno-ai-labs/avalon`. `githubLink(className?)` in `site-icons.ts`
+holds the URL and mark; `renderSiteNav`, `renderReadingNav`,
+`renderMarketHeader` and the help layout call it, and two markers carry it into
+hand-written headers: `rally:github-link` (the homepage) and
+`rally:github-header-link` (the Trust Center navs, whose links are
+`.header-link`). At 650px and below the homepage and marketplace navs show only
+the mark and keep the label for screen readers.
+
+**Why:** Visitors had no way to find the code from the site.
+
+**Considered and rejected:** Copying the SVG into the homepage and Trust Center
+HTML. Every page already runs through the marker plugin, and a copy drifts when
+the URL or mark changes. A `data-site-action` for the link was also left out:
+`SITE_ACTION_LINKS` is a closed set, and counting GitHub clicks would widen it.
+
+**Consequences:** In `landing.css` the `.github-link` rule must stay before the
+860px query, or it overrides that query's `.header-link{display:none}` and the
+link shows alone beside the sign-in button. The `.github-link` alignment rule
+is repeated in `home.css`, `landing.css`, `reading.css` and `help.css`; change
+them together. The Trust Center navs are still hand-written, but their GitHub
+link comes from the marker.
+
 ### 2026-11-16: The comparison pages are removed
 
 **What changed:** The five `/compare/<slug>/` pages, their Markdown in
