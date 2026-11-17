@@ -1,0 +1,6 @@
+Rally commercial license
+
+Juno AI Labs Inc offers Rally under commercial terms as an alternative to the
+GNU Affero General Public License, version 3. The terms are set in a written
+agreement with each licensee. To ask for one, write to help@rallywith.ai with
+"Commercial license" in the subject.
