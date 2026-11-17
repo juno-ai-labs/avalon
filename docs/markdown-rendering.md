@@ -1050,7 +1050,7 @@ named field is fixed. `scrapeBranding` must keep its metadata schema to the
 fields it returns; a field added to `FirecrawlBrandingOutput` has to be added to
 the pick as well.
 
-PR: #1647's re-land
+PR: #1659 (re-lands #1647)
 
 ### 2026-11-12 — An artifact card opens, copies and shares from the feed
 
