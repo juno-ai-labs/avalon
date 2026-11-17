@@ -139,7 +139,8 @@ export function workspaceSyncPublicationsForMutation(
   if (pathname === "/workspace/me/preferences") return [{ topics: ["viewer_preferences"], audience: ACTOR }];
   if (pathname === "/workspace/me") return organization("workspace_profile", "member_directory");
   if (pathname.startsWith("/workspace/terminal")) return organization("terminal_policy");
-  if (pathname.startsWith("/workspace/invitations")) {
+  // Adding a member by address revokes any invitation still waiting for it.
+  if (pathname.startsWith("/workspace/invitations") || pathname === "/workspace/members") {
     return organization("member_directory", "invitation_directory");
   }
   if (pathname === "/workspace") return organization("workspace_profile");

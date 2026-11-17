@@ -18,6 +18,7 @@ describe('workspaceSyncPublicationsForMutation', () => {
     ['PATCH', '/workspace/me', ['workspace_profile', 'member_directory'], organization],
     ['POST', '/workspace/terminal/network-policy/apply', ['terminal_policy'], organization],
     ['POST', '/workspace/invitations', ['member_directory', 'invitation_directory'], organization],
+    ['POST', '/workspace/members', ['member_directory', 'invitation_directory'], organization],
     ['DELETE', '/connections/connection-1', connectionTopics, { kind: 'connection', connectionId: 'connection-1' }],
     ['PUT', '/connections/connection-1/github/repository-access', connectionTopics,
       { kind: 'connection', connectionId: 'connection-1' }],

@@ -43,7 +43,10 @@ A membership acquires its role in one of three ways:
   in with it by email, Google or Apple reaches that account. Only a verified
   address names an existing account (`memberByAddress`, the rule sign-in
   keeps); an address an account holds unverified is refused
-  (`member_address_unverified`), not added. A guest becomes a member. It never *lowers* a role that already exists: its `ON CONFLICT`
+  (`member_address_unverified`), not added. A guest becomes a member. The
+  account is eligible for first-Organization setup under the rule
+  `makeFirstOrganizationEligible` keeps, and outside Global its
+  `platform_user_id` is left empty for its first sign-in to link. It never *lowers* a role that already exists: its `ON CONFLICT`
   clause keeps an existing `owner` or `admin`. It revokes any older invitation
   still waiting for the address, and emails them that they were added; a failed
   send leaves the membership and answers `emailDelivery: "failed"`. `POST

@@ -32,6 +32,16 @@ describe('AddMembersDialog', () => {
     expect(api.addWorkspaceMember.mock.calls).toEqual([['aspen@example.com', 'member'], ['pending@example.com', 'member'], ['birch@example.com', 'member']]);
   });
 
+  it('stays open saying who was added but not emailed, so the person adding can tell them', async () => {
+    const { api, onClose, field } = setup();
+    api.addWorkspaceMember.mockResolvedValue({ member: {}, emailDelivery: 'failed' });
+    fireEvent.paste(field, { clipboardData: { getData: () => 'aspen@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 teammate' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'Added, but the email to aspen@example.com could not be sent. Tell them to sign in to Rally with that address.');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('stays open holding only the addresses that failed', async () => {
     const { api, onClose, field } = setup();
     api.addWorkspaceMember.mockImplementation(async (email: string) => {

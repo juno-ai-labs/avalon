@@ -679,6 +679,9 @@ describe("adding members, and the invitations still waiting from before", () => 
       expect(added).toEqual({ member: { userId: expect.any(String), email: "nancy@example.com", role: "member" }, emailDelivery: "sent" });
       // A member now, with nothing to accept: an agent can ask something of them by id.
       expect(membership(database, added.member.userId)).toEqual({ role: "member", access_class: "member", status: "active" });
+      // Their first Organization sends them through setup, as accepting an invitation did.
+      expect(database.prepare(`SELECT onboarding_eligible, platform_user_id FROM users WHERE id = ?`).get(added.member.userId))
+        .toEqual({ onboarding_eligible: 1, platform_user_id: added.member.userId });
       // Signing in with the address lands on the account the adding made, not a second one.
       const signedIn = await resolveVerifiedEmailIdentity(sqliteD1(database), "nancy@example.com");
       expect(signedIn).toEqual({ id: added.member.userId, created: false });
@@ -713,6 +716,17 @@ describe("adding members, and the invitations still waiting from before", () => 
       await expect(addAs(database).addMember("guest@example.com", "member"))
         .rejects.toMatchObject({ status: 409, code: "member_address_unverified" });
       expect(membership(database, "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79e1")).toEqual({ role: null, access_class: "guest", status: "active" });
+    } finally { database.close(); }
+  });
+
+  it("outside Global leaves the new account's platform id for its first sign-in to link", async () => {
+    const database = seeded();
+    emailSend = vi.fn(async () => ({ messageId: "resend-email-id" }));
+    try {
+      const service = new WorkspaceService(environment(new StubDatabase(() => undefined), {
+        DB: sqliteD1(database), APP_ENV: "production", AVALON_REGION: "enterprise" }), ownerAuth);
+      const added = await service.addMember("nancy@example.com", "member");
+      expect(database.prepare(`SELECT platform_user_id FROM users WHERE id = ?`).get(added.member.userId)).toEqual({ platform_user_id: null });
     } finally { database.close(); }
   });
 

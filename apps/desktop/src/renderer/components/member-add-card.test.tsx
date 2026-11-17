@@ -29,6 +29,14 @@ describe('the card that adds someone the agent named', () => {
     expect(screen.getByRole('button', { name: 'Added' })).toBeDisabled();
   });
 
+  it('says so when they were added but their email could not be sent', async () => {
+    api.addWorkspaceMember.mockResolvedValue({ member: { userId: 'u-nancy', email: 'nancy@example.com', role: 'member' }, emailDelivery: 'failed' });
+    const onAdded = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('article')).toHaveTextContent('Added, but their email could not be sent. Tell them to sign in with this address.');
+  });
+
   it('counts someone already a member as added', async () => {
     api.addWorkspaceMember.mockRejectedValue(new ApiError('already', 409, 'already_workspace_member'));
     const onAdded = mount();
