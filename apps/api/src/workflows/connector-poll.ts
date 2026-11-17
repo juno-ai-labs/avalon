@@ -3,6 +3,7 @@ import {
   type ConnectorPollWorkflowInput
 } from "@rally/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 
 import type { Env } from "../env";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
@@ -18,6 +19,7 @@ import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service"
 
 import {
   failedPollAttemptCode,
+  isReconnectRequiredFailure,
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
@@ -103,7 +105,16 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               error_name: error instanceof Error ? error.name : typeof error,
               error_code: errorCode,
             });
-            throw pollAttemptFailure(error, errorCode);
+            const failure = pollAttemptFailure(error, errorCode);
+            // A grant the adapter declared dead is not retried: three more
+            // attempts only spent three more token-endpoint calls on every
+            // poll of every disconnected account. Any other `unauthorized`,
+            // such as a rate-limit 403, keeps its retries. The message, and
+            // so the code, survives the step boundary.
+            if (isReconnectRequiredFailure(error) && failure instanceof Error) {
+              throw new NonRetryableError(failure.message);
+            }
+            throw failure;
           }
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,

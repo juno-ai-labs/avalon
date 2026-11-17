@@ -1575,6 +1575,15 @@ now guards it.
   raise that for policy and configuration failures that never reached the provider,
   and spending a single-use refresh token on one buys a retry that fails
   identically.
+- **A poll attempt on a grant declared dead is not retried.** `poll-and-persist-provider-page`
+  throws a failure carrying `reconnectRequired: true` (Google's refresh sets it
+  for `invalid_grant`) as a `NonRetryableError`: the grant will still be dead
+  seconds later, so step retries could only spend more token-endpoint calls,
+  and the next scheduled poll tries once more. A bare `unauthorized` keeps its
+  retries, because `providerJson` maps every 403 to `unauthorized` and a 403
+  can be a rate limit. A failure the step ends early on still records the
+  connection as failing; that is what marks a healthy row `error`, so the guard
+  must stay limited to grants that are already unusable.
 - **A token-endpoint failure has three answers, not two.** A code naming a dead
   grant marks; a code naming Rally's own fault does not, whatever the status; an
   unfamiliar code or none at all defers to the status. An unfamiliar word is not
@@ -1783,6 +1792,36 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-17 — A poll refused on its grant fails once, not four times
+
+**What changed:** The connector poll Workflow throws a failure whose adapter
+declared the grant dead (`reconnectRequired: true`) from its poll step as a
+`NonRetryableError`, so the step's three retries are skipped
+(`isReconnectRequiredFailure`).
+
+**Why:** A scheduled log review on 2026-11-14 found six Google connections with
+revoked grants failing `credentials_refresh` 4,370 times in fifteen hours, four
+times on each of 1,090 polls. Google's refresh had answered `invalid_grant`,
+which does not change within the step's 14-second retry window, so the retries
+were three wasted token-endpoint calls per poll per disconnected account, and
+three times the log volume. A second review on 2026-11-17 found the same six
+connections still at four refresh calls per poll: 9,552 in 33 hours.
+
+**Rejected:** Ending retries on every `unauthorized` code. `providerJson`
+maps any 403 to `unauthorized`, and a 403 can be a rate limit that clears in
+seconds; without a retry, the terminal catch marks a working connection
+`error` until its next successful poll. Skipping the poll of a `needs_reconnect` connection would end the
+calls entirely, but that status also covers diagnoses such as missing scopes
+under which the poll still works, and a reconnected account would then wait
+for something else to resume its polling.
+
+**Consequences:** A disconnected account whose adapter sets
+`reconnectRequired` costs one refresh call per scheduled poll; an adapter that
+does not set it keeps the old four. Any other `unauthorized` is retried as
+before. The code survives the step
+boundary because the Worker's compatibility date is after
+`workflows_preserve_non_retryable_error_message` became the default.
 
 ### 2026-11-17 — One product catalog, with families, instead of five copies; Canva retired
 

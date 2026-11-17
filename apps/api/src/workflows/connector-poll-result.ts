@@ -72,6 +72,24 @@ export function terminalPollFailure(error: unknown): { code: string; message: st
 }
 
 /**
+ * Whether a poll attempt failed because the adapter said the grant is dead and
+ * only the member reconnecting can fix it (`reconnectRequired`, as Google's
+ * refresh sets for `invalid_grant`). A retry seconds later meets the same
+ * dead grant, so the poll does not retry it.
+ *
+ * Deliberately not every `unauthorized`: `providerJson` maps any 403 to
+ * `unauthorized`, and a 403 can be a rate limit (Google's
+ * `rateLimitExceeded`) that the step's retries absorb. Without a retry it
+ * would mark a working connection `error` until its next successful poll.
+ */
+export function isReconnectRequiredFailure(error: unknown): boolean {
+  if (!(error instanceof ConnectorError) || error.code !== "unauthorized") return false;
+  const details = error.details;
+  return typeof details === "object" && details !== null
+    && "reconnectRequired" in details && details.reconnectRequired === true;
+}
+
+/**
  * `warn` for a grant the provider refused (`unauthorized…`): that is the
  * member's account state, already recorded as `needs_reconnect`, and the poll
  * fires again on schedule. Logged as `error` it repeated every poll interval
