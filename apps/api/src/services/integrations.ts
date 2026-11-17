@@ -156,7 +156,7 @@ import {
   type ConnectorProductState,
   CONNECTOR_LIST_TOOL_NAME,
   connectorConnectionCardSummary,
-  connectorConnectionStateSummary,
+  connectorProductStateSummary,
   connectorListSummary,
   foldConnectorProductStates,
   groupConnectorProductsByFamily,
@@ -8575,7 +8575,8 @@ async function listConnectors(
  * The caller's saved state for each product, in one read. What a state is,
  * which grants belong to which product, and how an account is named are the
  * catalog's (`foldConnectorProductStates`); this reads only the rows the
- * caller may see: the Organization's, and the caller's own.
+ * caller may see: the Organization's, and the caller's own. Disabled rows
+ * are left to the fold, which drops them, so it is total on its own.
  */
 async function readConnectorProductStates(
   env: Env,
@@ -8590,7 +8591,6 @@ async function readConnectorProductStates(
   const rows = providerTypes.length === 0 ? [] : (await env.DB.prepare(
     `SELECT connector_type, scope, display_name, granted_scopes_json, status FROM connector_connections
       WHERE workspace_id = ? AND connector_type IN (${providerTypes.map(() => "?").join(",")})
-        AND status <> 'disabled'
         AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))
       ORDER BY scope, display_name COLLATE NOCASE`,
   ).bind(
@@ -8683,7 +8683,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         },
         execute: async (raw: unknown) => {
           const state = await readConnectorConnectionState(env, input, raw);
-          return { output: state, summary: connectorConnectionStateSummary(state) };
+          return { output: state, summary: connectorProductStateSummary(state) };
         },
       } satisfies HarnessTool,
       {

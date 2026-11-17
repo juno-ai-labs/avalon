@@ -326,6 +326,9 @@ function workspaceInstallationDisplayName(productName: string, credentials: Reco
   // half is whatever the provider returned, the reservation refuses anything
   // over 180 characters, and this string is rendered into the model's plugin
   // catalogue a line at a time.
+  // Without an account this is the product's events installation, not an
+  // instance of it, so it is deliberately not `<product> · <account>` and reads
+  // back as no account.
   return account
     ? connectorConnectionName(productName, account)
     : `${productName} workspace events`.replace(/\s+/gu, " ").trim().slice(0, 180);
