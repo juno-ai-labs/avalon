@@ -18,11 +18,9 @@ describe("connector connection card contract", () => {
     for (const scope of ["personal", "workspace"]) {
       expect(ConnectorConnectionCardInputSchema.parse({ connectorId: "google-drive", scope }))
         .toEqual({ connectorId: "google-drive", scope });
-      expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "google-drive", scope }))
-        .toEqual({ connectorId: "google-drive", scope });
       expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "google-drive-workspace", scope }).success)
         .toBe(false);
-      expect(ConnectorConnectionStateInputSchema.safeParse({ connectorId: "google-drive-workspace", scope }).success)
+      expect(ConnectorConnectionStateInputSchema.safeParse({ connectorId: "google-drive-workspace" }).success)
         .toBe(false);
     }
   });
@@ -65,11 +63,11 @@ describe("connector connection card contract", () => {
     expect(CONNECTOR_CONNECTION_STATE_WIRE_NAME).toBe("get_connector_connection_state");
   });
 
-  it("lets the state check leave scope out, and accepts any scope it is sent", () => {
+  it("takes a connector alone, and refuses a scope rather than ignoring it", () => {
     expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "slack" })).toEqual({ connectorId: "slack" });
-    // Ignored by the check, so a scope the connector lacks is no reason to fail the call.
-    expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "granola", scope: "workspace" }))
-      .toEqual({ connectorId: "granola", scope: "workspace" });
+    const withScope = ConnectorConnectionStateInputSchema.safeParse({ connectorId: "google-drive", scope: "workspace" });
+    expect(withScope.success).toBe(false);
+    expect(withScope.error?.issues).toMatchObject([{ code: "unrecognized_keys", keys: ["scope"] }]);
   });
 
   it("recovers durable card identity without accepting arbitrary summary prose", () => {

@@ -70,13 +70,14 @@ describe("connector connection tool guidance", () => {
       .toBe("Use personal for the current user's account. Use workspace only for an id described as personal or workspace.");
   });
 
-  it("lets the state check leave scope out", () => {
+  it("asks the state check for a connector alone", () => {
     const schema = AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION.inputSchema as {
+      additionalProperties?: unknown;
       properties?: Record<string, { description?: string }>;
       required?: string[];
     };
     expect(schema.required).toEqual(["connectorId"]);
-    expect(schema.properties?.scope?.description)
-      .toBe("Leave out. Every scope this connector offers is checked whatever is sent.");
+    expect(Object.keys(schema.properties ?? {})).toEqual(["connectorId"]);
+    expect(schema.additionalProperties).toBe(false);
   });
 });
