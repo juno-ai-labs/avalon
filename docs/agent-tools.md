@@ -132,10 +132,13 @@ are the initial annotated tools.
 
 `get_connector_connection_state` and `show_connector_connection` are the
 recovery pair for a run with a user principal: a Canvas's Chat, a Sidekick's
-conversation, and a Sidekick run. Both accept only a trusted connector catalog
-id and a `personal`/`workspace` scope. The read always checks every scope the
-connector offers in one query; a `scope` it is sent is accepted and ignored, so
-older calls still validate. It returns each scope's state, `connected`, `reconnect_required`, or `not_connected`,
+conversation, and a Sidekick run. A turn acting for the Organization (a
+workspace principal) is offered both, and `list_connectors`, refusing with
+`connections_need_a_person`: it has no person whose connections to read, and
+uses only the connections bound to its Sidekick. Both take a trusted connector
+catalog id; the card also takes a `personal`/`workspace` scope. The read takes no
+scope: it always checks every scope the connector offers in one query, and a
+`scope` it is sent fails as an unrecognized key. It returns each scope's state, `connected`, `reconnect_required`, or `not_connected`,
 from the caller-visible rows, plus the best of them as `state`; `connected` is
 the last durable state Rally observed, not a provider health check. The presentation tool asks the main desktop feed for a
 person-facing control rather than provider data. That feed resolves the card's
@@ -179,6 +182,13 @@ when the work needs someone named by email to be a member of the Organization,
 such as to ask them for a Sidekick source, and never for people the work only
 emails or reads mail from (customers, leads, vendors), since adding opens the
 Organization to them.
+
+`list_connectors` is the same read over every product, grouped by family, for
+choosing a connector rather than recovering one; its rows are the state check's.
+What a product, family, state and account are is the catalog's
+([`connectors.md`](connectors.md#connector-products-and-families)); when to
+list and when to offer a missing connector is said once, in the core plugin's
+system line.
 
 `check_resource_access` takes a connector and a resource link or id and asks
 every connection of that connector in the run how far it reaches the resource,
@@ -846,13 +856,15 @@ nothing, so it is `read` and safe to retry.
 
 `refusingTool` (`apps/api/src/services/tool-refusal.ts`) builds one from the
 tool itself: the same name and arguments, and a call that refuses. Every
-refusal's text is in one table there (`TOOL_REFUSALS`). Four uses:
+refusal's text is in one table there (`TOOL_REFUSALS`). Its uses:
 `sidekick_request_source` where a turn may not ask
 (`sidekickSourceRefusalTool`), every Sidekicks tool on a turn that acts for
 the Organization rather than a person (`organizationSidekicksPlugin`), and
 the two question tools where answers go to an agent (`questionRefusal`),
-and the notice tools a run or the self-review may not use
-(`notificationToolsAllowed`, [`push-notifications.md`](push-notifications.md#canvas-notices)).
+the notice tools a run or the self-review may not use
+(`notificationToolsAllowed`, [`push-notifications.md`](push-notifications.md#canvas-notices)),
+and the three connector connection tools on a turn that acts for the
+Organization (`connectorConnectionToolsFor`).
 A tool that has no target on a surface (archiving a Sidekick a Canvas made,
 outside a Canvas) is a different case, and the rule does not cover it.
 
@@ -1358,6 +1370,27 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-17 — An agent can list connectors by family, and see each account
+
+**What changed:** `list_connectors` joins the core plugin beside the state
+check, and a turn acting for the Organization is offered all three connector
+tools refusing by name. The catalog behind it is recorded in
+[`connectors.md`](connectors.md#changelog).
+
+**Why:** an agent asked for an artifact could check a connector it already had
+in mind, but could not learn which connectors exist for the job, so it could
+not suggest one the person had not connected.
+
+**Alternative rejected:** making `connectorId` optional on the state check to
+list everything: one name for two questions ("is this connected?" and "what
+would help?") leaves the model to guess which it is asking.
+
+**Consequences:** the system line lists connectors only to choose an unnamed
+source, when no loaded plugin can do the work, or when asked, so an ordinary
+connector task pays no extra round trip. The state check no longer takes `scope`. It had accepted one and ignored it
+since 2026-10-15 so older calls would validate; an ignored argument breaks rule
+1, so a scope now fails by name.
 
 ### 2026-11-16 — An agent can check membership and offer to add someone
 

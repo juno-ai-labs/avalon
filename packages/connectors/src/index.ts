@@ -1,5 +1,3 @@
-export { CANVA_POLL_SECONDS } from "./canva-polling";
-export { parseCanvaDesignReference } from "./canva-resource";
 export {
   readConnectorDocument,
   type ConnectorDocumentConnection,
@@ -7,9 +5,8 @@ export {
   type ConnectorDocumentReader,
   type ConnectorFile,
 } from "./documents";
-import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
-export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, type CanvaConnectorConfig } from "./canva";
 import { RegionSchema } from "@rally/contracts/regions";
+import { ConnectorProductCatalog, ConnectorProductIds, connectorConnectionServesProduct } from "@rally/contracts";
 import { paginatedResult } from "./tool-pagination";
 import { isPortableGoogleActivityResource } from "./google-operation-identity";
 import { ConnectorTextCursorSchema, readConnectorTextPage } from "./text-pages";
@@ -5575,6 +5572,42 @@ export function createGenericWebhookConnector(): ConnectorAdapter {
   };
 }
 
+/**
+ * Where the product catalog (`ConnectorProductCatalog` in `@rally/contracts`)
+ * disagrees with the adapter that authorizes its products, or null. The
+ * catalog says what a person may connect and a card may offer; the adapter is
+ * what the server accepts. A product offering a scope its adapter refuses, a
+ * card offering one the adapter no longer takes, a grant no product owns, or a
+ * provider with no product would each show a person, or the agent, something
+ * that is not so. Checked when the registry is built, so it fails at startup.
+ */
+export function connectorCatalogConsistencyIssue(
+  adapter: Pick<ConnectorAdapter, "manifest" | "connectableScopes">,
+): string | null {
+  const { manifest } = adapter;
+  const products = ConnectorProductIds.filter((id) => ConnectorProductCatalog[id].providerType === manifest.type);
+  if (products.length === 0) return "has no product in the connector catalog";
+  const connectable: readonly string[] = adapter.connectableScopes ?? manifest.supportedScopes;
+  for (const id of products) {
+    const product = ConnectorProductCatalog[id];
+    const unsupported = product.scopes.filter((scope) => !manifest.supportedScopes.includes(scope));
+    if (unsupported.length) return `product ${id} offers ${unsupported.join(", ")}, which the adapter does not support`;
+    const closed = product.cardScopes.filter((scope) => !connectable.includes(scope));
+    if (closed.length) return `product ${id} lets a card connect ${closed.join(", ")}, which the adapter does not accept`;
+  }
+  const declaredHost = new Set(products.flatMap((id) =>
+    (ConnectorProductCatalog[id] as { hostCapabilities?: readonly string[] }).hostCapabilities ?? []));
+  const manifestHost = new Set((manifest.capabilities ?? [])
+    .filter((capability) => capability.kind === "host").map(({ id }) => id));
+  const hostDrift = [...new Set([...declaredHost, ...manifestHost])]
+    .filter((id) => declaredHost.has(id) !== manifestHost.has(id)).sort();
+  if (hostDrift.length) return `host grants ${hostDrift.join(", ")} differ between the catalog's hostCapabilities and the manifest`;
+  const unowned = (manifest.capabilities ?? []).filter((capability) =>
+    !products.some((id) => connectorConnectionServesProduct(id, { connectorType: manifest.type, capabilities: [capability.id] })));
+  if (unowned.length) return `grants ${unowned.map(({ id }) => id).join(", ")} belong to no catalog product`;
+  return null;
+}
+
 export class ConnectorRegistry {
   private readonly adapters = new Map<string, ResolvedConnectorAdapter>();
 
@@ -5755,6 +5788,12 @@ export class ConnectorRegistry {
           );
         }
       }
+      // Last, so an adapter's own inconsistency is reported before how it
+      // disagrees with the catalog.
+      const catalogIssue = connectorCatalogConsistencyIssue({ ...adapter, manifest });
+      if (catalogIssue) {
+        throw new ConnectorError("invalid_configuration", `Connector ${manifest.type} ${catalogIssue}`);
+      }
       this.adapters.set(
         manifest.type,
         instrumentConnectorAdapter({ ...adapter, manifest }, observer) as ResolvedConnectorAdapter,
@@ -5785,7 +5824,6 @@ export function createConnectorRegistry(input: {
   customMcp?: CustomMcpConnectorConfig;
   apollo?: ApolloConnectorConfig;
   ashby?: AshbyConnectorConfig;
-  canva?: CanvaConnectorConfig;
   fireflies?: FirefliesConnectorConfig;
   granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
@@ -5818,7 +5856,6 @@ export function createConnectorRegistry(input: {
     ...input.apollo,
     fetch: instrumentConnectorFetch("apollo", input.apollo.fetch ?? globalThis.fetch, input.observer),
   }));
-  if (input.canva) adapters.push(createCanvaConnector(input.canva));
   if (input.fireflies) adapters.push(createFirefliesConnector({
     ...input.fireflies,
     fetch: instrumentConnectorFetch(

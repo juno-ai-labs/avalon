@@ -2,32 +2,25 @@ import { describe, expect, it } from "vitest";
 import {
   CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   CONNECTOR_CONNECTION_STATE_WIRE_NAME,
-  ConnectorConnectionCardCatalog,
   ConnectorConnectionCardIds,
   ConnectorConnectionCardInputSchema,
-  ConnectorConnectionCardScopes,
   ConnectorConnectionStateInputSchema,
-  ConnectorConnectionStateResultSchema,
-  bestConnectorConnectionState,
-  connectorAuthorizationStatus,
   sourceConnectionCardId,
   connectorConnectionCardSummary,
-  connectorConnectionStateSummary,
   connectorConnectionCardInputFromToolEvent,
   isConnectorConnectionCardWireName,
   LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
 } from "./connector-connection-card";
+import { ConnectorScopes } from "./connector-catalog";
 
 describe("connector connection card contract", () => {
   it("accepts google-drive in either scope and retires the old id for new requests", () => {
     for (const scope of ["personal", "workspace"]) {
       expect(ConnectorConnectionCardInputSchema.parse({ connectorId: "google-drive", scope }))
         .toEqual({ connectorId: "google-drive", scope });
-      expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "google-drive", scope }))
-        .toEqual({ connectorId: "google-drive", scope });
       expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "google-drive-workspace", scope }).success)
         .toBe(false);
-      expect(ConnectorConnectionStateInputSchema.safeParse({ connectorId: "google-drive-workspace", scope }).success)
+      expect(ConnectorConnectionStateInputSchema.safeParse({ connectorId: "google-drive-workspace" }).success)
         .toBe(false);
     }
   });
@@ -70,40 +63,11 @@ describe("connector connection card contract", () => {
     expect(CONNECTOR_CONNECTION_STATE_WIRE_NAME).toBe("get_connector_connection_state");
   });
 
-  it("accepts only closed connector connection states", () => {
-    expect(ConnectorConnectionStateResultSchema.parse({
-      connectorId: "slack",
-      state: "connected",
-      connections: [{ scope: "personal", state: "connected" }],
-    })).toEqual({ connectorId: "slack", state: "connected", connections: [{ scope: "personal", state: "connected" }] });
-    expect(ConnectorConnectionStateResultSchema.safeParse({
-      connectorId: "slack",
-      state: "probably_connected",
-      connections: [{ scope: "personal", state: "connected" }],
-    }).success).toBe(false);
-    expect(ConnectorConnectionStateResultSchema.safeParse({
-      connectorId: "slack",
-      state: "connected",
-      connections: [],
-    }).success).toBe(false);
-  });
-
-  it("lets the state check leave scope out, and accepts any scope it is sent", () => {
+  it("takes a connector alone, and refuses a scope rather than ignoring it", () => {
     expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "slack" })).toEqual({ connectorId: "slack" });
-    // Ignored by the check, so a scope the connector lacks is no reason to fail the call.
-    expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "granola", scope: "workspace" }))
-      .toEqual({ connectorId: "granola", scope: "workspace" });
-  });
-
-  it("folds per-scope states to the best one and names each in the summary", () => {
-    expect(bestConnectorConnectionState(["not_connected", "connected"])).toBe("connected");
-    expect(bestConnectorConnectionState(["not_connected", "reconnect_required"])).toBe("reconnect_required");
-    expect(bestConnectorConnectionState(["unavailable"])).toBe("unavailable");
-    expect(connectorConnectionStateSummary({
-      connectorId: "slack",
-      state: "connected",
-      connections: [{ scope: "personal", state: "not_connected" }, { scope: "workspace", state: "connected" }],
-    })).toBe("slack: personal not_connected, workspace connected");
+    const withScope = ConnectorConnectionStateInputSchema.safeParse({ connectorId: "google-drive", scope: "workspace" });
+    expect(withScope.success).toBe(false);
+    expect(withScope.error?.issues).toMatchObject([{ code: "unrecognized_keys", keys: ["scope"] }]);
   });
 
   it("recovers durable card identity without accepting arbitrary summary prose", () => {
@@ -139,17 +103,21 @@ describe("connector connection card contract", () => {
     expect(isConnectorConnectionCardWireName(undefined)).toBe(false);
   });
 
-  it("derives every accepted id and scope from the shared non-UI catalog", () => {
-    expect(ConnectorConnectionCardIds).toEqual(Object.keys(ConnectorConnectionCardCatalog));
-    for (const [connectorId, entry] of Object.entries(ConnectorConnectionCardCatalog)) {
-      expect(entry.iconName).not.toBe("");
-      for (const scope of ConnectorConnectionCardScopes) {
-        const supported = (entry.scopes as readonly string[]).includes(scope);
-        expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId, scope }).success).toBe(supported);
-      }
+  it("offers a card for exactly the products a conversation can connect, in their card scopes", () => {
+    expect(ConnectorConnectionCardIds).toEqual([
+      "google-mail-calendar", "google-drive", "github", "apollo", "ashby",
+      "fireflies", "granola", "linear", "slack", "notion",
+    ]);
+    // Made in Settings only: an administrator's key, or a server somebody configures.
+    for (const connectorId of ["x", "custom-mcp", "generic-webhook"]) {
+      expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId, scope: "workspace" }).success).toBe(false);
+    }
+    expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "ashby", scope: "personal" }).success).toBe(true);
+    expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "ashby", scope: "workspace" }).success).toBe(false);
+    for (const scope of ConnectorScopes) {
+      expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "linear", scope }).success).toBe(true);
     }
   });
-
   it("rejects display data and unknown connectors from the model", () => {
     expect(ConnectorConnectionCardInputSchema.safeParse({
       connectorId: "slack",
@@ -164,15 +132,6 @@ describe("connector connection card contract", () => {
       connectorId: "granola",
       scope: "workspace",
     }).success).toBe(false);
-  });
-});
-
-describe("shared connector authorization status", () => {
-  it.each([
-    ["healthy", "healthy"], ["error", "healthy"],
-    ["needs_reconnect", "reconnect_required"], ["disabled", "disabled"],
-  ])("maps stored %s to %s for model and UI", (stored, expected) => {
-    expect(connectorAuthorizationStatus(stored)).toBe(expected);
   });
 });
 

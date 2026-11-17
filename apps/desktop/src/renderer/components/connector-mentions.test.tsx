@@ -577,32 +577,6 @@ describe('connector connection resolution', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Unavailable');
   });
 
-  it('points a browser at the Mac app for a desktop-only connector, reconnect included', async () => {
-    mocks.session.authentication = 'cookie';
-    mocks.getAvailableConnectorTypes.mockResolvedValue(['canva']);
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ConnectorConnectionsProvider connections={[{
-          id: 'connection-canva',
-          modelPluginId: 'plugin_canva',
-          connectorType: 'canva',
-          displayName: 'Canva',
-          scope: 'you',
-          status: 'reconnect_required',
-          capabilities: ['canva.personal.mcp'],
-        }]}>
-          <ConnectorConnectionCard request={{ connectorId: 'canva', scope: 'personal' }} />
-        </ConnectorConnectionsProvider>
-      </QueryClientProvider>,
-    );
-
-    expect(await screen.findByRole('link', { name: 'Download the Mac app to connect this.' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
-    expect(mocks.reconnectConnection).not.toHaveBeenCalled();
-    expect(mocks.startProviderConnection).not.toHaveBeenCalled();
-  });
-
   it('disables organization OAuth for members', async () => {
     mocks.workspaceRole = 'member';
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

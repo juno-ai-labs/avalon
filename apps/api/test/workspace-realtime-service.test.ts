@@ -46,7 +46,6 @@ describe('workspaceSyncPublicationsForMutation', () => {
     expect(workspaceSyncPublicationsForMutation('POST', '/notes')).toEqual([]);
     expect(workspaceSyncPublicationsForMutation('POST', '/connections/slack/link/preview')).toEqual([]);
     // The OAuth completion it runs publishes the connection's topics itself.
-    expect(workspaceSyncPublicationsForMutation('POST', '/connections/canva/complete')).toEqual([]);
     expect(workspaceSyncPublicationsForMutation('POST', '/connections/oauth/claim')).toEqual([]);
   });
 });

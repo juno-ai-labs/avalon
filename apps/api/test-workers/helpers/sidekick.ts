@@ -93,8 +93,7 @@ export async function runSidekickAlarms(env: Env, workspaceId: string, region = 
  *
  * With `revision`, it also takes the apply's post-commit step for that
  * revision (its Slack sources' joins), and in every case it re-arms the
- * workspace alarm as a hosted write does, so a Canva poll schedule the
- * registrations enabled is due.
+ * workspace alarm as a hosted write does.
  */
 export async function writeSidekickRegistrations(
   env: Env, workspaceId: string, automationId: string, evaluators: readonly unknown[], region = "global",

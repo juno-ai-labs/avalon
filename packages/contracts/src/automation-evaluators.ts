@@ -29,7 +29,6 @@ export const ConnectorTypeSchema = z.enum([
   "generic_webhook",
   "github",
   "ashby",
-  "canva",
   "fireflies",
   "granola",
   "linear",

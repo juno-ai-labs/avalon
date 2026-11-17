@@ -110,7 +110,6 @@ export const WorkspaceConnectorResourceResolveRequestSchema = deferredZodSchema(
   resourceType: z.string(),
   title: z.string(),
   canonicalUrl: z.string().nullable(),
-  protectedAccessJson: z.string().nullable().optional(),
   connectionAuthority: z.strictObject({
     connectorType: z.string(),
     scope: z.enum(["personal", "workspace"]),

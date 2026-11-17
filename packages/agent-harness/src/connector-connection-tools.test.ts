@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ConnectorConnectionCardCatalog } from "@rally/contracts";
+import { ConnectorConnectionCardIds } from "@rally/contracts";
 
 import {
   AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
+  AVALON_LIST_CONNECTORS_TOOL_DEFINITION,
   AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
 } from "./index";
 
@@ -19,9 +20,21 @@ describe("connector connection tool guidance", () => {
     expect(check.description).toContain("A connected personal connection is enough on its own.");
     expect(show.description).toContain("Never tell a person to complete a connection prompt unless this tool ran in that same reply.");
     expect(check.description).toContain("show_connector_connection with the same connectorId and the scope the task needs");
-    expect(show.description).toContain("Call only after get_connector_connection_state returns");
+    expect(check.description).toContain("When that scope's connectIn is settings, no card can connect it");
+    expect(show.description).toContain("Call only after get_connector_connection_state or list_connectors returns");
     expect(show.description).toContain("Use the same connectorId, and the scope the task needs.");
     expect(show.description).toContain("do not claim the connector is connected");
+  });
+
+  it("tells the model what the connector list returns and where a missing one is made", () => {
+    const list = AVALON_LIST_CONNECTORS_TOOL_DEFINITION;
+    expect(list.name).toBe("list_connectors");
+    expect(list.inputSchema).toMatchObject({ type: "object", additionalProperties: false, properties: {} });
+    expect(list.description).toContain("grouped by family");
+    expect(list.description).toContain("A person can have more than one account for a connector.");
+    expect(list.description).toContain("conversation, with show_connector_connection; settings, by the person in Settings");
+    // When to list and when to offer live in the core plugin's system line, once.
+    expect(list.description).not.toContain("Sidekick run");
   });
 
   it("describes both card parameters in direct product language", () => {
@@ -43,27 +56,28 @@ describe("connector connection tool guidance", () => {
     const connectorIds = schema.properties?.connectorId?.description ?? "";
     expect(connectorIds).toBe(
       "Connector to check or show."
-      + " Personal only: google-mail-calendar, apollo, ashby, canva, fireflies, granola."
+      + " Personal only: google-mail-calendar, apollo, ashby, fireflies, granola."
       + " Personal or workspace: google-drive, github, linear, slack, notion."
       + " google-drive is Google Drive, Docs and Sheets.",
     );
     // The second is that the sentence keeps naming every id the catalog holds,
     // so a connector added there cannot be quietly missing from what the model
     // is told it may ask for.
-    for (const id of Object.keys(ConnectorConnectionCardCatalog)) {
+    for (const id of ConnectorConnectionCardIds) {
       expect(connectorIds, id).toContain(id);
     }
     expect(schema.properties?.scope?.description)
       .toBe("Use personal for the current user's account. Use workspace only for an id described as personal or workspace.");
   });
 
-  it("lets the state check leave scope out", () => {
+  it("asks the state check for a connector alone", () => {
     const schema = AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION.inputSchema as {
+      additionalProperties?: unknown;
       properties?: Record<string, { description?: string }>;
       required?: string[];
     };
     expect(schema.required).toEqual(["connectorId"]);
-    expect(schema.properties?.scope?.description)
-      .toBe("Leave out. Every scope this connector offers is checked whatever is sent.");
+    expect(Object.keys(schema.properties ?? {})).toEqual(["connectorId"]);
+    expect(schema.additionalProperties).toBe(false);
   });
 });

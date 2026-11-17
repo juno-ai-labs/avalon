@@ -31,7 +31,6 @@ export const TELEMETRY_CONNECTOR_TYPES = [
   "github",
   "apollo",
   "ashby",
-  "canva",
   "fireflies",
   "granola",
   "linear",

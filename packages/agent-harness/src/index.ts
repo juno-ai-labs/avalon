@@ -23,6 +23,8 @@ import {
   ConnectorConnectionCardInputSchema,
   MemberCardInputSchema,
   ConnectorConnectionStateInputSchema,
+  ConnectorListInputSchema,
+  CONNECTOR_LIST_TOOL_NAME,
   PickedAppearanceSchema,
   PROJECT_COLOR_KEYS_STORABLE,
   PROJECT_COLOR_RING,
@@ -3554,6 +3556,7 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
     "Each state is connected, reconnect_required, not_connected, or unavailable.",
     "If a connected scope can do the task, continue with it and do not show a card. A connected personal connection is enough on its own.",
     "If no connected scope can and reconnect_required or not_connected blocks the task, briefly explain why, then call show_connector_connection with the same connectorId and the scope the task needs.",
+    "When that scope's connectIn is settings, no card can connect it: say the person adds it in Settings, under Connections, and for the Organization scope only an administrator can.",
     "If unavailable, explain that this connector is not configured in this Rally region and do not show a card.",
     "This checks Rally's saved state, not the provider directly.",
   ].join(" "),
@@ -3562,6 +3565,32 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
   idempotency: "safe",
   get inputSchema() {
     return connectorConnectionStateInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+const connectorListInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(ConnectorListInputSchema, { io: "input" }) as Record<string, unknown>,
+);
+
+/**
+ * Every connector Rally offers, grouped by what it is for, with the caller's
+ * saved state and accounts for each. Where the state check answers "is this
+ * one connected?", this answers "which connector would help here?", including
+ * ones the person has not connected yet.
+ */
+export const AVALON_LIST_CONNECTORS_TOOL_DEFINITION = {
+  name: CONNECTOR_LIST_TOOL_NAME,
+  description: [
+    "List every connector Rally offers, grouped by family such as email and calendar, file storage, team chat or issue tracking.",
+    "Each has its connectorId, name, a one-line description, state (connected, reconnect_required, not_connected or unavailable), each scope's state, and accounts: every saved connection with its scope, state and account, such as an email address. A person can have more than one account for a connector.",
+    "connectIn on a scope says where a missing connection is made: conversation, with show_connector_connection; settings, by the person in Settings under Connections, and for the Organization scope only by an administrator.",
+    "This reads Rally's saved state, not the provider.",
+  ].join(" "),
+  capability: "connector.connection.read",
+  mode: "read",
+  idempotency: "safe",
+  get inputSchema() {
+    return connectorListInputJsonSchema();
   },
 } as const satisfies ToolDefinition;
 
@@ -3618,8 +3647,8 @@ export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
   name: "show_connector_connection",
   description: [
     "Show a persistent card that lets the user connect or reconnect a connector.",
-    "Call only after get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
-    "Use the same connectorId, and the scope the task needs. Briefly explain what is blocked before this call.",
+    "Call only after get_connector_connection_state or list_connectors returns reconnect_required or not_connected, and the missing connection blocks the task or would clearly improve what was asked for.",
+    "Use the same connectorId, and the scope the task needs. Briefly explain what is blocked, or what the connection would add, before this call.",
     "The card appears in this conversation only. Never tell a person to complete a connection prompt unless this tool ran in that same reply.",
     "After this call, do not claim the connector is connected or retry connector-dependent work in this run.",
     "Never create an authorization URL or ask for credentials.",

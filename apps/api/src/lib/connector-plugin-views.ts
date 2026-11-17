@@ -1,4 +1,4 @@
-import { ConnectorConnectionCardCatalog } from "@rally/contracts";
+import { ConnectorProductCatalog } from "@rally/contracts";
 
 export type GooglePluginBundle = "mail_calendar" | "drive";
 
@@ -12,8 +12,8 @@ export interface ConnectorPluginView {
 
 function googleBundles(grantedScopes: readonly string[]) {
   return [
-    { key: "mail_calendar" as const, prefixes: ConnectorConnectionCardCatalog["google-mail-calendar"].capabilityPrefixes },
-    { key: "drive" as const, prefixes: ConnectorConnectionCardCatalog["google-drive"].capabilityPrefixes },
+    { key: "mail_calendar" as const, prefixes: ConnectorProductCatalog["google-mail-calendar"].capabilityPrefixes },
+    { key: "drive" as const, prefixes: ConnectorProductCatalog["google-drive"].capabilityPrefixes },
   ].map(({ key, prefixes }) => ({ key, grantedScopes: grantedScopes.filter((scope) =>
     prefixes.some((prefix) => scope.startsWith(prefix))) }))
     .filter((bundle) => bundle.grantedScopes.length > 0);

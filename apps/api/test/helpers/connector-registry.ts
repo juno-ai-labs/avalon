@@ -43,7 +43,6 @@ export const testRegistryConfig: Required<
   customMcp: { redirectUri: "https://api.example.com/callback" },
   apollo: { redirectUri: "https://api.example.com/connections/apollo/callback" },
   ashby: { redirectUri: "https://api.example.com/callback" },
-  canva: { redirectUri: "https://api.example.com/connections/canva/callback" },
   fireflies: { redirectUri: "https://api.example.com/callback" },
   granola: { redirectUri: "https://api.example.com/callback" },
   google: oauth,
