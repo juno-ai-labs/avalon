@@ -34,7 +34,7 @@ describe("createSequencedStreamDeltaBatcher", () => {
     expect(published).toEqual(["I", "'ll check the repository."]);
   });
 
-  it("keeps a timer flush in order with a later push", async () => {
+  it("sends one frame per window across a timer flush", async () => {
     const published: string[] = [];
     vi.setSystemTime(0);
     const batcher = createSequencedStreamDeltaBatcher(async (event) => {
@@ -51,6 +51,30 @@ describe("createSequencedStreamDeltaBatcher", () => {
     await batcher.flush();
 
     expect(published).toEqual(["a", "b", "c"]);
+  });
+
+  it("holds a caller's flush until a timer publish in flight has landed", async () => {
+    const landed: string[] = [];
+    let release: () => void = () => undefined;
+    vi.setSystemTime(0);
+    const batcher = createSequencedStreamDeltaBatcher(async (event) => {
+      if (event.delta === "b") await new Promise<void>((resolve) => { release = resolve; });
+      landed.push(event.delta);
+    });
+
+    vi.setSystemTime(1_000);
+    await batcher.push(delta("a", 1));
+    vi.setSystemTime(1_020);
+    await batcher.push(delta("b", 2));
+    // The timer starts publishing "b", which has not landed yet.
+    await vi.advanceTimersByTimeAsync(100);
+    // As emit() does before a tool event: flush, then publish the event.
+    const toolEvent = batcher.flush().then(() => { landed.push("tool_started"); });
+    await Promise.resolve();
+    release();
+    await toolEvent;
+
+    expect(landed).toEqual(["a", "b", "tool_started"]);
   });
 
   it("sends nothing more after an explicit flush empties the batch", async () => {
