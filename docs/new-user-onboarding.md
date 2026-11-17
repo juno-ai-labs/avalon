@@ -1,7 +1,7 @@
 # New-user onboarding
 
 Rally helps organization creators connect their tools and
-invite teammates, then guides each person through personal appearance. Invitations finish creator
+add teammates, then guides each person through personal appearance. Adding teammates finishes creator
 setup and open the main app at New. Existing accounts are exempted when the migration runs. This
 ships directly for newly created accounts, with no feature flag.
 
@@ -22,8 +22,8 @@ ships directly for newly created accounts, with no feature flag.
 | `packages/db/migrations/0123_organization_name_suggestions.sql` | The per-domain suggestion cache. |
 | `apps/api/src/lib/html-metadata.ts` | Reading `<title>` and `<meta>` out of page source; shared with site social previews. |
 | `apps/desktop/src/renderer/screens/create-organization.tsx` | The create-organization card, shared by the Mac app and the browser. |
-| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup and invitations. |
-| `apps/desktop/src/renderer/components/invite-emails.tsx` | The email-chip invite field, its validation, and sending a list as member invitations; shared with the account menu's **Add new member** dialog (`add-members-dialog.tsx`). |
+| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup and adding teammates. |
+| `apps/desktop/src/renderer/components/invite-emails.tsx` | The email-chip field, its validation, and adding a list as members; shared with the account menu's **Add new member** dialog (`add-members-dialog.tsx`). |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
 ## How it works
@@ -44,7 +44,7 @@ This migration includes the persisted scoped connector selection. Deploy the ide
 and API before releasing the desktop client; existing accounts are exempted by
 the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through personal
-appearance, then invitations; members finish after personal appearance.
+appearance, then adding teammates; members finish after personal appearance.
 Finishing saves `complete` and then leaves for the Canvases home through
 `useOpenLanding`, replacing the journey's entry, unless the route under the
 journey opens one Canvas or one Sidekick by its id (a shared link, or a
@@ -112,7 +112,7 @@ added and otherwise stays open holding the addresses that failed.
 - The workspace object owns progress. Generic SQL cannot address its typed-only
   onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt. The guide Canvas is asked for by creating the Organization, not by the journey, and no model runs to make it.
-- The visible email list and invitation action authorize sending through the existing workspace service.
+- The visible email list and Add action authorize adding through the existing workspace service.
 - `connectors` stays in the stage enum, the table's check and the contract, and
   `connectorIds` stays on the journey, because rows written before the step was
   retired hold them. Reading a journey stored at `connectors` moves it to
@@ -149,8 +149,8 @@ held on an opening state ([`desktop-shell.md`](desktop-shell.md#the-landing-and-
 Completion releases admission without
 reconnecting; an unfinished result replaces the workspace without first marking
 its conversations opened.
-Background refetch failures keep cached onboarding state. Unsent invitation
-inputs remain in the renderer; successful invitations remain on the server. Global account saves return independently of regional discovery and sync
+Background refetch failures keep cached onboarding state. Addresses not yet
+added remain in the renderer; added members remain on the server. Global account saves return independently of regional discovery and sync
 notifications. Subsequent identity discovery reconciles regional projections;
 equal projections do not emit repeated invalidations.
 

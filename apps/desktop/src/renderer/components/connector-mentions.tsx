@@ -294,6 +294,8 @@ export interface ConnectorConnectionAction {
   macAppOnly: boolean;
   start: () => void;
   pending: boolean;
+  /** The OAuth attempt this card is waiting on, while it waits: its outcome can be read back by id. */
+  attemptId: string | null;
   reconnect: boolean;
   unavailable: boolean;
 }
@@ -459,6 +461,7 @@ function useResolvedConnectorConnectionAction(
     macAppOnly: !connectorStartsHere(session, provider.provider),
     start: () => connect.mutate(),
     pending,
+    attemptId: awaiting && pendingConnectorOAuth ? pendingConnectorOAuth.attemptId : null,
     reconnect: matchingConnections.length > 0,
     unavailable: !api || connections === undefined || availability.isError || !providerAvailable,
   };

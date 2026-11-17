@@ -39,7 +39,7 @@ export interface WorkspaceMemberAddedEmail {
 /**
  * Tell a person they were added to an Organization. They are a member when
  * this is sent; the link only opens Rally, where signing in with this address
- * reaches the account the adding made for them. One email per membership.
+ * reaches the account the adding made for them.
  */
 export async function sendWorkspaceMemberAddedEmail(
   env: Env,
@@ -52,6 +52,8 @@ export async function sendWorkspaceMemberAddedEmail(
     `${added.inviterName} added you to ${added.workspaceName} as ${roleLabel}.`,
     "",
     `Open Rally and sign in with ${added.recipientEmail}: ${added.openUrl}`,
+    "",
+    "If you were not expecting this, you can leave the Organization from Settings in Rally.",
   ].join("\n");
   const workspaceName = escapeHtml(added.workspaceName);
   const html = `<!doctype html>
@@ -70,6 +72,7 @@ export async function sendWorkspaceMemberAddedEmail(
           <tr><td style="font-size:16px;line-height:1.6;color:#3d3d3d">${escapeHtml(added.inviterName)} added you to <strong style="color:#141414">${workspaceName}</strong> as ${escapeHtml(roleLabel)}.</td></tr>
           <tr><td style="padding:28px 0"><a href="${escapeHtml(added.openUrl)}" style="display:inline-block;background:#070707;color:#fcfcfc;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:8px">Open Rally</a></td></tr>
           <tr><td style="font-size:13px;line-height:1.6;color:#696969">Sign in with ${escapeHtml(added.recipientEmail)}.</td></tr>
+          <tr><td style="padding-top:24px;font-size:12px;line-height:1.5;color:#696969;border-top:1px solid #e5e5e5">If you were not expecting this, you can leave the Organization from Settings in Rally.</td></tr>
         </table>
       </td></tr>
     </table>

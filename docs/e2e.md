@@ -132,7 +132,7 @@ search (not an IME composition). Search `Tools Rally may use` before installing
 MCP and confirm the provider setup card is revealed without authorization.
 With two installed servers, search each name and verify the corresponding
 instance. Navigate away or focus another field while a read is pending: a late
-result must not steal focus. Search Send invitation with a populated
+result must not steal focus. Search Add member with a populated
 form and verify search does not submit it. These are renderer checks, not proof
 of backend authorization; [settings search](settings-search.md) owns the contract.
 
@@ -160,7 +160,7 @@ continue. Right-click a Canvas row, a Sidekick row and a note in the sidebar and
 
 8. Open **Notifications** and confirm **Notify me about** lists exactly Mentions, New messages, Being added, Sidekick runs, Pinned Canvas updates and Access requests, in that order, each with its channels, and no **Daily digest** section. Open the old `digest` settings deep link and confirm it lands on Notifications.
 
-9. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Cloudflare accepts the request. Verify the message is from `Rally <invites@rallywith.ai>`, contains the correct workspace, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
+9. Add a member by email as an owner/admin and confirm the UI reports **Added** and that they are a member now. Verify the "you were added" message is from `Rally <invites@rallywith.ai>`, names the workspace and role, and opens Rally. Force the send to fail and confirm the UI says to tell them to sign in with that address.
 
 10. Install a workspace Google Drive connection, open a new Canvas as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
 
@@ -168,7 +168,7 @@ continue. Right-click a Canvas row, a Sidekick row and a note in the sidebar and
 
 12. For each OAuth connector, confirm the provider returns to `/auth/desktop/`, the page reports success or cancellation and offers **Open Rally**, and Settings reaches the same terminal result when automatic app opening is blocked. Close Rally before a successful callback, reopen it, and confirm the persisted connection appears without repeating authorization.
 
-13. Accept the emailed invitation with the matching Google identity, confirm it cannot be reused, then create another invitation and revoke it before opening the email. Confirm the revoked link fails and a non-admin cannot create or revoke invitations. Sign out from Settings and confirm both application surfaces return to onboarding.
+13. Sign in as the added address with the matching Google identity and confirm it lands in the Organization, through personal setup if it is their first. Confirm a non-admin cannot add members. Sign out from Settings and confirm both application surfaces return to onboarding.
 
 ### Multiple workspaces
 
