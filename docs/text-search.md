@@ -765,7 +765,7 @@ cause that outlasts that still dead-letters, which remains the signal. The
 delay schedule is one number for every backed-off lane; changing it changes
 them all.
 
-Shipped in #1606's re-land.
+Shipped in #1657 (re-lands #1606).
 
 ### 2026-11-10 — Count span tokens from additive cuts during chunk planning
 
