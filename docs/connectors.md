@@ -213,7 +213,10 @@ names (a custom MCP server, an inbound webhook) reads the whole name.
 see and the providers this deployment registers, it returns each product's
 state, a row per offered scope with `connectIn` (`conversation` when a card can
 connect it, `settings` otherwise), and an account per saved connection.
-Disabled connections are not connections. Every other saved connection counts,
+Disabled connections are not connections, and neither is one holding only
+grants that give the agent no tools (`hostCapabilities`: Ashby's workspace events
+installation, which brings events in but no recruiting tools). Every other saved
+connection counts,
 even in a scope the product no longer offers for new ones: a Fireflies
 workspace key pasted before that scope closed still serves tools, so it reports
 connected, under a scope row only Settings can make. A product whose provider is
@@ -226,8 +229,9 @@ states do not; it selects connections with the same
 connector registry runs `connectorCatalogConsistencyIssue` on each adapter,
 after its own checks: every registered provider has a product, a product
 offers only scopes its adapter supports, a card connects only scopes the
-adapter still accepts (`connectableScopes`), and every grant the manifest
-declares belongs to a product. A disagreement is an `invalid_configuration`
+adapter still accepts (`connectableScopes`), every grant the manifest
+declares belongs to a product, and a product's `hostCapabilities` are exactly
+its manifest's capabilities of kind `host`. A disagreement is an `invalid_configuration`
 error naming the product and scope or grant, so a catalog edit that the server
 would refuse fails the Worker's start rather than a person's connection.
 

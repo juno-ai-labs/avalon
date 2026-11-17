@@ -56,6 +56,14 @@ type ConnectorProduct = {
   providerType: string;
   /** The grants of a provider connection that belong to this product; empty means all of them. */
   capabilityPrefixes: readonly string[];
+  /**
+   * Grants Rally itself uses (events in, notices out) that give the agent no
+   * tools: the manifest's capabilities of kind `host`, mirrored here and
+   * checked against it when the registry is built. A connection holding only
+   * these, such as Ashby's workspace events installation, is not a connection
+   * the agent can use, so it does not count toward the product's state.
+   */
+  hostCapabilities?: readonly string[];
   /** Scopes the product is offered in at all. */
   scopes: readonly [ConnectorScope, ...ConnectorScope[]];
   /**
@@ -131,6 +139,7 @@ export const ConnectorProductCatalog = {
     // which a card in a transcript cannot offer a participant.
     scopes: ["personal", "workspace"],
     cardScopes: ["personal"],
+    hostCapabilities: ["ashby.workspace.events"],
     instance: "account",
     iconName: "ashby",
   },
@@ -194,6 +203,7 @@ export const ConnectorProductCatalog = {
     capabilityPrefixes: [],
     scopes: ["personal", "workspace"],
     cardScopes: ["personal", "workspace"],
+    hostCapabilities: ["slack.notifications.write"],
     instance: "account",
     iconName: "slack",
   },
@@ -373,8 +383,9 @@ export type ConnectorConnectionRecord = {
  * Each product's state from the caller's saved connections. Pure: the caller
  * reads the rows and says which providers this deployment registers; a product
  * whose provider it does not is `unavailable` in every scope. Disabled
- * connections are not connections. Every other saved connection counts, even
- * in a scope the product no longer offers for new ones.
+ * connections are not connections, nor is one holding only grants that give
+ * the agent no tools (`hostCapabilities`). Every other saved connection counts,
+ * even in a scope the product no longer offers for new ones.
  */
 export function foldConnectorProductStates(
   productIds: readonly ConnectorProductId[],
@@ -398,6 +409,8 @@ export function foldConnectorProductStates(
     const accounts = connections.flatMap((connection) => {
       const authorization = connectorAuthorizationStatus(connection.status);
       if (authorization === "disabled") return [];
+      const host: readonly string[] = product.hostCapabilities ?? [];
+      if (connection.capabilities.length > 0 && connection.capabilities.every((capability) => host.includes(capability))) return [];
       if (!connectorConnectionServesProduct(connectorId, connection)) return [];
       return [{
         scope: connection.scope,

@@ -116,6 +116,19 @@ describe("folding saved connections into product states", () => {
     });
   });
 
+  it("does not count a connection whose grants give the agent no tools", () => {
+    // Ashby's workspace events installation: events in, no recruiting tools.
+    const [ashby] = foldConnectorProductStates(["ashby"], [
+      record({ connectorType: "ashby", scope: "workspace", capabilities: ["ashby.workspace.events"], displayName: "Ashby · Acme" }),
+    ], everyProvider);
+    expect(ashby).toMatchObject({ state: "not_connected", accounts: [] });
+    // Slack's workspace agent still counts beside its host-only notice grant.
+    const [slack] = foldConnectorProductStates(["slack"], [
+      record({ connectorType: "slack", scope: "workspace", capabilities: ["slack.agent", "slack.notifications.write"] }),
+    ], everyProvider);
+    expect(slack).toMatchObject({ state: "connected" });
+  });
+
   it("calls a product whose provider this deployment lacks unavailable in every scope", () => {
     const [github] = foldConnectorProductStates(["github"], [record({ connectorType: "github" })], new Set(["slack"]));
     expect(github).toMatchObject({
