@@ -2,6 +2,7 @@
   "name": "@rally/api",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only OR LicenseRef-Rally-Commercial",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --config wrangler.global.jsonc --config wrangler.documents.global.jsonc --config wrangler.terminal.global.jsonc --config wrangler.telemetry.global.jsonc --env-file .dev.vars.global --persist-to .wrangler/state/global --port 8787 --inspector-port 9230",

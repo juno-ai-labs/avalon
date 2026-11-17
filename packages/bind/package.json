@@ -3,7 +3,7 @@
   "version": "16.0.0",
   "private": true,
   "description": "Agent loop, model routing, tool and skill mechanics for Rally.",
-  "license": "MIT",
+  "license": "AGPL-3.0-only OR LicenseRef-Rally-Commercial",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
