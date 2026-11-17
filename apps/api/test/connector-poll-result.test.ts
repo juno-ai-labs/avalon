@@ -6,7 +6,6 @@ import { ConnectorError } from "@rally/connectors";
 
 import {
   failedPollAttemptCode,
-  isReconnectRequiredFailure,
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
@@ -100,29 +99,5 @@ describe("terminalPollFailureLevel", () => {
     const fault = new ConnectorError("provider_error", "down", { status: 500 });
     expect(terminalPollFailureLevel(pollAttemptFailure(fault, pollAttemptErrorCode(fault)))).toBe("error");
     expect(terminalPollFailureLevel(new Error("boom"))).toBe("error");
-  });
-});
-
-describe("isReconnectRequiredFailure", () => {
-  it("stops retrying a grant the adapter declared dead", () => {
-    // The failure Google's refresh raises for `invalid_grant`: a step that
-    // retried it spent four refresh calls on every poll of a disconnected account.
-    const revoked = new ConnectorError("unauthorized", "revoked", {
-      reconnectRequired: true, reason: "invalid_grant", status: 400,
-    });
-    expect(isReconnectRequiredFailure(revoked)).toBe(true);
-  });
-
-  it("keeps retrying a 403 that may be a rate limit, and every other failure", () => {
-    const rateLimited = new ConnectorError("unauthorized", "Rate Limit Exceeded", {
-      status: 403, providerError: "rateLimitExceeded",
-    });
-    expect(isReconnectRequiredFailure(rateLimited)).toBe(false);
-    const misconfigured = new ConnectorError("unauthorized", "GitHub OAuth failed", {
-      providerError: "invalid_client", reconnectRequired: false,
-    });
-    expect(isReconnectRequiredFailure(misconfigured)).toBe(false);
-    expect(isReconnectRequiredFailure(new ConnectorError("provider_error", "down", { status: 503 }))).toBe(false);
-    expect(isReconnectRequiredFailure(new Error("unauthorized"))).toBe(false);
   });
 });

@@ -13,13 +13,13 @@ import {
   pollConnectorConnection,
   type ConnectorCursorCommit,
 } from "../services/integrations";
+import { isReconnectRequiredConnectorError } from "../services/connector-connection-access";
 import { recordConnectorPollFailure } from "../services/connector-poll-failure";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service";
 
 import {
   failedPollAttemptCode,
-  isReconnectRequiredFailure,
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
@@ -106,12 +106,8 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               error_code: errorCode,
             });
             const failure = pollAttemptFailure(error, errorCode);
-            // A grant the adapter declared dead is not retried: three more
-            // attempts only spent three more token-endpoint calls on every
-            // poll of every disconnected account. Any other `unauthorized`,
-            // such as a rate-limit 403, keeps its retries. The message, and
-            // so the code, survives the step boundary.
-            if (isReconnectRequiredFailure(error) && failure instanceof Error) {
+            // A grant the adapter declared dead is not retried; see docs/connectors.md.
+            if (isReconnectRequiredConnectorError(error) && failure instanceof Error) {
               throw new NonRetryableError(failure.message);
             }
             throw failure;
