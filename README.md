@@ -158,8 +158,8 @@ any account other than the pinned one).
 - Create the desktop release archive bucket with its location and storage
   class, and attach `downloads.rallywith.ai` as an R2 custom domain on
   `avalon-desktop-releases`.
-- Deploy the release-retention Worker with `pnpm deploy:release-retention`, and
-  again after each change to it. No workflow deploys it.
+- Dispatch `deploy-release-retention.yml` once after the archive bucket exists;
+  later changes deploy on merge to `main`.
 - Set up a Zero Trust team and identity provider, and create the Access
   application and policy for `mcp.internal.rallywith.ai` before its first deploy.
 - Make sure Workers Paid, Containers, Browser Run, Images, Workers AI and

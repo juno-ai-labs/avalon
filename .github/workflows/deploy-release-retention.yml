@@ -21,7 +21,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-release-retention
+  # Per ref, so a skipped dispatch from another branch can't replace a queued
+  # main deploy in the single pending slot.
+  group: deploy-release-retention-${{ github.ref }}
   cancel-in-progress: false
   queue: single
 
@@ -30,7 +32,7 @@ jobs:
     # A dispatch from a feature branch must not deploy that branch.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # Same install/check/deploy scope and budget as deploy-site.yml.
+    # Same budget as deploy-site.yml.
     timeout-minutes: 20
     # The environment that already holds the Worker deployment token.
     environment: api-production
@@ -70,13 +72,13 @@ jobs:
       # ci.yml runs only on pull requests, never on the merge commit or a
       # dispatch, so the deploy verifies the Worker itself.
       - name: Typecheck the retention Worker
-        run: pnpm --filter @rally/release-retention typecheck
+        run: pnpm --filter @rally/release-retention --fail-if-no-match typecheck
 
       - name: Test the retention Worker
-        run: pnpm --filter @rally/release-retention test
+        run: pnpm --filter @rally/release-retention --fail-if-no-match test
 
       - name: Deploy the retention Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: pnpm --filter @rally/release-retention run deploy
+        run: pnpm --filter @rally/release-retention --fail-if-no-match run deploy

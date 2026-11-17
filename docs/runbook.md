@@ -615,7 +615,8 @@ verified archive copies. A successful admitted run logs
 exception is a failed Cron event and must be investigated before manually
 deleting any object.
 
-Before deploying a change, run:
+Before merging a change to `apps/release-retention`, run these (the deploy
+workflow runs the test and typecheck again):
 
 ```text
 pnpm --filter @rally/release-retention test
@@ -634,8 +635,8 @@ curl "http://localhost:8799/cdn-cgi/handler/scheduled?cron=0+9+*+*+*&time=178609
 ```
 
 The timestamp above simulates 02:00 PDT on 2026-08-07. Require an `ok` outcome
-and a structured completion log with `dryRun: true`. After deployment, preserve
-the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
+and a structured completion log with `dryRun: true`. After deployment, check
+the deploy step's log in the workflow run shows both Cron Triggers, and inspect Workers & Pages →
 `avalon-release-retention` → Cron Events after the next window, and check its
 deployed version is the one Wrangler printed. Alert on failed
 events, unexpected `dry-run` production reports, a non-five retained set, or any
@@ -925,7 +926,6 @@ Check in this order, because the two causes look different.
 To ship a desktop build for a change outside the path set, dispatch the workflow against the tag you want, or land any change inside the set — the watermark means that release carries everything unreleased, not just the change that triggered it.
 
 - `.github/workflows/deploy-site.yml` is the sole landing-site publisher. It deploys on a merge to `main` matching its `paths:` filter — `apps/site`, the shared packages, the lockfile, the root TypeScript config and workspace file, and the workflow itself — and on manual dispatch.
-- `.github/workflows/deploy-release-retention.yml` deploys the retention Worker; see [Desktop release retention](#desktop-release-retention).
 
 #### How the desktop release is recorded
 
