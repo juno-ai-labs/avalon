@@ -8,6 +8,10 @@ import {
   ConnectorConnectionCardScopes,
   ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
+  ConnectorListResultSchema,
+  connectorConnectionAccountLabel,
+  connectorListSummary,
+  groupConnectorsByFamily,
   bestConnectorConnectionState,
   connectorAuthorizationStatus,
   sourceConnectionCardId,
@@ -75,16 +79,24 @@ describe("connector connection card contract", () => {
       connectorId: "slack",
       state: "connected",
       connections: [{ scope: "personal", state: "connected" }],
-    })).toEqual({ connectorId: "slack", state: "connected", connections: [{ scope: "personal", state: "connected" }] });
+      accounts: [{ scope: "personal", state: "connected", account: "Acme" }],
+    })).toEqual({
+      connectorId: "slack",
+      state: "connected",
+      connections: [{ scope: "personal", state: "connected" }],
+      accounts: [{ scope: "personal", state: "connected", account: "Acme" }],
+    });
     expect(ConnectorConnectionStateResultSchema.safeParse({
       connectorId: "slack",
       state: "probably_connected",
       connections: [{ scope: "personal", state: "connected" }],
+      accounts: [],
     }).success).toBe(false);
     expect(ConnectorConnectionStateResultSchema.safeParse({
       connectorId: "slack",
       state: "connected",
       connections: [],
+      accounts: [],
     }).success).toBe(false);
   });
 
@@ -103,7 +115,44 @@ describe("connector connection card contract", () => {
       connectorId: "slack",
       state: "connected",
       connections: [{ scope: "personal", state: "not_connected" }, { scope: "workspace", state: "connected" }],
+      accounts: [{ scope: "workspace", state: "connected", account: "Acme" }],
     })).toBe("slack: personal not_connected, workspace connected");
+  });
+
+  it("reads the account from a connection's name, and none from a bare product name", () => {
+    expect(connectorConnectionAccountLabel("Google Mail + Calendar · ada@example.com")).toBe("ada@example.com");
+    expect(connectorConnectionAccountLabel("Linear · Ada · Acme")).toBe("Ada · Acme");
+    expect(connectorConnectionAccountLabel("Canva")).toBeNull();
+    expect(connectorConnectionAccountLabel("GitHub · ")).toBeNull();
+  });
+
+  it("groups connectors by family in catalog order, listing one in each of its families", () => {
+    const state = (connectorId: "github" | "linear" | "slack", connected: boolean) => ({
+      connectorId,
+      state: connected ? "connected" as const : "not_connected" as const,
+      connections: [{ scope: "personal" as const, state: connected ? "connected" as const : "not_connected" as const }],
+      accounts: connected ? [{ scope: "personal" as const, state: "connected" as const, account: "octo" }] : [],
+    });
+    const result = groupConnectorsByFamily([state("slack", false), state("linear", false), state("github", true)]);
+    expect(result.families.map(({ family, connectors }) => [family, connectors.map(({ connectorId }) => connectorId)]))
+      .toEqual([
+        ["team_chat", ["slack"]],
+        ["issue_tracking", ["linear", "github"]],
+        ["code", ["github"]],
+      ]);
+    expect(result.families[0]).toMatchObject({ label: "Team chat", connectors: [{ label: "Slack" }] });
+    expect(ConnectorListResultSchema.parse(result)).toEqual(result);
+    expect(connectorListSummary(result)).toBe("Listed connectors in 3 families; connected: github");
+  });
+
+  it("puts every catalog connector in at least one family", () => {
+    const listed = new Set(groupConnectorsByFamily(ConnectorConnectionCardIds.map((connectorId) => ({
+      connectorId,
+      state: "not_connected" as const,
+      connections: [{ scope: "personal" as const, state: "not_connected" as const }],
+      accounts: [],
+    }))).families.flatMap(({ connectors }) => connectors.map(({ connectorId }) => connectorId)));
+    expect([...listed].sort()).toEqual([...ConnectorConnectionCardIds].sort());
   });
 
   it("recovers durable card identity without accepting arbitrary summary prose", () => {

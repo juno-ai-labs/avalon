@@ -197,6 +197,9 @@ describe("Avalon connector connection tools", () => {
     expect(__integrationTesting.createAvalonTools(env, workspaceInput)
       .some((candidate) => candidate.definition.name === "get_connector_connection_state"))
       .toBe(false);
+    expect(__integrationTesting.createAvalonTools(env, workspaceInput)
+      .some((candidate) => candidate.definition.name === "list_connectors"))
+      .toBe(false);
 
     const automationInput = workflowInput();
     automationInput.automationRun = {
@@ -213,6 +216,7 @@ describe("Avalon connector connection tools", () => {
     expect(runTools.map((candidate) => [candidate.definition.name, candidate.definition.mode, candidate.definition.idempotency]))
       .toEqual([
         ["get_connector_connection_state", "read", "safe"],
+        ["list_connectors", "read", "safe"],
         ["show_connector_connection", "write", "provider_key"],
       ]);
   });
@@ -288,6 +292,8 @@ describe("Avalon connector connection tools", () => {
           connectorId: "google-drive",
           state: "connected",
           connections: [{ scope: "personal", state: "connected" }, { scope: "workspace", state: "not_connected" }],
+          // The display name carries no account, so none is reported.
+          accounts: [{ scope: "personal", state: "connected", account: null }],
         },
         summary: "google-drive: personal connected, workspace not_connected",
       });
@@ -318,6 +324,64 @@ describe("Avalon connector connection tools", () => {
       .resolves.toMatchObject({ output: { state: "connected" } });
   });
 
+  it("lists every connector by family, with each account the caller can use", async () => {
+    const { env, objectDatabase } = fixture();
+    const listTool = __integrationTesting.createAvalonTools(env, workflowInput())
+      .find((candidate) => candidate.definition.name === "list_connectors");
+    expect(listTool?.definition).toMatchObject({
+      capability: "connector.connection.read",
+      mode: "read",
+      idempotency: "safe",
+    });
+    expect(listTool!.validateInput?.({ family: "email_calendar" })).toBeInstanceOf(z.ZodError);
+
+    const insert = objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+          granted_scopes_json, status, created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'google', 'personal', ?, ?, ?, ?, '2026-01-01', '2026-01-01', ?)`,
+    );
+    // Two Google accounts of the caller's for mail and calendar, one needing
+    // a reconnect, and a Drive-only one that must not count as mail.
+    insert.run("00000000-0000-4000-8000-000000000030", WORKSPACE_ID, USER_ID,
+      "Google Mail + Calendar · ada@example.com", JSON.stringify(["gmail.read", "calendar.read"]), "healthy", "plugin_google_a");
+    insert.run("00000000-0000-4000-8000-000000000031", WORKSPACE_ID, USER_ID,
+      "Google Mail + Calendar · ada@other.example", JSON.stringify(["gmail.read"]), "needs_reconnect", "plugin_google_b");
+    insert.run("00000000-0000-4000-8000-000000000032", WORKSPACE_ID, USER_ID,
+      "Google Drive + Docs + Sheets · ada@example.com", JSON.stringify(["drive.read"]), "healthy", "plugin_google_c");
+    // Another member's account is theirs alone.
+    insert.run("00000000-0000-4000-8000-000000000033", WORKSPACE_ID, "00000000-0000-4000-8000-000000000099",
+      "Google Mail + Calendar · grace@example.com", JSON.stringify(["gmail.read"]), "healthy", "plugin_google_d");
+
+    const { output, summary } = await listTool!.execute({}, context()) as {
+      output: { families: Array<{ family: string; connectors: Array<{ connectorId: string; state: string; accounts: unknown[] }> }> };
+      summary: string;
+    };
+    const family = (name: string) => output.families.find((entry) => entry.family === name);
+    expect(family("email_calendar")).toEqual({
+      family: "email_calendar",
+      label: "Email and calendar",
+      connectors: [{
+        connectorId: "google-mail-calendar",
+        label: "Gmail and Google Calendar",
+        state: "connected",
+        connections: [{ scope: "personal", state: "connected" }],
+        accounts: [
+          { scope: "personal", state: "connected", account: "ada@example.com" },
+          { scope: "personal", state: "reconnect_required", account: "ada@other.example" },
+        ],
+      }],
+    });
+    expect(family("file_storage")?.connectors).toEqual([expect.objectContaining({
+      connectorId: "google-drive",
+      accounts: [{ scope: "personal", state: "connected", account: "ada@example.com" }],
+    })]);
+    // Not connected but offered, and offered but not configured here.
+    expect(family("team_chat")?.connectors).toEqual([expect.objectContaining({ connectorId: "slack", state: "not_connected", accounts: [] })]);
+    expect(family("code")?.connectors).toEqual([expect.objectContaining({ connectorId: "github", state: "unavailable" })]);
+    expect(summary).toBe("Listed connectors in 10 families; connected: google-mail-calendar, google-drive");
+  });
+
   it("checks every scope a connector offers, whatever scope is named", async () => {
     // A person whose personal Drive was connected was asked to connect Drive,
     // because the check looked at the workspace scope alone.
@@ -346,6 +410,7 @@ describe("Avalon connector connection tools", () => {
             { scope: "personal", state: "connected" },
             { scope: "workspace", state: "not_connected" },
           ],
+          accounts: [{ scope: "personal", state: "connected", account: null }],
         },
         summary: "google-drive: personal connected, workspace not_connected",
       });

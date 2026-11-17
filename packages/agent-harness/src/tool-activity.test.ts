@@ -163,6 +163,8 @@ describe("tool activity names", () => {
       .toBe("Could not check a connector's connection");
     expect(toolActivityName({ toolName: "core_get_connector_connection_state", status: "failed" }))
       .toBe("Could not check a connector's connection");
+    expect(toolActivityName({ toolName: "list_connectors", status: "completed" }))
+      .toBe("Checked which connectors could help");
   });
 
   it("words a Terminal row the same under its current and its retired wire name", () => {
