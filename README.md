@@ -78,6 +78,12 @@ The mark is a tennis-ball seam on a sphere, drawn as one line. `scripts/generate
 
 [The documentation index](docs/README.md) is the single registry: it lists every product, architecture, agent, connector, development, and operations document with the scope each one owns, and which to read before touching an area. Start there rather than looking for a reading list here.
 
+## License
+
+Rally is dual licensed under the GNU AGPL v3 and a commercial license from
+Juno AI Labs Inc. See [LICENSING.md](LICENSING.md) for the terms, what they do
+not cover, and the Contributor License Agreement.
+
 ## Hosted deployment
 
 Cloudflare deployment credentials remain local-only in `.env.local`; they are never uploaded as Worker variables. Provider credentials are stored only as encrypted Worker secrets. The operations runbook covers regional secret management, migrations, health verification, and deployment.

@@ -2,6 +2,7 @@
   "name": "@rally/mcp",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only OR LicenseRef-Rally-Commercial",
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --config wrangler.jsonc --outdir dist",

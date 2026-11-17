@@ -83,7 +83,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "AGPL-3.0-only OR LicenseRef-Rally-Commercial",
   "bugs": {
     "url": "https://github.com/juno-ai-labs/avalon/issues"
   },

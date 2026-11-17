@@ -2,6 +2,7 @@
   "name": "@rally/browser",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only OR LicenseRef-Rally-Commercial",
   "type": "module",
   "scripts": {
     "dev": "pnpm build:client && concurrently -k \"vite build --watch\" \"wrangler dev --port 8794 --local-upstream localhost:8794\"",
