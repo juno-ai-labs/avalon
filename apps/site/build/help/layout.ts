@@ -181,7 +181,7 @@ ${head}
 </head>
 <body class="help${page.kind === 'home' ? ' help-home' : ''}">
 <a class="skip" href="#content">Skip to content</a>
-<header class="top"><button class="menu" type="button" aria-controls="chapters" aria-expanded="false" aria-label="Chapters"><i></i></button><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="22" height="22" alt="">rally</a><a class="section" href="/help/">Help</a><button class="find" type="button" data-search>Search the manual<kbd>/</kbd></button><nav class="links" aria-label="Rally"><a href="mailto:help@rallywith.ai?subject=Rally%20support">Contact support</a>${githubLink}<a class="cta" href="/">rallywith.ai</a></nav></header>
+<header class="top"><button class="menu" type="button" aria-controls="chapters" aria-expanded="false" aria-label="Chapters"><i></i></button><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="22" height="22" alt="">rally</a><a class="section" href="/help/">Help</a><button class="find" type="button" data-search>Search the manual<kbd>/</kbd></button><nav class="links" aria-label="Rally"><a href="mailto:help@rallywith.ai?subject=Rally%20support">Contact support</a>${githubLink()}<a class="cta" href="/">rallywith.ai</a></nav></header>
 <div class="shell">
 <main id="content" tabindex="-1">
 <article class="${page.kind}" data-md="${page.markdownUrl}">
