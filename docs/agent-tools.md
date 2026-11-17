@@ -180,6 +180,26 @@ such as to ask them for a Sidekick source, and never for people the work only
 emails or reads mail from (customers, leads, vendors), since adding opens the
 Organization to them.
 
+`list_connectors` is the same read over the whole catalog, for choosing rather
+than recovering: the agent asked to build something calls it to learn which
+connector would serve the work, connected or not. It takes no arguments and
+returns the catalog grouped by **family** (`ConnectorFamilyCatalog` in
+`@rally/contracts`: email and calendar, file storage, documents and wikis, team
+chat, issue tracking and projects, code, meeting notes, sales, recruiting,
+design), in catalog order. Each catalog entry names its families, most fitting
+first, and a connector in two families (GitHub is code and issue tracking) is
+listed under both so a model reading one family sees everything it needs. Each
+row is the state check's result plus the connector's name. Both tools now also
+return `accounts`: every saved connection behind the per-scope states, with its
+scope, `connected` or `reconnect_required`, and the account it is, read from the
+`<product> · <account>` name every connector gives a connection, or `null`
+when the name carries none. A person with two Google accounts sees both, and
+another member's personal connection is never listed. To offer a connector that
+would help but is not required, the agent says in one sentence what it adds and
+calls `show_connector_connection`; in a Sidekick run that call pauses the run, so
+a run offers only what it cannot finish without. Only loops whose card works are
+told to offer; a loop whose card refuses is told only to read the list.
+
 `check_resource_access` takes a connector and a resource link or id and asks
 every connection of that connector in the run how far it reaches the resource,
 in parallel: `edit`, `read` (with `editNeedsGrant` when Google's one-file grant
@@ -1358,6 +1378,36 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-17 — An agent can list connectors by family, and see each account
+
+**What changed:** `list_connectors` joins the core plugin, held wherever
+`get_connector_connection_state` is (any loop with a user principal). The
+shared connector catalog gives each entry its families, and the state check and
+the list return `accounts`, one per saved connection, with the account it is.
+`show_connector_connection` may now be called for a connection that would
+clearly improve the asked-for work, not only one that blocks it.
+
+**Why:** an agent asked for an artifact could check a connector it already
+thought of, but had no way to learn which connectors exist for the job, so it
+could not suggest one the person had not connected. And the state check folded
+every connection into one state per scope, so an agent could not tell which of a
+person's two Google accounts was the one connected, or needed a reconnect.
+
+**Alternative rejected:** making `connectorId` optional on the state check to
+list everything. One name for two questions ("is this connected?" and "what
+would help?") leaves the model to guess which it is asking. Also rejected: a
+`family` filter argument, since the whole catalog is a dozen rows, and an
+account column on the connection row, since every connector already writes the
+account into the name as `<product> · <account>`.
+
+**Consequences:** a new catalog entry must name at least one family; a new
+family is added with its first connector, and none is listed empty (X, the one
+social connector, is not in the card catalog because only an administrator can
+add it). The account is parsed from the display name, so a connector that names
+a connection without the ` · ` separator reports `null`, never a guess. The
+list reads Rally's saved state in one query, like the state check, and is not a
+provider health check.
 
 ### 2026-11-16 — An agent can check membership and offer to add someone
 

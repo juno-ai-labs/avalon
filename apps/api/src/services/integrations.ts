@@ -55,6 +55,7 @@ import {
   AVALON_CORE_PLUGIN_ID,
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
+  AVALON_LIST_CONNECTORS_TOOL_DEFINITION,
   AVALON_MEMORY_PLUGIN_ID,
   AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
   AVALON_OFFER_TO_ADD_MEMBER_TOOL_DEFINITION,
@@ -151,9 +152,18 @@ import {
   type ConnectorConnectionCardInput,
   ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
+  type ConnectorConnectionStateResult,
+  ConnectorConnectionCardIds,
+  type ConnectorConnectionCardId,
+  ConnectorListInputSchema,
+  ConnectorListResultSchema,
+  CONNECTOR_LIST_TOOL_NAME,
   bestConnectorConnectionState,
+  connectorConnectionAccountLabel,
   connectorConnectionCardSummary,
   connectorConnectionStateSummary,
+  connectorListSummary,
+  groupConnectorsByFamily,
   type ConnectorConnectionCardScope,
   type AutomationRunDefinitionV1,
 } from "@rally/contracts";
@@ -8341,6 +8351,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
     || tool.definition.name === "request_elicitation"
     || tool.definition.name === "offer_to_add_member"
     || tool.definition.name === "get_connector_connection_state"
+    || tool.definition.name === CONNECTOR_LIST_TOOL_NAME
     || tool.definition.name === "show_connector_connection"
     || tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME);
   // A refusing tool is offered but cannot do the work, so the prompt does not tell the model to use it.
@@ -8356,12 +8367,13 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           // unambiguously, so `core_` only lengthened the name the model reads
           // and repeated a plugin it can neither load nor unload.
           shortWireName: "",
-          description: "Check the current time, connector connection status and access to linked files, or pause to ask for required information or to offer to add someone the work needs as a member.",
+          description: "Check the current time, which connectors are connected or could be added, and access to linked files, or pause to ask for required information or to offer to add someone the work needs as a member.",
           systemMessage: renderCorePluginSystemMessage({
             currentTime: holds("current_time"),
             elicitation: holds("request_elicitation"),
             addMember: holds("offer_to_add_member"),
             connectorConnection: holds("get_connector_connection_state") && holds("show_connector_connection"),
+            connectorList: holds(CONNECTOR_LIST_TOOL_NAME),
             resourceAccess: holds(CHECK_RESOURCE_ACCESS_TOOL_NAME),
           }),
           tools: coreTools,
@@ -8551,51 +8563,88 @@ async function readConnectorConnectionState(
   raw: unknown,
 ) {
   const request = ConnectorConnectionStateInputSchema.parse(raw);
+  const [state] = await readConnectorConnectionStates(env, input, [request.connectorId]);
+  return state!;
+}
+
+async function listConnectors(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
+  raw: unknown,
+) {
+  ConnectorListInputSchema.parse(raw);
+  return ConnectorListResultSchema.parse(
+    groupConnectorsByFamily(await readConnectorConnectionStates(env, input, ConnectorConnectionCardIds)),
+  );
+}
+
+/**
+ * The caller's saved state for each catalog connector, in one read.
+ *
+ * Every scope is reported, whatever a caller asked about: a model that names
+ * `workspace` while the person's own connection works must still be told that
+ * it works. Each saved connection is also returned as an account, because a
+ * person can hold two Google accounts and the task may need a particular one.
+ */
+async function readConnectorConnectionStates(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
+  connectorIds: readonly ConnectorConnectionCardId[],
+): Promise<ConnectorConnectionStateResult[]> {
   if (input.executionPrincipal.type !== "user") throw new Error("connector_connection_state_requires_user");
-  const catalog = ConnectorConnectionCardCatalog[request.connectorId];
-  // Every scope, whatever was asked: a model that names `workspace` while the
-  // person's own connection works must still be told that it works.
-  const scopes: readonly ConnectorConnectionCardScope[] = catalog.scopes;
-  const available = connectorRegistryForEnv(env).list()
-    .some((manifest) => manifest.type === catalog.providerType);
-  if (!available) {
-    return ConnectorConnectionStateResultSchema.parse({
-      connectorId: request.connectorId,
-      state: "unavailable",
-      connections: scopes.map((scope) => ({ scope, state: "unavailable" })),
-    });
-  }
-  // One read for every scope: a person may hold a personal connection and the
-  // Organization a workspace one, and either can be the one the task needs.
-  const result = await env.DB.prepare(
-    `SELECT scope, granted_scopes_json, status FROM connector_connections
-      WHERE workspace_id = ? AND connector_type = ?
-        AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))`,
+  const registered = new Set(connectorRegistryForEnv(env).list().map((manifest) => manifest.type));
+  const providerTypes = [...new Set(connectorIds
+    .map((connectorId) => ConnectorConnectionCardCatalog[connectorId].providerType as string)
+    .filter((providerType) => registered.has(providerType)))];
+  const rows = providerTypes.length === 0 ? [] : (await env.DB.prepare(
+    `SELECT connector_type, scope, display_name, granted_scopes_json, status FROM connector_connections
+      WHERE workspace_id = ? AND connector_type IN (${providerTypes.map(() => "?").join(",")})
+        AND status <> 'disabled'
+        AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))
+      ORDER BY scope, display_name COLLATE NOCASE`,
   ).bind(
     input.workspaceId,
-    catalog.providerType,
+    ...providerTypes,
     input.executionPrincipal.userId,
-  ).all<{ scope: string; granted_scopes_json: string; status: string }>();
-  const matching = (result.results ?? []).filter((row) => {
-    if (catalog.capabilityPrefixes.length === 0) return true;
-    const capabilities = parseJson<string[]>(row.granted_scopes_json, []);
-    return capabilities.some((capability) =>
-      catalog.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
-  });
-  const connections = scopes.map((scope) => {
-    const statuses = matching.filter((row) => row.scope === scope)
-      .map((row) => connectorAuthorizationStatus(row.status));
-    const state = statuses.includes("healthy")
-      ? "connected" as const
-      : statuses.includes("reconnect_required")
-        ? "reconnect_required" as const
-        : "not_connected" as const;
-    return { scope, state };
-  });
-  return ConnectorConnectionStateResultSchema.parse({
-    connectorId: request.connectorId,
-    state: bestConnectorConnectionState(connections.map(({ state }) => state)),
-    connections,
+  ).all<{ connector_type: string; scope: string; display_name: string; granted_scopes_json: string; status: string }>()).results ?? [];
+  return connectorIds.map((connectorId) => {
+    const catalog = ConnectorConnectionCardCatalog[connectorId];
+    const scopes: readonly ConnectorConnectionCardScope[] = catalog.scopes;
+    if (!registered.has(catalog.providerType)) {
+      return ConnectorConnectionStateResultSchema.parse({
+        connectorId,
+        state: "unavailable",
+        connections: scopes.map((scope) => ({ scope, state: "unavailable" })),
+        accounts: [],
+      });
+    }
+    const capabilityPrefixes: readonly string[] = catalog.capabilityPrefixes;
+    const accounts = rows.flatMap((row) => {
+      if (row.connector_type !== catalog.providerType) return [];
+      const scope = row.scope === "workspace" ? "workspace" as const : "personal" as const;
+      if (!scopes.includes(scope)) return [];
+      if (capabilityPrefixes.length > 0) {
+        const capabilities = parseJson<string[]>(row.granted_scopes_json, []);
+        if (!capabilities.some((capability) => capabilityPrefixes.some((prefix) => capability.startsWith(prefix)))) return [];
+      }
+      return [{
+        scope,
+        state: connectorAuthorizationStatus(row.status) === "reconnect_required"
+          ? "reconnect_required" as const
+          : "connected" as const,
+        account: connectorConnectionAccountLabel(row.display_name),
+      }];
+    });
+    const connections = scopes.map((scope) => {
+      const states = accounts.filter((account) => account.scope === scope).map((account) => account.state);
+      return { scope, state: bestConnectorConnectionState(states.length === 0 ? ["not_connected"] : states) };
+    });
+    return ConnectorConnectionStateResultSchema.parse({
+      connectorId,
+      state: bestConnectorConnectionState(connections.map(({ state }) => state)),
+      connections,
+      accounts,
+    });
   });
 }
 
@@ -8667,6 +8716,17 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         execute: async (raw: unknown) => {
           const state = await readConnectorConnectionState(env, input, raw);
           return { output: state, summary: connectorConnectionStateSummary(state) };
+        },
+      } satisfies HarnessTool,
+      {
+        definition: AVALON_LIST_CONNECTORS_TOOL_DEFINITION,
+        validateInput: (raw: unknown) => {
+          const parsed = ConnectorListInputSchema.safeParse(raw);
+          return parsed.success ? null : parsed.error;
+        },
+        execute: async (raw: unknown) => {
+          const list = await listConnectors(env, input, raw);
+          return { output: list, summary: connectorListSummary(list) };
         },
       } satisfies HarnessTool,
       input.automationRun ? {

@@ -23,6 +23,8 @@ import {
   ConnectorConnectionCardInputSchema,
   MemberCardInputSchema,
   ConnectorConnectionStateInputSchema,
+  ConnectorListInputSchema,
+  CONNECTOR_LIST_TOOL_NAME,
   PickedAppearanceSchema,
   PROJECT_COLOR_KEYS_STORABLE,
   PROJECT_COLOR_RING,
@@ -3565,6 +3567,34 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
   },
 } as const satisfies ToolDefinition;
 
+const connectorListInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(ConnectorListInputSchema, { io: "input" }) as Record<string, unknown>,
+);
+
+/**
+ * Every connector Rally offers, grouped by what it is for, with the caller's
+ * saved state and accounts for each. Where the state check answers "is this
+ * one connected?", this answers "which connector would help here?", including
+ * ones the person has not connected yet.
+ */
+export const AVALON_LIST_CONNECTORS_TOOL_DEFINITION = {
+  name: CONNECTOR_LIST_TOOL_NAME,
+  description: [
+    "List every connector Rally offers, grouped by family such as email and calendar, file storage, team chat or issue tracking.",
+    "Each connector has its connectorId, name, state (connected, reconnect_required, not_connected or unavailable), each scope's state, and accounts: every saved connection with its scope, state and account, such as an email address. A person can have more than one account for a connector.",
+    "Use it to choose which connected account to work with, or to find a connector the person has not connected that the requested work or artifact needs or would clearly be better with.",
+    "To offer one that is not_connected or reconnect_required, say in one sentence what it would add, then call show_connector_connection with its connectorId. In a Sidekick run that call pauses the run, so there offer only a connection the run cannot finish without.",
+    "Do not offer a connector the work does not need, and never offer one that is unavailable.",
+    "This reads Rally's saved state, not the provider.",
+  ].join(" "),
+  capability: "connector.connection.read",
+  mode: "read",
+  idempotency: "safe",
+  get inputSchema() {
+    return connectorListInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
 export const CHECK_RESOURCE_ACCESS_TOOL_NAME = "check_resource_access";
 
 /**
@@ -3618,8 +3648,8 @@ export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
   name: "show_connector_connection",
   description: [
     "Show a persistent card that lets the user connect or reconnect a connector.",
-    "Call only after get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
-    "Use the same connectorId, and the scope the task needs. Briefly explain what is blocked before this call.",
+    "Call only after get_connector_connection_state or list_connectors returns reconnect_required or not_connected, and the missing connection blocks the task or would clearly improve what was asked for.",
+    "Use the same connectorId, and the scope the task needs. Briefly explain what is blocked, or what the connection would add, before this call.",
     "The card appears in this conversation only. Never tell a person to complete a connection prompt unless this tool ran in that same reply.",
     "After this call, do not claim the connector is connected or retry connector-dependent work in this run.",
     "Never create an authorization URL or ask for credentials.",
