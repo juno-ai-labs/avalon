@@ -1,3 +1,5 @@
+import { runWithTransientRetry } from './release-lib.mjs';
+
 export function cloudflareErrorCodes(body) {
   if (!Array.isArray(body?.errors)) return 'none';
   const codes = body.errors
@@ -40,18 +42,6 @@ export function isTransientWranglerFailure({ stdout = '', stderr = '' }) {
  * `maxAttempts` is spent, backing off between attempts on the same schedule the
  * publisher's R2 reads use. Returns the last attempt's `{ code, stdout, stderr }`.
  */
-export async function runWranglerWithTransientRetry({
-  attempt,
-  maxAttempts,
-  sleep,
-  onRetry = () => {},
-}) {
-  for (let index = 0; ; index += 1) {
-    const result = await attempt();
-    if (result.code === 0) return result;
-    if (index + 1 >= maxAttempts || !isTransientWranglerFailure(result)) return result;
-    const delay = Math.min(1_000 * 2 ** index, 30_000);
-    onRetry({ attempt: index + 1, delay });
-    await sleep(delay);
-  }
+export async function runWranglerWithTransientRetry(options) {
+  return await runWithTransientRetry({ ...options, isTransient: isTransientWranglerFailure });
 }

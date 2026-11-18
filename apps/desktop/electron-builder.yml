@@ -1,11 +1,16 @@
 extends: ./electron-builder.base.yml
 afterPack: ./scripts/sign-macos-dock-plugin.mjs
+# Notarizes Rally.app with a wait that survives a dropped connection; see the
+# hook. electron-builder's own notarization is off (mac.notarize below).
+afterSign: ./scripts/notarize-macos-app.mjs
 afterAllArtifactBuild: ./scripts/finalize-macos-release.mjs
 publish:
   - provider: generic
     url: https://downloads.rallywith.ai/stable/darwin/arm64
 mac:
   icon: resources/icon.icon
+  # scripts/notarize-macos-app.mjs (afterSign) notarizes instead.
+  notarize: false
   extraFiles:
     - from: .native-build/RallyDockTilePluginV2.docktileplugin
       to: PlugIns/RallyDockTilePluginV2.docktileplugin

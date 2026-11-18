@@ -1,4 +1,6 @@
 extends: ./electron-builder.yml
+# Local builds are signed but never notarized.
+afterSign: null
 mac:
   identity: "Juno AI Labs Inc. (7ZLT6A8W25)"
   hardenedRuntime: true

@@ -3,7 +3,11 @@ import { readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { notarytoolCredentialArgs } from './apple-notarization.mjs';
+import {
+  notarizeWithResumableWait,
+  notarytoolCredentialArgs,
+  runAppleNetworkCommand,
+} from './apple-notarization.mjs';
 import { writeBlockmap } from './blockmap.mjs';
 import { RALLY_APPLE_TEAM_ID, sha512File } from './release-lib.mjs';
 
@@ -188,22 +192,21 @@ export default async function finalizeMacosRelease(buildResult) {
     process.env.CSC_NAME,
   );
   console.log(`Signing final DMG with ${identity.name}`);
-  await run('/usr/bin/codesign', ['--force', '--timestamp', '--sign', identity.hash, dmgPath]);
+  await runAppleNetworkCommand('codesign of the DMG', '/usr/bin/codesign', [
+    '--force',
+    '--timestamp',
+    '--sign',
+    identity.hash,
+    dmgPath,
+  ]);
   await run('/usr/bin/codesign', ['--verify', '--strict', '--verbose=4', dmgPath]);
 
-  const credentials = notarytoolCredentialArgs(process.env);
-  await run('/usr/bin/xcrun', [
-    'notarytool',
-    'submit',
-    dmgPath,
-    ...credentials,
-    '--wait',
-    '--timeout',
-    '30m',
-    '--output-format',
-    'json',
-  ]);
-  await run('/usr/bin/xcrun', ['stapler', 'staple', dmgPath]);
+  await notarizeWithResumableWait({
+    path: dmgPath,
+    credentials: notarytoolCredentialArgs(process.env),
+    timeout: '30m',
+  });
+  await runAppleNetworkCommand('stapler of the DMG', '/usr/bin/xcrun', ['stapler', 'staple', dmgPath]);
 
   // Signing and stapling mutate the disk image. Differential metadata and the
   // update feed must therefore be generated from the final release bytes.

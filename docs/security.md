@@ -146,7 +146,7 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | `apps/api/src/middleware/request-context.ts` | Exact desktop-origin CORS policy, request IDs, regional assertion, and response security headers. |
 | `apps/api/src/lib/crypto.ts` | AES-GCM credential envelopes and key-version handling. |
 | `apps/api/src/services/terminal/` | The isolated Daytona execution boundary, network compiler, authority-fenced lifecycle, resource bridge, and trusted GitHub publisher. |
-| `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
+| `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `notarize-macos-app.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
 | `.gitleaks.toml`, `scripts/gitleaks-allowlist.test.mjs` | The scan's bounded exceptions and the test that keeps them honest. |
 
 The renderer socket-ticket lint rule follows immutable awaited ticket aliases,
@@ -395,7 +395,15 @@ slice for every one of those executables, and then proves a renderer remains ali
 under a clean user-data profile.
 
 Both `Rally.app` and the DMG container are signed, submitted to Apple's notary
-service, and stapled. The DMG is blockmapped only after signing and stapling
+service, and stapled. Rally runs that notarization itself rather than through
+electron-builder (`mac.notarize: false`; the `afterSign` hook
+`notarize-macos-app.mjs` handles the app, `finalize-macos-release.mjs` the DMG):
+it submits once, then waits on the returned submission id, so a connection lost
+during Apple's wait resumes the same submission instead of failing the release.
+Every Apple network call in the build (codesign `--timestamp`, notary submit and
+wait, stapler) retries only on a dropped connection, a 429 or a 5xx
+(`isTransientAppleNetworkFailure`); an Invalid verdict, a credential error or a
+signing error fails on the first attempt. The DMG is blockmapped only after signing and stapling
 mutate its bytes; `latest-mac.yml` is generated from the final ZIP. Before R2
 promotion, Gatekeeper, stapler, bundle ID/version, updater URL, final blockmaps,
 nested signatures, and a LaunchServices smoke all have to pass. The update
@@ -1452,6 +1460,24 @@ identity. Update manifests currently rely on Expo's authenticated service and
 HTTPS; application-owned EAS Update code signing is not configured.
 
 ## Changelog
+
+### 2026-11-18 — Survive a dropped connection to Apple during the macOS release
+
+**What changed:** Rally.app is notarized by an `afterSign` hook instead of
+electron-builder, as a submit followed by a wait on the submission id that
+resumes after a lost connection. Codesign timestamps, the DMG's notarization and
+both staples retry the same network failures. The retry ceiling,
+`APPLE_NETWORK_MAX_ATTEMPTS`, is open; the macOS job's 90-minute timeout bounds
+it.
+
+**Why:** Two releases in one afternoon (v1.768.0 and v1.769.0) were lost to the
+network, not to Apple's verdict: notarytool reported the Internet "offline"
+55 minutes into electron-builder's single `submit --wait`, and codesign could not
+reach the timestamp server for the dock plugin. Each cost the hour-long macOS
+job. electron-builder's integration cannot resume a wait, so it was turned off
+rather than wrapped. Resubmitting on a lost wait was rejected: it restarts
+Apple's queue. A future change must keep retries to the network signatures
+alone, so a real refusal still fails at once.
 
 ### 2026-11-11 — Separate artifact use from Canvas editing
 
