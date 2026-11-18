@@ -476,8 +476,47 @@ test('validates authoritative inventory responses without trusting cached object
     }
   });
 
-  for (const cacheStatus of ['HIT', 'STALE', 'UPDATING', 'REVALIDATED', null]) {
-    await t.test(`non-dynamic inventory response: ${cacheStatus ?? 'missing'}`, async () => {
+  await t.test('inventory response without a cache status', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ inventoryCacheStatus: null });
+    try {
+      await publishTelemetryArtifacts({
+        desktopDirectory,
+        environment: runtimeEnvironment,
+        fetchImpl: api.fetchImpl,
+        runCommand: commandRunner().runCommand,
+        temporaryRoot: root,
+      });
+      assert.equal(api.objects.size, 5);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('stale inventory response without a cache status', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({
+      inventoryCacheStatus: null,
+      inventoryTimestamp: '2026-08-13T19:00:00.000Z',
+    });
+    try {
+      await assert.rejects(
+        publishTelemetryArtifacts({
+          desktopDirectory,
+          environment: runtimeEnvironment,
+          fetchImpl: api.fetchImpl,
+          runCommand: commandRunner().runCommand,
+          temporaryRoot: root,
+        }),
+        /Stored metadata mismatch/u,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const cacheStatus of ['HIT', 'STALE', 'UPDATING', 'REVALIDATED']) {
+    await t.test(`cached inventory response: ${cacheStatus}`, async () => {
       const { root, desktopDirectory } = await fixture();
       const api = objectApi({ inventoryCacheStatus: cacheStatus });
       try {
@@ -489,7 +528,7 @@ test('validates authoritative inventory responses without trusting cached object
             runCommand: commandRunner().runCommand,
             temporaryRoot: root,
           }),
-          /Cloudflare returned a non-dynamic inventory/u,
+          new RegExp(`Cloudflare returned a cached inventory \\(${cacheStatus}\\)`, 'u'),
         );
       } finally {
         await rm(root, { recursive: true, force: true });

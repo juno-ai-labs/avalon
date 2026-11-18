@@ -203,9 +203,16 @@ async function uploadAndVerify(
         + `; codes: ${cloudflareErrorCodes(failureBody)}`,
     );
   }
-  if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {
+  // Reject a response Cloudflare says came from its cache. A response with no
+  // cache status at all did not pass through the cache: the Cloudflare API
+  // stopped sending the header on uncached responses (release v1.769.0), and
+  // the ETag and timestamp checks below still reject an older object.
+  const cacheStatus = inventory.headers.get('cf-cache-status');
+  if (cacheStatus !== null && cacheStatus !== 'DYNAMIC') {
     await inventory.body?.cancel();
-    throw new Error(`Could not verify r2://${target}: Cloudflare returned a non-dynamic inventory`);
+    throw new Error(
+      `Could not verify r2://${target}: Cloudflare returned a cached inventory (${cacheStatus})`,
+    );
   }
   const inventoryBody = await inventory.json().catch(() => null);
   if (inventoryBody?.success !== true || !Array.isArray(inventoryBody.result)) {

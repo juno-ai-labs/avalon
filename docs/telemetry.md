@@ -911,6 +911,33 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-11-18 — Artifact inventory verification accepts a response with no cache status
+
+**What changed:** The publisher's inventory read now rejects only a response
+whose `cf-cache-status` names a cache result other than `DYNAMIC` (`HIT`,
+`STALE`, `UPDATING`, `REVALIDATED`, …), and names that status in the error. A
+response with no `cf-cache-status` header is verified like a `DYNAMIC` one.
+
+**Why:** Release v1.769.0 (run 44216074038, from #1664's merge) built, signed
+and notarized, then aborted at the first source map: the upload succeeded, and
+the inventory read answered 200 with no `cf-cache-status` header. Probing
+`api.cloudflare.com` from outside the release job also showed uncached `200`
+responses carrying no such header, so the header's absence is how the API
+answers today, not a transient fault. The 2026-08-13 rule required an explicit
+`DYNAMIC` and so blocked every desktop release once the header disappeared.
+
+**Considered and rejected:** Retrying a missing header, because the condition
+looks persistent and seven attempts would only delay the same failure. Dropping
+the cache-status check entirely, because an explicit cache result is the exact
+symptom the 2026-08-13 entry recorded. A stale inventory with no header is
+still caught: the stored ETag must match this upload and its timestamp may not
+trail the upload by more than one second.
+
+**Consequences:** The guard against a cached inventory now rests on the ETag
+and timestamp comparison wherever Cloudflare omits the header. If Cloudflare
+starts caching inventory reads without labelling them, that comparison still
+fails the release, naming a metadata mismatch.
+
 ### 2026-11-13 — Keep iOS crash capture inside regional storage
 
 **What changed:** The shared crash endpoint accepts a typed mobile report format
