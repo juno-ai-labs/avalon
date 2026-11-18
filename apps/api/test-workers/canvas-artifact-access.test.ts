@@ -7,7 +7,6 @@ import {
   runInDurableObject,
   createExecutionContext,
   waitOnExecutionContext,
-  runDurableObjectAlarm,
   createMessageBatch,
   getQueueResult,
 } from "cloudflare:test";
@@ -1259,8 +1258,8 @@ describe("Canvas artifact access propagated to local serving", () => {
   });
 
   it("retains transactional retry intent and publishes it through the existing Queue", async () => {
-    const pending = await runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.transactionSync(() => {
+    const pending = await runInDurableObject(workspace(), async (_instance, state) => {
+      const n = state.storage.transactionSync(() => {
         state.storage.sql.exec(
           "UPDATE canvas_directory SET artifact_visibility='workspace' WHERE canvas_id=?",
           CANVAS,
@@ -1270,14 +1269,12 @@ describe("Canvas artifact access propagated to local serving", () => {
             n: number;
           }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
           .one().n;
-      }),
-    );
+      });
+      // Production writers arm the alarm through `afterHostedWrite`; raw SQL here does not, so arm it.
+      await state.storage.setAlarm(Date.now());
+      return n;
+    });
     expect(pending).toBe(1);
-    await runDurableObjectAlarm(workspace());
-    // Bootstrap itself can schedule one newer revision; a second alarm drains it.
-    await runDurableObjectAlarm(workspace());
-    // An alarm workerd already fired on its own leaves the helper nothing to run
-    // while that drain is still in flight (docs/testing.md), so wait for the drain.
     await expect
       .poll(
         () =>
