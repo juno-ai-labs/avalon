@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { memoizedValue } from "@rally/contracts/deferred-zod-schema";
 
 /** Preserve strict Google inputs through Bind, while runtime validation enforces exclusive target choices. */
 export function googleToolInputSchema(schema: z.ZodType): Record<string, unknown> {
@@ -11,4 +12,9 @@ export function googleToolInputSchema(schema: z.ZodType): Record<string, unknown
     },
   });
   return json;
+}
+
+/** `googleToolInputSchema` on first read, not at load; see docs/api-worker-deployment.md. A thunk, so a schema may be declared later. */
+export function deferredGoogleToolInputSchema(schema: () => z.ZodType): () => Record<string, unknown> {
+  return memoizedValue(() => googleToolInputSchema(schema()));
 }

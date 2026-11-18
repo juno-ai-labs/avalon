@@ -105,8 +105,9 @@ try {
     ? {
       ...await prepareNotarizationEnvironment(process.env, notarizationSecretDirectory),
       CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+      RALLY_PACKAGE_MODE: mode,
     }
-    : process.env;
+    : { ...process.env, RALLY_PACKAGE_MODE: mode };
   await run('pnpm', builderArgs, environment);
 
   const appPath = join(stagingDirectory, 'mac-arm64', 'Rally.app');

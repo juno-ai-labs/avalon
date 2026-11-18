@@ -222,6 +222,43 @@ describe('telemetry HTTP bounds', () => {
     logged.mockRestore();
   });
 
+  it('logs why an anonymous batch failed, and still answers a bare internal_error', async () => {
+    vi.spyOn(TelemetryBootstrapService.prototype, 'accept')
+      .mockRejectedValueOnce(new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.'));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const response = await publicApp().request('/telemetry/anonymous', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        capability: 'x'.repeat(64),
+        events: [{
+          schema: 'ai.rallywith.telemetry.event', schemaVersion: 1,
+          eventId: '018f22f2-4c22-7abc-8def-0123456789ac',
+          name: 'screen_viewed', source: 'desktop-renderer', category: 'product',
+          identityScope: 'anonymous-epoch', originalTimestamp: '2026-08-12T20:00:00.000Z',
+          sentAt: '2026-08-12T20:00:00.000Z',
+          context: {
+            environment: 'production', release: '1.0.0', buildId: 'build',
+            onboardingJourneyId: '018f22f2-4c22-7abc-8def-0123456789ad',
+          },
+          properties: { screen: 'onboarding_welcome' },
+        }],
+      }),
+    }, createTestEnv({
+      AVALON_REGION: 'global', LOG_LEVEL: 'error',
+      TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
+    }));
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'internal_error' } });
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'request_failed',
+      code: 'internal_error',
+      error_code: 'internal_error:d1_overloaded',
+    }));
+    logged.mockRestore();
+  });
+
   it('maps a tampered anonymous capability to a stable public rejection', async () => {
     const response = await publicApp().request('/telemetry/anonymous', {
       method: 'POST', headers: { 'content-type': 'application/json' },

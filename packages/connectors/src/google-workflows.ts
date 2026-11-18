@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { googleToolInputSchema } from "./google-tool-schema";
+import { deferredGoogleToolInputSchema } from "./google-tool-schema";
 import type { ToolDefinition } from "@rally/contracts";
 import { ConnectorError, type ConnectorToolContext, type ConnectorToolResult } from "./types";
 import { CalendarSelectionFields, ConversationTargetFields, MailQuerySchema, selectCalendarEvent, selectMail, validateMailTarget, validateCalendarTarget, type GoogleSelectionDependencies } from "./google-selectors";
@@ -75,8 +75,11 @@ googleWorkflowSchemas["gmail.label"] = z.strictObject({ ...ConversationTargetFie
 googleWorkflowSchemas["gmail.remove_label"] = z.strictObject({ ...ConversationTargetFields, labels: labels.min(1).describe("Custom label names to remove, for example Projects/Alpha. The connector resolves names internally.") }).superRefine(validateMailTarget);
 
 function tool(name: string, description: string, capability: string, write = false, paginated = false): ToolDefinition {
+  const schema = googleWorkflowSchemas[name];
+  if (!schema) throw new Error(`google_workflow_schema_missing: ${name}`);
+  const inputSchema = deferredGoogleToolInputSchema(() => schema);
   return { name, description, capability, mode: write ? "write" : "read", idempotency: write ? "record_before_execute" : "safe",
-    inputSchema: googleToolInputSchema(googleWorkflowSchemas[name]!),
+    get inputSchema() { return inputSchema(); },
     ...(paginated ? { pagination: { cursorParameter: "pageToken" } } : {}),
   };
 }

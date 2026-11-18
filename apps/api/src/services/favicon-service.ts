@@ -16,7 +16,9 @@ export const FAVICON_CANDIDATE_TIMEOUT_MS = 25_000;
 // therefore not a usable result for this service.
 const KV_MAX_VALUE_BYTES = 25 * 1024 * 1024;
 const textDecoder = new TextDecoder();
-const oversizedImageBody = new Error("favicon_image_body_too_large");
+// A Symbol, not an Error: an Error at module scope captures a stack during
+// Worker startup (docs/api-worker-deployment.md).
+const oversizedImageBody = Symbol("favicon_image_body_too_large");
 
 type FaviconCacheMetadata =
   | { kind: "icon"; contentType: string }

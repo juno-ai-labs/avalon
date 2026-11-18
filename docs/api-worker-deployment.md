@@ -175,9 +175,13 @@ selected product regions.
 
 - Cloudflare uses error 10021 for two different failures; read the message.
   - **Startup budget.** The Worker's static graph exceeds Cloudflare's hard
-    startup budget. Inspect its retained CPU profile and move a coherent
-    stateless capability behind a typed service boundary; do not retry until
-    timing happens to pass.
+    startup budget. Inspect its retained CPU profile (the deploy uploads it as
+    the `api-worker-deployment-startup-profiles-*` artifact). Work the profile
+    names at module scope (JSON Schema conversion, a large Zod graph, an
+    `Error` constructed at load) moves to first use with `memoizedValue` or
+    `deferredZodSchema()`; a coherent stateless capability that is still too
+    heavy moves behind a typed service boundary. Do not retry until timing
+    happens to pass.
   - **`Pipeline binding error. Please try again later`.** A Pipelines
     control-plane fault on a Worker with a Pipeline binding (the Global API),
     not anything in the graph. The versioned upload step retries it once after
@@ -334,6 +338,44 @@ for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
 ## Changelog
+
+### 2026-11-18 — Take the Google tool catalog and a sentinel Error out of startup
+
+**What changed:** Every Google connector tool now converts its Zod input schema
+to JSON Schema on the first read of `inputSchema` (`deferredGoogleToolInputSchema`,
+a memoized getter, the shape GitHub's tools already use) instead of while
+`@rally/connectors` loads. The favicon service creates its oversized-body
+sentinel as a `Symbol`, so nothing at module scope captures a stack.
+
+**Why:** The Global upload for #1650 failed with the startup-budget form of
+10021, and the next deploys of other commits passed: startup sits close enough
+to Cloudflare's limit that ordinary variance decides it. Averaged over repeated
+`wrangler check startup` runs of the same bundle, the two largest costs a
+profile could name were the Google catalog's eager conversions (about 10 ms per
+startup, nearly all of it in `googleToolInputSchema`) and a module-scope
+`Error` (about 8 ms; removing that one line removed the cost). One stack capture
+should cost microseconds, so the 8 ms is more likely the runtime's one-time setup
+for the first capture at load than this `Error` itself: a later module-scope
+`Error` may bring it back. Both are gone from the profile after this
+change; the median non-idle startup measured locally fell from 228 ms to
+219 ms. Local timings are not Cloudflare's, so these are proportions, not a
+margin against the limit.
+
+**Considered and rejected:** Retrying the startup form of 10021, which this
+document already rules out. Moving the Google connector behind a service
+boundary, which is a far larger change than two cold costs that move to first
+use. Setting a startup budget in the build: `wrangler check startup` writes a
+profile but enforces nothing, and the number would be the team's to choose.
+
+**Consequences:** The rest of startup is Zod schema construction spread thinly
+across the whole graph, with garbage collection behind it; no single module
+stands out. The next failure of this kind will not have a single fix, so start
+from the profile artifact, and keep new tool catalogs on the deferred getter
+rather than converting at module scope. A few smaller module-scope conversions
+remain (the Drive text-cursor fragment, multimodal tool contracts) and one
+agent-harness tool definition whose getter is read during load.
+
+Shipped in #1664.
 
 ### 2026-11-11 — Bridge app invocations to Sidekick admission
 

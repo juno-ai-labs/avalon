@@ -5,9 +5,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  isTransientAppleNetworkFailure,
   notarizationCredentialMode,
+  notarizeWithResumableWait,
   notarytoolCredentialArgs,
   prepareNotarizationEnvironment,
+  runAppleNetworkCommand,
 } from './apple-notarization.mjs';
 
 test('notarization credential modes require complete, pinned credentials', () => {
@@ -101,4 +104,102 @@ test('base64 App Store Connect keys are materialized with owner-only permissions
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// Verbatim from the v1.768.0 and v1.769.0 macOS release runs that failed.
+const NOTARY_OFFLINE = 'Error: HTTPError(statusCode: nil, error: Error Domain=NSURLErrorDomain Code=-1009 '
+  + '"The Internet connection appears to be offline." UserInfo={_kCFStreamErrorCodeKey=50})';
+const TIMESTAMP_MISSING = '/tmp/Rally.app/Contents/PlugIns/RallyDockTilePluginV2.docktileplugin: '
+  + 'A timestamp was expected but was not found.';
+
+function scripted(results) {
+  const calls = [];
+  const exec = async (command, args) => {
+    calls.push([command, ...args]);
+    const next = results.shift();
+    if (!next) throw new Error(`unexpected call ${command} ${args.join(' ')}`);
+    return { stdout: '', stderr: '', ...next };
+  };
+  return { calls, exec };
+}
+
+const noSleep = async () => {};
+
+test('Apple network failures are told apart from Apple refusing the request', () => {
+  assert.equal(isTransientAppleNetworkFailure({ stderr: NOTARY_OFFLINE }), true);
+  assert.equal(isTransientAppleNetworkFailure({ stderr: TIMESTAMP_MISSING }), true);
+  assert.equal(isTransientAppleNetworkFailure({ stderr: 'Error: HTTPError(statusCode: 503, error: x)' }), true);
+  assert.equal(isTransientAppleNetworkFailure({ stderr: 'Error: HTTPError(statusCode: 401, error: x)' }), false);
+  assert.equal(isTransientAppleNetworkFailure({ stderr: 'errSecInternalComponent' }), false);
+  assert.equal(isTransientAppleNetworkFailure({ stdout: '{"status":"Invalid"}' }), false);
+});
+
+test('a codesign whose timestamp server was unreachable is signed again', async () => {
+  const { calls, exec } = scripted([{ code: 1, stderr: TIMESTAMP_MISSING }, { code: 0 }]);
+  await runAppleNetworkCommand('codesign', '/usr/bin/codesign', ['--timestamp', 'x'], { exec, sleep: noSleep });
+  assert.equal(calls.length, 2);
+});
+
+test('a codesign refused for another reason fails on the first attempt', async () => {
+  const { calls, exec } = scripted([{ code: 1, stderr: 'errSecInternalComponent' }]);
+  await assert.rejects(
+    runAppleNetworkCommand('codesign', '/usr/bin/codesign', ['x'], { exec, sleep: noSleep }),
+    /codesign failed with status 1\nerrSecInternalComponent/,
+  );
+  assert.equal(calls.length, 1);
+});
+
+test('a lost connection while waiting resumes the same submission instead of uploading again', async () => {
+  const { calls, exec } = scripted([
+    { code: 0, stdout: '{"id":"sub-1","message":"Successfully uploaded file"}' },
+    { code: 1, stderr: NOTARY_OFFLINE },
+    { code: 0, stdout: '{"id":"sub-1","status":"Accepted"}' },
+  ]);
+  const result = await notarizeWithResumableWait({
+    path: '/tmp/Rally.zip',
+    credentials: ['--key', 'k'],
+    exec,
+    sleep: noSleep,
+  });
+  assert.deepEqual(result, { id: 'sub-1' });
+  assert.deepEqual(calls.map((call) => call.slice(1, 3)), [
+    ['notarytool', 'submit'],
+    ['notarytool', 'wait'],
+    ['notarytool', 'wait'],
+  ]);
+  assert.equal(calls[1][3], 'sub-1');
+  assert.equal(calls[2][3], 'sub-1');
+});
+
+test('an Invalid verdict fails with Apple\'s log and is not retried', async () => {
+  const { calls, exec } = scripted([
+    { code: 0, stdout: '{"id":"sub-2"}' },
+    { code: 1, stdout: '{"id":"sub-2","status":"Invalid"}' },
+    { code: 0, stdout: 'The binary is not signed with a valid Developer ID certificate.' },
+  ]);
+  await assert.rejects(
+    notarizeWithResumableWait({ path: '/tmp/Rally.dmg', credentials: [], exec, sleep: noSleep }),
+    /ended Invalid \(submission sub-2\)\nThe binary is not signed/,
+  );
+  assert.deepEqual(calls.at(-1).slice(1, 4), ['notarytool', 'log', 'sub-2']);
+});
+
+test('a wait that keeps losing its connection stops once the attempts are spent', async () => {
+  const { calls, exec } = scripted([
+    { code: 0, stdout: '{"id":"sub-3"}' },
+    { code: 1, stderr: NOTARY_OFFLINE },
+    { code: 1, stderr: NOTARY_OFFLINE },
+  ]);
+  await assert.rejects(
+    notarizeWithResumableWait({
+      path: '/tmp/Rally.dmg',
+      credentials: [],
+      timeout: '30m',
+      exec,
+      sleep: noSleep,
+      maxAttempts: 2,
+    }),
+    /notarytool wait on sub-3 failed with status 1/,
+  );
+  assert.deepEqual(calls[1].slice(-2), ['--timeout', '30m']);
 });

@@ -27,6 +27,8 @@ import {
 import type { SitePublishFile } from "../src/services/terminal/site-resource-bridge";
 import { sha256Hex } from "../src/lib/crypto";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
+import { startWaitBudget, waitBudget } from "./helpers/wait-budget";
+import { ensureStorageAlarmNoLaterThan } from "../src/durable-objects/scheduled-alarms";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
 import { createArtifactAudienceTool } from "../src/services/canvas-artifact-audience-tool";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
@@ -225,6 +227,7 @@ beforeEach(async () => {
   )
     .bind(SITE_HOST)
     .run();
+  startWaitBudget();
 });
 
 async function visit(stub: string, path = "/", cookie?: string) {
@@ -1257,8 +1260,8 @@ describe("Canvas artifact access propagated to local serving", () => {
   });
 
   it("retains transactional retry intent and publishes it through the existing Queue", async () => {
-    const pending = await runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.transactionSync(() => {
+    const pending = await runInDurableObject(workspace(), async (_instance, state) => {
+      const n = state.storage.transactionSync(() => {
         state.storage.sql.exec(
           "UPDATE canvas_directory SET artifact_visibility='workspace' WHERE canvas_id=?",
           CANVAS,
@@ -1268,22 +1271,29 @@ describe("Canvas artifact access propagated to local serving", () => {
             n: number;
           }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
           .one().n;
-      }),
-    );
+      });
+      // A raw write arms no alarm; production's write path does
+      // (afterHostedWrite). Without this, a Canvas alarm that already drained
+      // leaves nothing for the forced wake below to run.
+      await ensureStorageAlarmNoLaterThan(state.storage, Date.now());
+      return n;
+    });
     expect(pending).toBe(1);
-    await runDurableObjectAlarm(workspace());
-    // Bootstrap itself can schedule one newer revision; a second alarm drains it.
-    await runDurableObjectAlarm(workspace());
-    const remaining = await runInDurableObject(
-      workspace(),
-      (_instance, state) =>
-        state.storage.sql
-          .exec<{
-            n: number;
-          }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
-          .one().n,
-    );
-    expect(remaining).toBe(0);
+    // `canvasCreate`'s alarm can be mid-run here, so a forced wake may do
+    // nothing (docs/testing.md, `runDurableObjectAlarm`): poll until drained.
+    await vi.waitFor(async () => {
+      await runDurableObjectAlarm(workspace());
+      const remaining = await runInDurableObject(
+        workspace(),
+        (_instance, state) =>
+          state.storage.sql
+            .exec<{
+              n: number;
+            }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
+            .one().n,
+      );
+      expect(remaining).toBe(0);
+    }, { timeout: waitBudget() });
     const probe = env.QUEUE_PROBE_TEST;
     if (!probe) throw new Error("queue_probe_missing");
     const root = await vi.waitFor(
@@ -1299,7 +1309,7 @@ describe("Canvas artifact access propagated to local serving", () => {
         expect(roots.length).toBeGreaterThan(0);
         return roots.at(-1)!;
       },
-      { timeout: 10_000 },
+      { timeout: waitBudget() },
     );
     await consume([root]);
     const children = await vi.waitFor(
@@ -1317,7 +1327,7 @@ describe("Canvas artifact access propagated to local serving", () => {
         );
         return children;
       },
-      { timeout: 10_000 },
+      { timeout: waitBudget() },
     );
     await consume(children);
     expect(

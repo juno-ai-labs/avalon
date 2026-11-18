@@ -9,6 +9,29 @@ export const DEFAULT_RELEASE_PREFIX = 'stable/darwin/arm64';
 
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 
+/**
+ * Runs `attempt` until it exits zero, `isTransient` says its failure is not one
+ * a later attempt can clear, or `maxAttempts` is spent. Backs off 1s, doubling,
+ * capped at 30s between attempts. `attempt` returns `{ code, stdout, stderr }`;
+ * the last attempt's result is returned, so the caller owns the error it throws.
+ */
+export async function runWithTransientRetry({
+  attempt,
+  isTransient,
+  maxAttempts,
+  sleep,
+  onRetry = () => {},
+}) {
+  for (let index = 0; ; index += 1) {
+    const result = await attempt();
+    if (result.code === 0) return result;
+    if (index + 1 >= maxAttempts || !isTransient(result)) return result;
+    const delay = Math.min(1_000 * 2 ** index, 30_000);
+    onRetry({ attempt: index + 1, delay, result });
+    await sleep(delay);
+  }
+}
+
 export function parseVersion(version) {
   const match = SEMVER_PATTERN.exec(version);
   if (!match) throw new Error(`Invalid semantic version: ${version}`);

@@ -22,6 +22,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { getIdentityAuth } from "../middleware/auth";
+import { diagnosticErrorCode } from "../observability/logger";
 import { zValidator } from "../middleware/validation";
 import { acceptAuthenticatedTelemetry } from "../telemetry/authenticated";
 import { TelemetryBootstrapService } from "../telemetry/bootstrap";
@@ -104,6 +105,16 @@ export async function parseCrashUpload(c: Context<HonoAppEnv>) {
 }
 
 /**
+ * The 500 a telemetry route answers for a failure it has no public code for,
+ * carrying the cause's diagnostic code for the log (`internal_error:d1_overloaded`)
+ * where a bare `ApiError(500, 'internal_error')` left the row with nothing but
+ * the code (CLAUDE.md, "Naming a schema failure"). The response body is unchanged.
+ */
+function internalTelemetryError(message: string, cause: unknown): ApiError {
+  return new ApiError(500, 'internal_error', message, undefined, diagnosticErrorCode(cause, 'internal_error'));
+}
+
+/**
  * A schema rejection is rethrown as itself rather than mapped: the error
  * handler answers it with the same 500 `internal_error` this would, and logs
  * the route and the failing paths, where a mapped `ApiError` logged nothing
@@ -126,7 +137,7 @@ function crashApiError(error: unknown): never {
     'telemetry_capability_invalid',
   ]);
   if (publicCodes.has(code)) throw new ApiError(400, code, "The crash report is invalid");
-  throw new ApiError(500, 'internal_error', 'The crash report could not be processed');
+  throw internalTelemetryError('The crash report could not be processed', error);
 }
 
 function anonymousTelemetryApiError(error: unknown): never {
@@ -141,7 +152,7 @@ function anonymousTelemetryApiError(error: unknown): never {
   if (code === 'telemetry_eu_bridge_unavailable') {
     throw new ApiError(503, code, 'Regional telemetry is temporarily unavailable');
   }
-  throw new ApiError(500, 'internal_error', 'The telemetry event could not be processed');
+  throw internalTelemetryError('The telemetry event could not be processed', error);
 }
 
 publicTelemetryRoutes.post(
@@ -189,7 +200,7 @@ publicTelemetryRoutes.post(
       if (code === 'telemetry_route_decision_invalid' || code === 'telemetry_route_decision_expired') {
         throw new ApiError(400, code, 'The telemetry route decision is invalid or expired');
       }
-      throw new ApiError(500, 'internal_error', 'Telemetry routing could not be resolved');
+      throw internalTelemetryError('Telemetry routing could not be resolved', error);
     }
     c.header("Cache-Control", "no-store");
     return c.json(TelemetryBootstrapResponseSchema.parse(response), 201);
@@ -290,7 +301,7 @@ authenticatedTelemetryRoutes.post(
       if (code === 'telemetry_control_unavailable') {
         throw new ApiError(503, code, 'Anonymous analytics linking is temporarily unavailable');
       }
-      throw new ApiError(500, 'internal_error', 'The anonymous analytics epoch could not be linked');
+      throw internalTelemetryError('The anonymous analytics epoch could not be linked', error);
     }
   },
 );
