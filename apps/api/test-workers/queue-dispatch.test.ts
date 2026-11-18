@@ -107,9 +107,9 @@ describe("dispatching a queue batch", () => {
     // Nothing else closes an open socket, so a revocation held behind the gate
     // retries into the dead-letter queue while the sockets it names keep
     // receiving. It reaches the object; only the activity batch is refused.
-    await expect(
-      worker.queue?.(batchOf("avalon-do-runtime-test-access-revocations", revocation), contractComplete),
-    ).resolves.toBeUndefined();
+    const carried = settledBatch("avalon-do-runtime-test-access-revocations", revocation);
+    await worker.queue?.(carried.batch, contractComplete);
+    expect([carried.ack.mock.calls.length, carried.retry.mock.calls]).toEqual([1, []]);
 
     const held = settledBatch("avalon-do-runtime-test-activities", {});
     await worker.queue?.(held.batch, contractComplete);
@@ -128,21 +128,17 @@ describe("dispatching a queue batch", () => {
     // An invalid pointer is poison and is acknowledged by the inference
     // consumer. Reaching that consumer proves dispatch happens before the D1
     // maintenance fence; an unknown queue would reject below instead.
-    await expect(
-      worker.queue?.(
-        batchOf("avalon-global-inference-lakehouse", { invalid: true }),
-        contractComplete,
-      ),
-    ).resolves.toBeUndefined();
+    const carried = settledBatch("avalon-global-inference-lakehouse", { invalid: true });
+    await worker.queue?.(carried.batch, contractComplete);
+    expect([carried.ack.mock.calls.length, carried.retry.mock.calls]).toEqual([1, []]);
   });
 
   it("carries usage while maintenance refuses product work", async () => {
     // An unreadable usage event is acknowledged by the usage consumer, so
     // reaching it proves the meter is dispatched before maintenance.
-    await expect(worker.queue?.(
-      batchOf("avalon-global-usage", { invalid: true }),
-      contractComplete,
-    )).resolves.toBeUndefined();
+    const carried = settledBatch("avalon-global-usage", { invalid: true });
+    await worker.queue?.(carried.batch, contractComplete);
+    expect([carried.ack.mock.calls.length, carried.retry.mock.calls]).toEqual([1, []]);
   });
 
 });
