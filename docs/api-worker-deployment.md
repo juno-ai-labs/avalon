@@ -345,15 +345,18 @@ resident Channel agent reads the window snapshot once.
 to JSON Schema on the first read of `inputSchema` (`deferredGoogleToolInputSchema`,
 a memoized getter, the shape GitHub's tools already use) instead of while
 `@rally/connectors` loads. The favicon service creates its oversized-body
-`Error` only when a body overflows, instead of at module scope.
+sentinel as a `Symbol`, so nothing at module scope captures a stack.
 
 **Why:** The Global upload for #1650 failed with the startup-budget form of
 10021, and the next deploys of other commits passed: startup sits close enough
 to Cloudflare's limit that ordinary variance decides it. Averaged over repeated
 `wrangler check startup` runs of the same bundle, the two largest costs a
 profile could name were the Google catalog's eager conversions (about 10 ms per
-startup, nearly all of it in `googleToolInputSchema`) and the module-scope
-`Error`'s stack capture (about 8 ms). Both are gone from the profile after this
+startup, nearly all of it in `googleToolInputSchema`) and a module-scope
+`Error` (about 8 ms; removing that one line removed the cost). One stack capture
+should cost microseconds, so the 8 ms is more likely the runtime's one-time setup
+for the first capture at load than this `Error` itself: a later module-scope
+`Error` may bring it back. Both are gone from the profile after this
 change; the median non-idle startup measured locally fell from 228 ms to
 219 ms. Local timings are not Cloudflare's, so these are proportions, not a
 margin against the limit.

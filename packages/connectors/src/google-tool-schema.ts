@@ -14,15 +14,7 @@ export function googleToolInputSchema(schema: z.ZodType): Record<string, unknown
   return json;
 }
 
-/**
- * `googleToolInputSchema`, converted on the first read of a tool's
- * `inputSchema` rather than while the module loads. The Google catalog is
- * statically reachable from every API Worker isolate, and converting its
- * schemas eagerly was the largest single named cost in the startup profile;
- * see docs/api-worker-deployment.md. Read it from a getter so the
- * `ToolDefinition` surface stays a plain object; `schema` is a thunk so a
- * module may name a schema it declares further down.
- */
+/** `googleToolInputSchema` on first read, not at load; see docs/api-worker-deployment.md. A thunk, so a schema may be declared later. */
 export function deferredGoogleToolInputSchema(schema: () => z.ZodType): () => Record<string, unknown> {
   return memoizedValue(() => googleToolInputSchema(schema()));
 }
