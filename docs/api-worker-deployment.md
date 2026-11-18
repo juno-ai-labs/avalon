@@ -372,6 +372,8 @@ rather than converting at module scope. A few smaller module-scope conversions
 remain (the Drive text-cursor fragment, multimodal tool contracts) and one
 agent-harness tool definition whose getter is read during load.
 
+Shipped in #1664.
+
 ### 2026-11-11 — Bridge app invocations to Sidekick admission
 
 Added a named service binding from the artifact-serving Worker to a narrow API

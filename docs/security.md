@@ -1479,6 +1479,8 @@ rather than wrapped. Resubmitting on a lost wait was rejected: it restarts
 Apple's queue. A future change must keep retries to the network signatures
 alone, so a real refusal still fails at once.
 
+Shipped in #1664.
+
 ### 2026-11-11 — Separate artifact use from Canvas editing
 
 **What changed:** Canvas artifact users can use published outputs without reading or conversing in the Canvas. All published content requests are admitted from the serving host’s local access snapshot, including static files and assets. Missing projections fail closed. Identity sessions do not preserve superseded access; membership incarnations bind them to projected readers. Source updates propagate through the existing access Queue with eventual consistency. See [Canvas artifact access](canvas-artifact-access.md).
