@@ -20,6 +20,7 @@ import { pruneUsageEvents } from "./services/usage-metering";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { dispatchWorkspaceRelationshipChanges } from "./services/workspace-relationship-delivery";
 import { consumeActivityQueue } from "./queues/activity-consumer";
+import { queueRetryDelaySeconds } from "./queues/retry-backoff";
 import { consumeInteractiveQueue } from "./queues/interactive-consumer";
 import { isInteractiveQueue } from "./services/interactive-queue";
 import {
@@ -173,12 +174,25 @@ export default {
     }
     const authority = await readWorkstreamAuthorityControl(env);
     if (!acceptsNewWorkstreamWork(authority)) {
-      throw new Error([
+      // Back off rather than throw: a thrown batch is redelivered at once, so a
+      // seconds-long D1 throttle on the authority read would spend every retry.
+      const code = [
         "workstream_maintenance",
         authority.phase,
         authority.generation,
         ...(authority.failedClosedReason ? [authority.failedClosedReason] : []),
-      ].join(":"));
+        // An open phase refuses only on the serving contract; name it.
+        ...(authority.phase === "durable_object_open"
+          ? [`serving_contract:${authority.servingContractVersion}/${authority.requiredServingContractVersion}`]
+          : []),
+      ].join(":");
+      for (const message of batch.messages) {
+        logStructuredEvent(env, "warn", "queue_maintenance_retry", {
+          queue: batch.queue, code, queue_attempts: message.attempts,
+        });
+        message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
+      }
+      return;
     }
     // Work a person is waiting on, on its own queue so it never waits behind
     // the activity backlog. It is new work-stream work, so it stays behind the

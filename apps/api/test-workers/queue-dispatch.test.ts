@@ -57,11 +57,11 @@ const contractComplete = {
 } as unknown as typeof env;
 
 /** A one-message batch whose ack and retry can be observed. */
-function settledBatch(queue: string, body: unknown) {
+function settledBatch(queue: string, body: unknown, attempts = 1) {
   const ack = vi.fn();
   const retry = vi.fn();
   const base = batchOf(queue, body);
-  const batch = { ...base, messages: [{ ...base.messages[0]!, ack, retry }] };
+  const batch = { ...base, messages: [{ ...base.messages[0]!, attempts, ack, retry }] };
   return { batch: batch satisfies MessageBatch<unknown>, ack, retry };
 }
 
@@ -101,39 +101,63 @@ it("routes HTTP without reading the completed Channel cutover row", async () => 
 
 describe("dispatching a queue batch", () => {
   // This suite's D1 starts with no schema, so `workstream_authority_control`
-  // does not exist and the authority reads as quarantined — the state in which
-  // the gate refuses new work-stream work.
+  // does not exist and the authority reads as the legacy open state, whose
+  // serving contract the gate refuses as new work-stream work.
   it("carries a revocation while maintenance refuses everything else", async () => {
     // Nothing else closes an open socket, so a revocation held behind the gate
     // retries into the dead-letter queue while the sockets it names keep
     // receiving. It reaches the object; only the activity batch is refused.
-    await expect(
-      worker.queue?.(batchOf("avalon-do-runtime-test-access-revocations", revocation), contractComplete),
-    ).resolves.toBeUndefined();
+    const carried = settledBatch("avalon-do-runtime-test-access-revocations", revocation);
+    await worker.queue?.(carried.batch, contractComplete);
+    expect([carried.ack.mock.calls.length, carried.retry.mock.calls]).toEqual([1, []]);
 
-    await expect(worker.queue?.(batchOf("avalon-do-runtime-test-activities", {}), contractComplete))
-      .rejects.toThrow(/workstream_maintenance/);
+    const held = settledBatch("avalon-do-runtime-test-activities", {});
+    await worker.queue?.(held.batch, contractComplete);
+    expect(held.ack).not.toHaveBeenCalled();
+    expect(held.retry.mock.calls).toEqual([[{ delaySeconds: 5 }]]);
+  });
+
+  it("backs off a refused batch instead of redelivering it at once", async () => {
+    const third = settledBatch("avalon-do-runtime-test-activities", {}, 3);
+    await worker.queue?.(third.batch, contractComplete);
+    expect(third.ack).not.toHaveBeenCalled();
+    expect(third.retry.mock.calls).toEqual([[{ delaySeconds: 20 }]]);
+  });
+
+  it("names why the authority read failed closed when it refuses a batch", async () => {
+    // A table with no control row fails closed as `quarantined`, the same
+    // branch a D1 error takes; the log is the only record of the reason.
+    await env.DB.exec("CREATE TABLE IF NOT EXISTS workstream_authority_control (id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL, required_serving_contract_version INTEGER NOT NULL, serving_contract_version INTEGER NOT NULL)");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const held = settledBatch("avalon-do-runtime-test-activities", {});
+      await worker.queue?.(held.batch, { ...contractComplete, LOG_LEVEL: "warn" } as typeof env);
+      expect(held.retry.mock.calls).toEqual([[{ delaySeconds: 5 }]]);
+      const logged = warn.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+        .filter((entry) => entry.event === "queue_maintenance_retry")
+        .map((entry) => [entry.code, entry.queue_attempts]);
+      expect(logged).toEqual([["workstream_maintenance:quarantined:0:authority_control_row_missing", 1]]);
+    } finally {
+      warn.mockRestore();
+      await env.DB.exec("DROP TABLE IF EXISTS workstream_authority_control");
+    }
   });
 
   it("carries inference lakehouse delivery while maintenance refuses product work", async () => {
     // An invalid pointer is poison and is acknowledged by the inference
     // consumer. Reaching that consumer proves dispatch happens before the D1
     // maintenance fence; an unknown queue would reject below instead.
-    await expect(
-      worker.queue?.(
-        batchOf("avalon-global-inference-lakehouse", { invalid: true }),
-        contractComplete,
-      ),
-    ).resolves.toBeUndefined();
+    const carried = settledBatch("avalon-global-inference-lakehouse", { invalid: true });
+    await worker.queue?.(carried.batch, contractComplete);
+    expect([carried.ack.mock.calls.length, carried.retry.mock.calls]).toEqual([1, []]);
   });
 
   it("carries usage while maintenance refuses product work", async () => {
     // An unreadable usage event is acknowledged by the usage consumer, so
     // reaching it proves the meter is dispatched before maintenance.
-    await expect(worker.queue?.(
-      batchOf("avalon-global-usage", { invalid: true }),
-      contractComplete,
-    )).resolves.toBeUndefined();
+    const carried = settledBatch("avalon-global-usage", { invalid: true });
+    await worker.queue?.(carried.batch, contractComplete);
+    expect([carried.ack.mock.calls.length, carried.retry.mock.calls]).toEqual([1, []]);
   });
 
 });
@@ -142,8 +166,10 @@ describe("dispatching interactive work", () => {
   const INTERACTIVE = "avalon-do-runtime-test-interactive";
 
   it("holds interactive work behind the maintenance gate, as new work-stream work", async () => {
-    await expect(worker.queue?.(batchOf(INTERACTIVE, {}), contractComplete))
-      .rejects.toThrow(/workstream_maintenance/);
+    const held = settledBatch(INTERACTIVE, {});
+    await worker.queue?.(held.batch, contractComplete);
+    expect(held.ack).not.toHaveBeenCalled();
+    expect(held.retry.mock.calls).toEqual([[{ delaySeconds: 5 }]]);
   });
 
   it("hands the interactive queue to its own consumer once the gate is open", async () => {
