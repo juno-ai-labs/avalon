@@ -57,11 +57,11 @@ const contractComplete = {
 } as unknown as typeof env;
 
 /** A one-message batch whose ack and retry can be observed. */
-function settledBatch(queue: string, body: unknown) {
+function settledBatch(queue: string, body: unknown, attempts = 1) {
   const ack = vi.fn();
   const retry = vi.fn();
   const base = batchOf(queue, body);
-  const batch = { ...base, messages: [{ ...base.messages[0]!, ack, retry }] };
+  const batch = { ...base, messages: [{ ...base.messages[0]!, attempts, ack, retry }] };
   return { batch: batch satisfies MessageBatch<unknown>, ack, retry };
 }
 
@@ -101,8 +101,8 @@ it("routes HTTP without reading the completed Channel cutover row", async () => 
 
 describe("dispatching a queue batch", () => {
   // This suite's D1 starts with no schema, so `workstream_authority_control`
-  // does not exist and the authority reads as quarantined — the state in which
-  // the gate refuses new work-stream work.
+  // does not exist and the authority reads as the legacy open state, whose
+  // serving contract the gate refuses as new work-stream work.
   it("carries a revocation while maintenance refuses everything else", async () => {
     // Nothing else closes an open socket, so a revocation held behind the gate
     // retries into the dead-letter queue while the sockets it names keep
@@ -118,10 +118,29 @@ describe("dispatching a queue batch", () => {
   });
 
   it("backs off a refused batch instead of redelivering it at once", async () => {
-    const third = settledBatch("avalon-do-runtime-test-activities", {});
-    third.batch.messages[0] = { ...third.batch.messages[0]!, attempts: 3 };
+    const third = settledBatch("avalon-do-runtime-test-activities", {}, 3);
     await worker.queue?.(third.batch, contractComplete);
+    expect(third.ack).not.toHaveBeenCalled();
     expect(third.retry.mock.calls).toEqual([[{ delaySeconds: 20 }]]);
+  });
+
+  it("names why the authority read failed closed when it refuses a batch", async () => {
+    // A table with no control row fails closed as `quarantined`, the same
+    // branch a D1 error takes; the log is the only record of the reason.
+    await env.DB.exec("CREATE TABLE IF NOT EXISTS workstream_authority_control (id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL, required_serving_contract_version INTEGER NOT NULL, serving_contract_version INTEGER NOT NULL)");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const held = settledBatch("avalon-do-runtime-test-activities", {});
+      await worker.queue?.(held.batch, { ...contractComplete, LOG_LEVEL: "warn" } as typeof env);
+      expect(held.retry.mock.calls).toEqual([[{ delaySeconds: 5 }]]);
+      const logged = warn.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+        .filter((entry) => entry.event === "queue_maintenance_retry")
+        .map((entry) => [entry.code, entry.queue_attempts]);
+      expect(logged).toEqual([["workstream_maintenance:quarantined:0:authority_control_row_missing", 1]]);
+    } finally {
+      warn.mockRestore();
+      await env.DB.exec("DROP TABLE IF EXISTS workstream_authority_control");
+    }
   });
 
   it("carries inference lakehouse delivery while maintenance refuses product work", async () => {

@@ -1457,6 +1457,7 @@ does not migrate unrelated agent loops to `AgentLoopDO`.
 | Schema v32 finds an unverified legacy payload owner | Constructor activation fails with `transcript_payload_retirement_not_verified`; every legacy row remains intact and the object serves nothing until an operator completes ownership transfer under the pre-retirement Worker. |
 | Participant removal targets the final active participant | The object returns `409 workstream_participant_required` and leaves the participant active. The desktop disables the action when its current snapshot already shows only one participant, but that is not the authority fence. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
+| Authority read fails or the gate refuses activity or interactive work | `readWorkstreamAuthorityControl` fails closed, and `worker-events.ts` retries each message with `queueRetryDelaySeconds`, logging `queue_maintenance_retry` with the gate's code. Five retries hold a message about 155 s (5+10+20+40+80) before it dead-letters — longer than a `d1_overloaded` throttle window; a longer refusal dead-letters. Each refusal spends one of the message's retries before its handler runs. |
 | Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; the parent's receipt table and WorkspaceDO's receipt table answer a replay without applying it; generation/version orders mutable state. |
 | An effect envelope exceeds `EFFECT_QUEUE_MESSAGE_MAX_BYTES` (120,000 bytes, under Cloudflare's 128 KB per-message limit) | The sender deletes the row and logs `conversation_effect_oversized` with the byte count; it is never retried, because nothing in the object can shrink it and the Queue would refuse it on every attempt. `resourceLinks`, capped at `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT` (10,000), is the field unbounded enough to cross the guard. The guard is written open and the number is the team's to set. |
 | A reader opens a conversation whose parent is archived | Admitted for reading; every write on that socket and every REST write answers `409 conversation_parent_archived`. |
@@ -1758,7 +1759,8 @@ include component/version reason. Inspect `_sql_schema_migrations`,
 receipts, attempt leases, child and
 parent `durable_outbox` (a row there means the Queue has not yet accepted it),
 the regional activities dead-letter queue (a message there means a receiver
-kept throwing), WorkspaceDO external-delivery attempts, and authority
+kept throwing, or the work-stream maintenance gate refused it through every
+retry — `queue_maintenance_retry` logs name which), WorkspaceDO external-delivery attempts, and authority
 route/generation before retrying a quarantined object. The maintenance control
 plane can quarantine a failed route;
 operators must never reopen legacy D1 writers or an unrestricted predecessor as
@@ -1889,8 +1891,8 @@ of the creator-only rule went with the import suite and was never replaced.
 
 **What changed:** When the work-stream maintenance gate in `worker-events.ts`
 refuses a batch, it now retries each message with `queueRetryDelaySeconds`
-(5 s doubling to 300 s) and logs `queue_maintenance_retry` with the gate's
-code, instead of throwing the batch.
+and logs `queue_maintenance_retry` with the gate's code, instead of throwing
+the batch.
 
 **Why:** `readWorkstreamAuthorityControl` fails closed to `quarantined` on any
 D1 error, including the account-level `d1_overloaded` throttle, which lasts
@@ -1902,10 +1904,18 @@ messages left in `avalon-global-activities-dead-letter`.
 
 **Considered and rejected:** Failing open on a read error, which would let a
 D1 outage reopen work during a real quarantine — the reason the read fails
-closed. Setting `retry_delay` on the consumers, which delays every failure
-equally and leaves the gate's per-message attempt count unused. A real
-maintenance phase longer than the backoff still dead-letters, deliberately:
-that is the failure that gets noticed.
+closed. Setting `retry_delay` on the consumers, which needs a new number for the
+team to set, where reusing the existing backoff adds none.
+
+**Consequences:** A refused message is held about 155 s across its five
+retries; a refusal longer than that still dead-letters, deliberately, since that
+is the failure that gets noticed. A refusal no longer shows as a failed consumer
+invocation, only as the `queue_maintenance_retry` log and its code, which also
+names the serving contract when an open phase refuses on it. Each refusal spends
+one of the message's retries, so a message held through a throttle reaches its
+handler with fewer left.
+
+Shipped in #1666.
 
 ### 2026-11-15 — A conversation takes host-written records
 

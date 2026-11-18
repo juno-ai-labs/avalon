@@ -181,6 +181,10 @@ export default {
         authority.phase,
         authority.generation,
         ...(authority.failedClosedReason ? [authority.failedClosedReason] : []),
+        // An open phase refuses only on the serving contract; name it.
+        ...(authority.phase === "durable_object_open"
+          ? [`serving_contract:${authority.servingContractVersion}/${authority.requiredServingContractVersion}`]
+          : []),
       ].join(":");
       for (const message of batch.messages) {
         logStructuredEvent(env, "warn", "queue_maintenance_retry", {
