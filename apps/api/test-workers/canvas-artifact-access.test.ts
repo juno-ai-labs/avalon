@@ -1274,16 +1274,23 @@ describe("Canvas artifact access propagated to local serving", () => {
     await runDurableObjectAlarm(workspace());
     // Bootstrap itself can schedule one newer revision; a second alarm drains it.
     await runDurableObjectAlarm(workspace());
-    const remaining = await runInDurableObject(
-      workspace(),
-      (_instance, state) =>
-        state.storage.sql
-          .exec<{
-            n: number;
-          }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
-          .one().n,
-    );
-    expect(remaining).toBe(0);
+    // An alarm workerd already fired on its own leaves the helper nothing to run
+    // while that drain is still in flight (docs/testing.md), so wait for the drain.
+    await expect
+      .poll(
+        () =>
+          runInDurableObject(
+            workspace(),
+            (_instance, state) =>
+              state.storage.sql
+                .exec<{
+                  n: number;
+                }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
+                .one().n,
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe(0);
     const probe = env.QUEUE_PROBE_TEST;
     if (!probe) throw new Error("queue_probe_missing");
     const root = await vi.waitFor(
