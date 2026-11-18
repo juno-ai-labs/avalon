@@ -27,6 +27,7 @@ import {
 import type { SitePublishFile } from "../src/services/terminal/site-resource-bridge";
 import { sha256Hex } from "../src/lib/crypto";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
+import { startWaitBudget, waitBudget } from "./helpers/wait-budget";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
 import { createArtifactAudienceTool } from "../src/services/canvas-artifact-audience-tool";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
@@ -225,6 +226,7 @@ beforeEach(async () => {
   )
     .bind(SITE_HOST)
     .run();
+  startWaitBudget();
 });
 
 async function visit(stub: string, path = "/", cookie?: string) {
@@ -1288,7 +1290,7 @@ describe("Canvas artifact access propagated to local serving", () => {
                 }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
                 .one().n,
           ),
-        { timeout: 10_000 },
+        { timeout: waitBudget() },
       )
       .toBe(0);
     const probe = env.QUEUE_PROBE_TEST;
@@ -1306,7 +1308,7 @@ describe("Canvas artifact access propagated to local serving", () => {
         expect(roots.length).toBeGreaterThan(0);
         return roots.at(-1)!;
       },
-      { timeout: 10_000 },
+      { timeout: waitBudget() },
     );
     await consume([root]);
     const children = await vi.waitFor(
@@ -1324,7 +1326,7 @@ describe("Canvas artifact access propagated to local serving", () => {
         );
         return children;
       },
-      { timeout: 10_000 },
+      { timeout: waitBudget() },
     );
     await consume(children);
     expect(
