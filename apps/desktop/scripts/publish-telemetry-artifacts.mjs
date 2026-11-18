@@ -203,10 +203,8 @@ async function uploadAndVerify(
         + `; codes: ${cloudflareErrorCodes(failureBody)}`,
     );
   }
-  // Reject a response Cloudflare says came from its cache. A response with no
-  // cache status at all did not pass through the cache: the Cloudflare API
-  // stopped sending the header on uncached responses (release v1.769.0), and
-  // the ETag and timestamp checks below still reject an older object.
+  // Reject an explicit cache result. A missing header is verified like DYNAMIC:
+  // the ETag, size and timestamp checks below are what reject an older object.
   const cacheStatus = inventory.headers.get('cf-cache-status');
   if (cacheStatus !== null && cacheStatus !== 'DYNAMIC') {
     await inventory.body?.cancel();
