@@ -203,9 +203,14 @@ async function uploadAndVerify(
         + `; codes: ${cloudflareErrorCodes(failureBody)}`,
     );
   }
-  if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {
+  // Reject an explicit cache result. A missing header is verified like DYNAMIC:
+  // the ETag, size and timestamp checks below are what reject an older object.
+  const cacheStatus = inventory.headers.get('cf-cache-status');
+  if (cacheStatus !== null && cacheStatus !== 'DYNAMIC') {
     await inventory.body?.cancel();
-    throw new Error(`Could not verify r2://${target}: Cloudflare returned a non-dynamic inventory`);
+    throw new Error(
+      `Could not verify r2://${target}: Cloudflare returned a cached inventory (${cacheStatus})`,
+    );
   }
   const inventoryBody = await inventory.json().catch(() => null);
   if (inventoryBody?.success !== true || !Array.isArray(inventoryBody.result)) {

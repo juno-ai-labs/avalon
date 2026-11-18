@@ -911,6 +911,27 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-11-18 — Artifact inventory verification accepts a response with no cache status
+
+**What changed:** The inventory read rejects only an explicit non-`DYNAMIC`
+`cf-cache-status`; a response without the header is verified normally.
+
+**Why:** Release v1.769.0 aborted at its first source map because the Cloudflare
+API no longer appears to send the header on uncached responses, so requiring an
+explicit `DYNAMIC` blocked every release.
+
+**Considered and rejected:** Retrying a missing header, because the condition
+looks persistent. Deleting the check outright: the stale `HIT` recorded on
+2026-08-13 came from the object-body GET, not this inventory read, so the
+check is now mostly redundant with the metadata comparison, but it is kept for
+the clearer error it gives when Cloudflare does label a cached response.
+
+**Consequences:** Where the header is absent, the ETag, size and timestamp
+comparison is the only guard against a stale inventory, and it fails as a
+metadata mismatch.
+
+Shipped in #1665.
+
 ### 2026-11-13 — Keep iOS crash capture inside regional storage
 
 **What changed:** The shared crash endpoint accepts a typed mobile report format
