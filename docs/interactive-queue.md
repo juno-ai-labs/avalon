@@ -30,7 +30,9 @@ event, interaction and command the Slack edge admits.
    `*-interactive`, and `worker-events.ts` routes that batch to
    `consumeInteractiveQueue` after the work-stream maintenance gate. Interactive
    work admits new work-stream work, so it waits out maintenance like the
-   activity queue does.
+   activity queue does: while the gate refuses, each message is retried with
+   the same 5 s to 300 s backoff rather than the batch thrown, which the
+   platform would redeliver at once.
 3. **The consumer settles each message on its own, the same way for every
    kind.** A message for another region is acked as skipped. Otherwise the
    kind's handler runs: it returns to have the message acked, or throws to

@@ -1885,6 +1885,28 @@ of the creator-only rule went with the import suite and was never replaced.
 
 ## Changelog
 
+### 2026-11-18 — A refused queue batch backs off instead of throwing
+
+**What changed:** When the work-stream maintenance gate in `worker-events.ts`
+refuses a batch, it now retries each message with `queueRetryDelaySeconds`
+(5 s doubling to 300 s) and logs `queue_maintenance_retry` with the gate's
+code, instead of throwing the batch.
+
+**Why:** `readWorkstreamAuthorityControl` fails closed to `quarantined` on any
+D1 error, including the account-level `d1_overloaded` throttle, which lasts
+seconds. A thrown batch is redelivered with no delay because the activity and
+interactive consumers set no `retry_delay`, so all five retries ran inside the
+throttle window and dead-lettered every message in flight: 200 activity
+deliveries across 2026-11-11 16:03 and 2026-11-17 16:02 and 19:24 UTC, and 86
+messages left in `avalon-global-activities-dead-letter`.
+
+**Considered and rejected:** Failing open on a read error, which would let a
+D1 outage reopen work during a real quarantine — the reason the read fails
+closed. Setting `retry_delay` on the consumers, which delays every failure
+equally and leaves the gate's per-message attempt count unused. A real
+maintenance phase longer than the backoff still dead-letters, deliberately:
+that is the failure that gets noticed.
+
 ### 2026-11-15 — A conversation takes host-written records
 
 **What changed:** `appendHostRecord` appends a system message whose

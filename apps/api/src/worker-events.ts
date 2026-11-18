@@ -20,6 +20,7 @@ import { pruneUsageEvents } from "./services/usage-metering";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { dispatchWorkspaceRelationshipChanges } from "./services/workspace-relationship-delivery";
 import { consumeActivityQueue } from "./queues/activity-consumer";
+import { queueRetryDelaySeconds } from "./queues/retry-backoff";
 import { consumeInteractiveQueue } from "./queues/interactive-consumer";
 import { isInteractiveQueue } from "./services/interactive-queue";
 import {
@@ -173,12 +174,26 @@ export default {
     }
     const authority = await readWorkstreamAuthorityControl(env);
     if (!acceptsNewWorkstreamWork(authority)) {
-      throw new Error([
+      // Hold each message with backoff rather than throwing. A thrown batch is
+      // redelivered with no delay (these consumers set no `retry_delay`), so a
+      // ten-second `d1_overloaded` window on the authority read spent all five
+      // retries in seconds and dead-lettered every activity in flight —
+      // 200 deliveries on 2026-11-11 and 2026-11-17. The backoff rides out a
+      // throttle window; a maintenance phase that outlasts it still ends in the
+      // dead-letter queue, where it is noticed.
+      const code = [
         "workstream_maintenance",
         authority.phase,
         authority.generation,
         ...(authority.failedClosedReason ? [authority.failedClosedReason] : []),
-      ].join(":"));
+      ].join(":");
+      for (const message of batch.messages) {
+        logStructuredEvent(env, "warn", "queue_maintenance_retry", {
+          queue: batch.queue, code, queue_attempts: message.attempts,
+        });
+        message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
+      }
+      return;
     }
     // Work a person is waiting on, on its own queue so it never waits behind
     // the activity backlog. It is new work-stream work, so it stays behind the

@@ -111,8 +111,20 @@ describe("dispatching a queue batch", () => {
       worker.queue?.(batchOf("avalon-do-runtime-test-access-revocations", revocation), contractComplete),
     ).resolves.toBeUndefined();
 
-    await expect(worker.queue?.(batchOf("avalon-do-runtime-test-activities", {}), contractComplete))
-      .rejects.toThrow(/workstream_maintenance/);
+    const held = settledBatch("avalon-do-runtime-test-activities", {});
+    await worker.queue?.(held.batch, contractComplete);
+    expect(held.ack).not.toHaveBeenCalled();
+    expect(held.retry.mock.calls).toEqual([[{ delaySeconds: 5 }]]);
+  });
+
+  it("backs off a refused batch instead of redelivering it at once", async () => {
+    // A thrown batch is redelivered with no delay, so a seconds-long D1
+    // throttle on the authority read spent every retry and dead-lettered the
+    // batch. Each refused message is retried with the exponential backoff.
+    const third = settledBatch("avalon-do-runtime-test-activities", {});
+    third.batch.messages[0] = { ...third.batch.messages[0]!, attempts: 3 };
+    await worker.queue?.(third.batch, contractComplete);
+    expect(third.retry.mock.calls).toEqual([[{ delaySeconds: 20 }]]);
   });
 
   it("carries inference lakehouse delivery while maintenance refuses product work", async () => {
@@ -142,8 +154,9 @@ describe("dispatching interactive work", () => {
   const INTERACTIVE = "avalon-do-runtime-test-interactive";
 
   it("holds interactive work behind the maintenance gate, as new work-stream work", async () => {
-    await expect(worker.queue?.(batchOf(INTERACTIVE, {}), contractComplete))
-      .rejects.toThrow(/workstream_maintenance/);
+    const held = settledBatch(INTERACTIVE, {});
+    await worker.queue?.(held.batch, contractComplete);
+    expect([held.ack.mock.calls.length, held.retry.mock.calls]).toEqual([0, [[{ delaySeconds: 5 }]]]);
   });
 
   it("hands the interactive queue to its own consumer once the gate is open", async () => {
