@@ -118,9 +118,6 @@ describe("dispatching a queue batch", () => {
   });
 
   it("backs off a refused batch instead of redelivering it at once", async () => {
-    // A thrown batch is redelivered with no delay, so a seconds-long D1
-    // throttle on the authority read spent every retry and dead-lettered the
-    // batch. Each refused message is retried with the exponential backoff.
     const third = settledBatch("avalon-do-runtime-test-activities", {});
     third.batch.messages[0] = { ...third.batch.messages[0]!, attempts: 3 };
     await worker.queue?.(third.batch, contractComplete);
@@ -156,7 +153,8 @@ describe("dispatching interactive work", () => {
   it("holds interactive work behind the maintenance gate, as new work-stream work", async () => {
     const held = settledBatch(INTERACTIVE, {});
     await worker.queue?.(held.batch, contractComplete);
-    expect([held.ack.mock.calls.length, held.retry.mock.calls]).toEqual([0, [[{ delaySeconds: 5 }]]]);
+    expect(held.ack).not.toHaveBeenCalled();
+    expect(held.retry.mock.calls).toEqual([[{ delaySeconds: 5 }]]);
   });
 
   it("hands the interactive queue to its own consumer once the gate is open", async () => {

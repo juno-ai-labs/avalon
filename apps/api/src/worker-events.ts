@@ -174,13 +174,8 @@ export default {
     }
     const authority = await readWorkstreamAuthorityControl(env);
     if (!acceptsNewWorkstreamWork(authority)) {
-      // Hold each message with backoff rather than throwing. A thrown batch is
-      // redelivered with no delay (these consumers set no `retry_delay`), so a
-      // ten-second `d1_overloaded` window on the authority read spent all five
-      // retries in seconds and dead-lettered every activity in flight —
-      // 200 deliveries on 2026-11-11 and 2026-11-17. The backoff rides out a
-      // throttle window; a maintenance phase that outlasts it still ends in the
-      // dead-letter queue, where it is noticed.
+      // Back off rather than throw: a thrown batch is redelivered at once, so a
+      // seconds-long D1 throttle on the authority read would spend every retry.
       const code = [
         "workstream_maintenance",
         authority.phase,
