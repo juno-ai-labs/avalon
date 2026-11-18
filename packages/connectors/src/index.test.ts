@@ -3721,6 +3721,16 @@ describe("connectors", () => {
   });
 
   // Driven to the boundary: accepted at the advertised limit, refused one past it.
+
+  it("converts a Google tool's input schema once, on first read, and serializes it", () => {
+    const declared = googleTools.find((tool) => tool.name === "calendar.cancel_event")!;
+    const first = declared.inputSchema as { type: string; additionalProperties: unknown };
+    expect(first.type).toBe("object");
+    expect(first.additionalProperties).toEqual({ not: {} });
+    expect(declared.inputSchema).toBe(first);
+    expect(JSON.parse(JSON.stringify(declared)).inputSchema.additionalProperties).toEqual({ not: {} });
+    expect(structuredClone(declared).inputSchema).toEqual(first);
+  });
   it.each([
     ["gmail.search", 2_000, {}, ["gmail.read"], { messages: [] }],
     [

@@ -16,7 +16,6 @@ export const FAVICON_CANDIDATE_TIMEOUT_MS = 25_000;
 // therefore not a usable result for this service.
 const KV_MAX_VALUE_BYTES = 25 * 1024 * 1024;
 const textDecoder = new TextDecoder();
-const oversizedImageBody = new Error("favicon_image_body_too_large");
 
 type FaviconCacheMetadata =
   | { kind: "icon"; contentType: string }
@@ -132,10 +131,15 @@ async function readImageBytes(response: Response): Promise<ArrayBuffer | null> {
   }
   if (!response.body) return new ArrayBuffer(0);
   let total = 0;
+  // Made only when a body overflows: a module-scope Error captures a stack
+  // trace during Worker startup, which the startup profile charged to every
+  // isolate (docs/api-worker-deployment.md).
+  let oversizedImageBody: Error | undefined;
   try {
     const bounded = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         if (total + chunk.byteLength > KV_MAX_VALUE_BYTES) {
+          oversizedImageBody = new Error("favicon_image_body_too_large");
           controller.error(oversizedImageBody);
           return;
         }
@@ -145,7 +149,7 @@ async function readImageBytes(response: Response): Promise<ArrayBuffer | null> {
     }));
     return await new Response(bounded).arrayBuffer();
   } catch (error) {
-    if (error === oversizedImageBody) return null;
+    if (oversizedImageBody && error === oversizedImageBody) return null;
     throw error;
   }
 }
