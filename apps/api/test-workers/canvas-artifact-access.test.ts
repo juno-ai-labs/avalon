@@ -1271,10 +1271,8 @@ describe("Canvas artifact access propagated to local serving", () => {
       }),
     );
     expect(pending).toBe(1);
-    // The alarm `canvasCreate` armed is live and can be mid-run here, when
-    // `runDurableObjectAlarm` finds nothing armed and does nothing; bootstrap
-    // can also re-arm one newer revision. Drive wakes until the intent drains
-    // rather than counting them.
+    // `canvasCreate`'s alarm can be mid-run here, so a forced wake may do
+    // nothing (docs/testing.md, `runDurableObjectAlarm`): poll until drained.
     await vi.waitFor(async () => {
       await runDurableObjectAlarm(workspace());
       const remaining = await runInDurableObject(
@@ -1287,7 +1285,7 @@ describe("Canvas artifact access propagated to local serving", () => {
             .one().n,
       );
       expect(remaining).toBe(0);
-    });
+    }, { timeout: 10_000 });
     const probe = env.QUEUE_PROBE_TEST;
     if (!probe) throw new Error("queue_probe_missing");
     const root = await vi.waitFor(
