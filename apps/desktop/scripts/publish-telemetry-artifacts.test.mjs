@@ -56,6 +56,7 @@ function commandRunner() {
 function objectApi({
   corruptInventory = false,
   inventoryCacheStatus = 'DYNAMIC',
+  inventoryCacheStatuses = [],
   inventoryInvalidJson = false,
   inventoryStatus = 200,
   inventoryStatuses = [],
@@ -71,6 +72,7 @@ function objectApi({
   const calls = [];
   let errorBodyCancelled = false;
   const scriptedInventoryStatuses = [...inventoryStatuses];
+  const scriptedInventoryCacheStatuses = [...inventoryCacheStatuses];
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(input);
     const objectMatch = /\/r2\/buckets\/([^/]+)\/objects\/(.+)/u.exec(url.pathname);
@@ -155,7 +157,12 @@ function objectApi({
         size: object.bytes.byteLength,
       }],
     }, {
-      headers: inventoryCacheStatus === null ? undefined : { 'cf-cache-status': inventoryCacheStatus },
+      headers: (() => {
+        const cacheStatus = scriptedInventoryCacheStatuses.length > 0
+          ? scriptedInventoryCacheStatuses.shift()
+          : inventoryCacheStatus;
+        return cacheStatus === null ? undefined : { 'cf-cache-status': cacheStatus };
+      })(),
     });
   };
   return {
@@ -389,6 +396,27 @@ test('validates authoritative inventory responses without trusting cached object
     }
   });
 
+  await t.test('a cached inventory is read again until Cloudflare answers dynamically', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ inventoryCacheStatuses: ['HIT', 'STALE'] });
+    const sleeps = [];
+    try {
+      await publishTelemetryArtifacts({
+        desktopDirectory,
+        environment: runtimeEnvironment,
+        fetchImpl: api.fetchImpl,
+        runCommand: commandRunner().runCommand,
+        sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+        temporaryRoot: root,
+      });
+      assert.equal(api.objects.size, 5);
+      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 7);
+      assert.deepEqual(sleeps, [500, 1_000]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   await t.test('a transient response whose body already errored is still retried', async () => {
     const { root, desktopDirectory } = await fixture();
     const api = objectApi({ inventoryStatus: 502, inventoryBodyErrors: true });
@@ -487,10 +515,13 @@ test('validates authoritative inventory responses without trusting cached object
             environment: runtimeEnvironment,
             fetchImpl: api.fetchImpl,
             runCommand: commandRunner().runCommand,
+            sleepImpl: async () => {},
             temporaryRoot: root,
           }),
-          /Cloudflare returned a non-dynamic inventory/u,
+          new RegExp(`Cloudflare returned a non-dynamic inventory \\(cf-cache-status: ${cacheStatus ?? 'missing'}\\)$`, 'u'),
         );
+        // Every attempt was read before giving up: a cached answer is retried.
+        assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 7);
       } finally {
         await rm(root, { recursive: true, force: true });
       }

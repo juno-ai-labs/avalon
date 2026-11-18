@@ -192,8 +192,11 @@ async function uploadAndVerify(
     // 5xx and 403: the PUT just above succeeded with this same token, so a
     // 403 on the read that follows it cannot be a revoked token. Never 429:
     // the account API rate limit blocks for five minutes, which this backoff
-    // cannot outlast.
-    if (inventory.status < 500 && inventory.status !== 403) break;
+    // cannot outlast. A cached inventory is not yet an answer either: a
+    // re-released version reads the same URL, which Cloudflare's edge may
+    // still hold from an earlier attempt.
+    const cached = inventory.ok && inventory.headers.get('cf-cache-status') !== 'DYNAMIC';
+    if (inventory.status < 500 && inventory.status !== 403 && !cached) break;
     if (attempt < INVENTORY_ATTEMPTS - 1) await discardBody(inventory);
   }
   if (!inventory.ok) {
@@ -203,9 +206,15 @@ async function uploadAndVerify(
         + `; codes: ${cloudflareErrorCodes(failureBody)}`,
     );
   }
-  if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {
+  const cacheStatus = inventory.headers.get('cf-cache-status');
+  if (cacheStatus !== 'DYNAMIC') {
     await inventory.body?.cancel();
-    throw new Error(`Could not verify r2://${target}: Cloudflare returned a non-dynamic inventory`);
+    // The status is the CDN's own vocabulary (HIT, STALE, ...); keep it to
+    // that shape so a stray header cannot write arbitrary text into the log.
+    const named = cacheStatus === null ? 'missing' : cacheStatus.replace(/[^A-Za-z_-]/gu, '').slice(0, 32) || 'unrecognized';
+    throw new Error(
+      `Could not verify r2://${target}: Cloudflare returned a non-dynamic inventory (cf-cache-status: ${named})`,
+    );
   }
   const inventoryBody = await inventory.json().catch(() => null);
   if (inventoryBody?.success !== true || !Array.isArray(inventoryBody.result)) {

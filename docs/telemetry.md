@@ -911,6 +911,32 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-11-18 — Read a cached artifact inventory again instead of failing the release
+
+**What changed:** The release artifact publisher treats an inventory read that
+Cloudflare marks as anything but `DYNAMIC` the same as a 5xx: it reads again
+inside the existing backoff, and fails closed only once every attempt came back
+cached. The failure now names the `cf-cache-status` it received.
+
+**Why:** The v1.769.0 release (run 44216074038) built, signed, notarized and
+stapled, then failed here on its first inventory read with "non-dynamic
+inventory". That version had already failed once earlier the same day and was
+picked back up, so this attempt read the same inventory URL, which the edge may
+still have held. The check refused the cached answer correctly, but nothing
+asked again, so a release with a correct upload was lost. The old message did
+not say which status came back, so the exact one was not recorded.
+
+**Considered and rejected:** Accepting a cached inventory, which would bring
+back the 2026-08-13 failure where a cached read showed an object's previous
+version. Adding a query nonce to the inventory URL to bypass the cache: the
+list endpoint's handling of an unknown parameter is not verified, and a 400
+would fail every release rather than the occasional one.
+
+**Consequences:** A cached inventory now costs up to the same roughly 31 seconds
+of backoff a persistent 5xx does before the release fails. If an edge entry
+outlives that, the failure names its status, and the nonce is the next step to
+try.
+
 ### 2026-11-13 — Keep iOS crash capture inside regional storage
 
 **What changed:** The shared crash endpoint accepts a typed mobile report format
