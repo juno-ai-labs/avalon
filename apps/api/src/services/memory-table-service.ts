@@ -33,6 +33,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   ensureScope,
   resolveMemoryAccess,
+  unwritableScopeError,
   writableScope,
   type MemoryScope,
 } from "./memory-service";
@@ -270,7 +271,8 @@ async function loadAuthorizedTable(
   }
   const scope = scopes.find((candidate) => candidate.memoryScopeId === found.table.memoryScopeId);
   if (!scope) throw new Error("memory_table_not_authorized");
-  if (requireWritable && !scope.writable) throw new Error(`memory_scope_not_writable:${scope.kind}`);
+  // The typed refusal names the scope in product words and the scopes this run may write.
+  if (requireWritable && !scope.writable) throw unwritableScopeError(scope.kind, scopes);
   const keyIds = new Set(JSON.parse(found.table.keyColumnIdsJson) as string[]);
   const keyColumns = found.columns.filter((column) => keyIds.has(column.memoryTableColumnId));
   if (keyColumns.length === 0) throw new Error("memory_table_key_schema_invalid");

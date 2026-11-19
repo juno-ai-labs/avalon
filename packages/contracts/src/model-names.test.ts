@@ -50,6 +50,11 @@ describe("model names", () => {
     // A sandbox's file workspace and a provider's own account word are not the Organization.
     expect(modelFailureCode("terminal_workspace_changed")).toBe("terminal_workspace_changed");
     expect(modelFailureCode("slack_workspace_already_connected")).toBe("slack_workspace_already_connected");
+    // Terminal codes for the sandbox's /workspace that carry no terminal_ prefix.
+    expect(modelFailureCode("workspace_busy")).toBe("workspace_busy");
+    expect(modelFailureCode("workspace_backup_too_large")).toBe("workspace_backup_too_large");
+    // An Organization administrator is still the Organization's.
+    expect(modelFailureCode("workspace_admin_required")).toBe("organization_admin_required");
     expect(modelFailureText("workstream_wakeup_target_unavailable")).toBe("canvas_wakeup_target_unavailable");
     expect(modelFailureText("workstream_archived: Stop sending work to this destination."))
       .toBe("canvas_archived: Stop sending work to this destination.");

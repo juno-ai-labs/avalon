@@ -1917,7 +1917,7 @@ a collaborative workstream". The durable-table tools name a Canvas's scope
 `canvas` and the Organization's `organization` (`MODEL_MEMORY_SCOPE_KINDS`,
 mapped to the stored `workstream` and `workspace` by `modelMemoryScopeKind`
 and `ModelMemoryScopeKindSchema`), in their schema, outputs and refusals.
-`current_time` reports `canvas timezone` instead of `workspace timezone`. The
+`current_time` reports `organization timezone` instead of `workspace timezone`. The
 system prompt reports the Organization's execution authority as
 `organization`, and its glossary line for `workspace` is gone. The
 always-active resources plugin is `rally_resources`, not `rally_workstream`. A

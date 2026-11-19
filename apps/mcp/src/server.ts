@@ -88,14 +88,21 @@ function refusalText(error: RallyApiError): string {
   return `${sentence} (${error.message})`;
 }
 
+/**
+ * A value as a client's model reads it, for every tool result and resource: a
+ * Canvas's audiences are stored as `workspace` for the Organization and read
+ * `organization`. One function, so a tool and a resource cannot drift apart.
+ */
+function modelJson(value: unknown): string {
+  return JSON.stringify(withModelNames(value, ORGANIZATION_MODEL_NAMES, ["visibility", "artifactVisibility"]), null, 2);
+}
+
 async function tool(name: string, operation: () => Promise<unknown>): Promise<ToolResult> {
   try {
     const result = await operation();
     const value = result instanceof Linked ? result.value : result;
     const links = result instanceof Linked ? result.links : [];
-    // A Canvas's audiences are stored as `workspace` for the Organization; a client's model reads `organization`.
-    return { content: [{ type: "text", text: typeof value === "string" ? value
-      : JSON.stringify(withModelNames(value, ORGANIZATION_MODEL_NAMES, ["visibility", "artifactVisibility"]), null, 2) }, ...links] };
+    return { content: [{ type: "text", text: typeof value === "string" ? value : modelJson(value) }, ...links] };
   } catch (error) {
     // The code and nothing else: a message can quote Canvas content.
     console.error(JSON.stringify({ event: "rally_mcp_tool_failed", tool: name, code: failureCode(error, name) }));
@@ -464,7 +471,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
   server.registerResource("canvas", new ResourceTemplate("rally://canvas/{canvasId}", { list: undefined }), {
     title: "Canvas", description: "A Canvas as the person sees it: title, who can open it, and its artifacts at their current versions.", mimeType: "application/json",
   }, async (uri, variables) => ({ contents: [{ uri: uri.href, mimeType: "application/json",
-    text: JSON.stringify(await api.json(CanvasDetailSchema, "GET", `/canvases/${one(variables.canvasId)}`), null, 2) }] }));
+    text: modelJson(await api.json(CanvasDetailSchema, "GET", `/canvases/${one(variables.canvasId)}`)) }] }));
   server.registerResource("canvas-chat", new ResourceTemplate("rally://canvas/{canvasId}/chat", { list: undefined }), {
     title: "Canvas Chat", description: "The first page of a Canvas's Chat as text; read_canvas_chat pages further.", mimeType: "text/plain",
   }, async (uri, variables) => ({ contents: [{ uri: uri.href, mimeType: "text/plain", text: await readChatPage(api, one(variables.canvasId)) }] }));

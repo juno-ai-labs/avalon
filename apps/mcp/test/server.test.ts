@@ -388,6 +388,18 @@ describe("skills, resources and prompts", () => {
     expect(read.result.contents).toEqual([{ uri, mimeType: "text/plain", text: "# Launch plan" }]);
   });
 
+  it("names an Organization-wide Canvas's audiences organization in get_canvas and in its resource alike", async () => {
+    const stored = { ...canvasDetail([]), visibility: "workspace", artifactVisibility: "workspace" };
+    const upstream = api(() => Response.json(stored));
+    const viaTool = JSON.parse((await rpc(upstream.binding, call("get_canvas", { canvasId: CANVAS }))).body.result!.content[0]!.text as string);
+    const read = (await rpc(upstream.binding, request("resources/read", { uri: `rally://canvas/${CANVAS}` }))).body as unknown as {
+      result: { contents: Array<{ text: string }> } };
+    const viaResource = JSON.parse(read.result.contents[0]!.text);
+    for (const canvas of [viaTool, viaResource]) {
+      expect(canvas).toMatchObject({ visibility: "organization", artifactVisibility: "organization" });
+    }
+  });
+
   it("refuses a resource whose id is not one, before asking Rally", async () => {
     const upstream = api(() => Response.json({}));
     const { body } = await rpc(upstream.binding, request("resources/read", { uri: "rally://canvas/..%2Fworkspace/chat" }));

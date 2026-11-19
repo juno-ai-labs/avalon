@@ -127,10 +127,19 @@ const FAILURE_CODE_WORDS = { workstream: "canvas", workstreams: "canvases", subs
  */
 const OTHER_WORKSPACE_CODE = /^(?:terminal|slack|linear|notion|granola|google|fireflies|ashby)_/u;
 
+/**
+ * Terminal codes that name the sandbox's `/workspace` directory but carry no
+ * `terminal_` prefix. A model told `organization_busy` would think the
+ * Organization had failed.
+ */
+const SANDBOX_WORKSPACE_CODES: ReadonlySet<string> = new Set([
+  "workspace_busy", "workspace_backup_failed", "workspace_backup_too_large", "workspace_backup_changed",
+]);
+
 /** One failure code as a model reads it; anything that is not code-shaped is returned as written. */
 export function modelFailureCode(code: string): string {
   if (!/^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/u.test(code)) return code;
-  const other = OTHER_WORKSPACE_CODE.test(code);
+  const other = OTHER_WORKSPACE_CODE.test(code) || SANDBOX_WORKSPACE_CODES.has(code);
   return code.split("_").map((word) => {
     if (other && (word === "workspace" || word === "workspaces")) return word;
     return (FAILURE_CODE_WORDS as Record<string, string | undefined>)[word] ?? word;

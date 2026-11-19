@@ -8332,7 +8332,7 @@ function easyEnglishCurrentTime(
   return [
     `current local time: ${parts.hour}:${parts.minute} ${parts.dayPeriod}`,
     `local timezone: ${timezone}`,
-    `canvas timezone: ${workspaceTimezone}`,
+    `organization timezone: ${workspaceTimezone}`,
     `local date: ${parts.month} ${parts.day} ${parts.year}`,
     `iso8601 timestamp: ${instant.toISOString()}`,
   ].join("\n");

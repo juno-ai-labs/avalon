@@ -621,7 +621,10 @@ describe("memory scopes and durable tables", () => {
         values: { reported: true },
       }],
       rationale: "Member cannot write workspace tables",
-    }, toolContext(secondRun, "member-mark-reported"))).rejects.toThrow("memory_scope_not_writable:workspace");
+    }, toolContext(secondRun, "member-mark-reported"))).rejects.toMatchObject({
+      code: "memory_scope_not_writable",
+      message: expect.stringMatching(/^This run may read organization memory but not write it\./u),
+    });
     await tableTool(env, firstRun, "update_rows").execute({
       memoryTableId,
       rows: [{
