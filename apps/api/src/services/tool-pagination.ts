@@ -13,9 +13,14 @@ function pageInput(prefixes: readonly [string, ...string[]], wirePrefix: string,
   // tool's advertised schema, and so of the surface hash a stored receipt is
   // matched against. Only a plugin with a retired namespace gets alternation.
   const escapedPrefix = escaped.length === 1 ? escaped[0]! : `(?:${escaped.join("|")})`;
-  const schema = z.strictObject({ pageId: z.string()
-    .regex(new RegExp(`^${escapedPrefix}_[a-z]+_[a-z]+_[a-z]+_[a-z]+$`, "u"))
+  const pageSchema = (pattern: string) => z.strictObject({ pageId: z.string()
+    .regex(new RegExp(`^${pattern}_[a-z]+_[a-z]+_[a-z]+_[a-z]+$`, "u"))
     .describe("Copy the page ID returned by this plugin. Send it alone; filters and page size are retained automatically.") });
+  // A retired namespace is accepted, never advertised: the model is shown the
+  // current prefix alone, and `validateInput`, which Bind and Code Mode prefer
+  // to the advertised schema, still lets an earlier page ID through.
+  const schema = pageSchema(escapedPrefix);
+  const advertised = escaped.length === 1 ? schema : pageSchema(escaped[0]!);
   const field = previous ? "previousPageId" : operation === "read_resource" ? "nextPageId or readPageId" : "nextPageId";
   const message = `Send only {"pageId":"<copied ID>"}. pageId must start with "${prefix}_", followed by exactly four lowercase words separated by underscores. Copy ${field} exactly from a tool result; do not invent or repair an ID. If that field is null, stop: there is no page. If you have no ID, call ${stableWireToolName(wirePrefix, operation)} to start a new read.`;
   function validateInput(input: unknown) {
@@ -23,7 +28,7 @@ function pageInput(prefixes: readonly [string, ...string[]], wirePrefix: string,
       { code: "custom", path: ["pageId"], message },
     ]);
   }
-  return { schema, validateInput, parse(input: unknown) {
+  return { schema, advertised, validateInput, parse(input: unknown) {
     const error = validateInput(input);
     if (error) throw error;
     return schema.parse(input);
@@ -191,7 +196,7 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
   const next: HarnessTool = {
     definition: { ...tool.definition, name: nextName,
       description: `Read the next page of ${stableWireToolName(wirePrefix, operation)}. Copy nextPageId from its result. A null nextPageId means there are no more pages. Each page ID can be consumed once.`,
-      inputSchema: z.toJSONSchema(nextInput.schema),
+      inputSchema: z.toJSONSchema(nextInput.advertised),
     },
     validateInput: nextInput.validateInput,
     execute: async (raw, context) => {
@@ -206,7 +211,7 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
     ...next,
     validateInput: previousInput.validateInput,
     definition: { ...next.definition, name: previousName,
-      inputSchema: z.toJSONSchema(previousInput.schema),
+      inputSchema: z.toJSONSchema(previousInput.advertised),
       description: "Read the preceding resource page using its previousPageId. Each page ID can be consumed once.",
     },
     execute: async (raw, context) => {

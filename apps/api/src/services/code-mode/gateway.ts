@@ -629,8 +629,10 @@ export class GatewaySession {
     record.outcome = "failed";
     return new CodeModeToolError(
       "code_call_failed",
-      `Call ${index} (${label}) failed: ${bounded(message)}`,
-      { reason: code, field: label, ...(structured?.details ?? {}) },
+      // Translated before the call's context is put in front of it: the
+      // translation reads a message that starts with its code.
+      `Call ${index} (${label}) failed: ${bounded(modelFailureText(message))}`,
+      { reason: modelFailureCode(code), field: label, ...(structured?.details ?? {}) },
     );
   }
 }

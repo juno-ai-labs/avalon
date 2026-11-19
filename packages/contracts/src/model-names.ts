@@ -34,6 +34,22 @@ export const RESOURCE_PROVIDER_MODEL_NAMES = {
   avalon_note: "rally_note",
 } as const;
 
+/**
+ * Every stored or retired name a model may still send, and the model names it
+ * may stand for. A tool's JSON Schema lists only model names, and Bind and
+ * Code Mode validate against that schema before a tool's own parser runs, so
+ * `normalizeToolArguments` (`@rally/agent-harness`) rewrites a value sent under
+ * one of these names to the model name its parameter offers. Instructions a
+ * Sidekick saved before a rename then keep working, and the schema still shows
+ * a model only the product's names.
+ */
+export const RETIRED_MODEL_NAMES: Readonly<Record<string, readonly string[]>> = {
+  workspace: ["organization"],
+  workstream: ["canvas"],
+  thread: ["canvas"],
+  ...Object.fromEntries(Object.entries(RESOURCE_PROVIDER_MODEL_NAMES).map(([stored, name]) => [stored, [name]])),
+};
+
 /** What a model reads for one stored value. */
 export function modelName<Stored extends string, const Names extends ModelNames<string>>(
   names: Names,

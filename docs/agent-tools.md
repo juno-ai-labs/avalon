@@ -1510,7 +1510,15 @@ naming the table `workspace_metrics`, a path under `/workspace`.
 in the map and in the standing test, and a new tool's suite builds its tools
 through `auditedTools` so its results are walked. A stored name is accepted on the way in
 and never offered, so saved Sidekick instructions keep working; removing that
-alias later breaks them. `rally_workstream` is still answered inside a
+alias later breaks them. Bind and Code Mode check arguments against the
+advertised schema before a tool's own parser runs, so `normalizeToolArguments`
+rewrites a value sent under a name in `RETIRED_MODEL_NAMES` to the model name
+its enum offers; without that, `workspace` from a saved program was refused
+before `modelEnum` could accept it. A retired page-id prefix is likewise
+accepted by a pagination tool's `validateInput` and left out of the pattern it
+advertises. A projection translates only the fields it owns: a saved Sidekick
+definition's `defaultBehavior` and custom tools are the person's, and pass
+through as written (`dataPaths` in the audit). `rally_workstream` is still answered inside a
 program (`HarnessPlugin.modelIdAliases`), and a page id issued as
 `workstream_…` is still redeemed. A connection card's summary keeps the stored
 scope, because a client recovers the card from it. The surface hash of every

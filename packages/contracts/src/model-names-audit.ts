@@ -50,6 +50,12 @@ export interface StorageNameAuditOptions {
    * storage names in prose are still findings.
    */
   dataProse?: boolean;
+  /**
+   * JSON paths (`$.sidekicks[0].currentDefinition.defaultBehavior`) whose whole
+   * subtree is a person's own data, passed through as written, such as a saved
+   * Sidekick's configuration. Nothing under a matching path is a finding.
+   */
+  dataPaths?: readonly RegExp[];
 }
 
 const STORAGE_WORDS = ["workstream", "substream", "workspace", "automation", "avalon"] as const;
@@ -111,6 +117,7 @@ export function storageNamesIn(value: unknown, options: StorageNameAuditOptions 
     }
   };
   const walk = (node: unknown, path: string): void => {
+    if (options.dataPaths?.some((pattern) => pattern.test(path))) return;
     if (typeof node === "string") {
       const prose = /\s/u.test(node.trim());
       note(path, "value", node, prose && options.dataProse ? storageOnly : every);

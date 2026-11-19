@@ -85,6 +85,11 @@ describe("model-facing authored pagination", () => {
     await next.execute(retired, context);
     expect(authority.receipts.claimPage).toHaveBeenCalledWith(expect.objectContaining(retired));
     expect(next.validateInput!({ pageId: "table_quiet_amber_rapid_otter" })).toBeTruthy();
+    // The retired namespace is accepted, never shown: the schema a model reads
+    // names the current prefix alone.
+    expect(JSON.stringify(next.definition.inputSchema)).not.toContain("workstream");
+    expect((next.definition.inputSchema as { properties: { pageId: { pattern: string } } }).properties.pageId.pattern)
+      .toBe("^page_[a-z]+_[a-z]+_[a-z]+_[a-z]+$");
   });
 
   it("keeps one prefix doing both jobs when a plugin has a wire prefix", () => {

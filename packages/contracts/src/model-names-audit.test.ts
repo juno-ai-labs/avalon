@@ -68,6 +68,11 @@ describe("the storage-name audit", () => {
     expect(found(fixture, { dataProse: true, allowWords: ["channel", "thread"], allow: [/another workspace/gu] })).toEqual([]);
   });
 
+  it("skips the subtree a caller says is a person's own data, and nothing beside it", () => {
+    expect(found({ sidekick: { scope: "workspace", saved: { scope: "workspace", workspaceId: "w-1" } } },
+      { dataPaths: [/\.saved$/u] })).toEqual(["$.sidekick.scope value workspace"]);
+  });
+
   it("reads a thrown failure as the model does: the code translated, the details kept", () => {
     const failure = Object.assign(new Error("workstream_archived"), {
       code: "workstream_archived", details: { reason: "Reopen the Canvas first." },

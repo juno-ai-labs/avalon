@@ -74,7 +74,9 @@ const toolContext = { toolCallId: "call-1" } as never;
 
 function toolNamed(tools: ReturnType<typeof createAutomationsPlugin>["tools"], name: string) {
   // Audited: no result or refusal these tests produce names storage (docs/agent-tools.md, rule 10).
-  const tool = auditedTools(tools, { dataProse: true }).find((candidate) => candidate.definition.name === name);
+  // A listed Sidekick's saved configuration is the person's, passed through as written.
+  const tool = auditedTools(tools, { dataProse: true, dataPaths: [/\.currentDefinition\.(?:defaultBehavior|customTools)$/u] })
+    .find((candidate) => candidate.definition.name === name);
   if (!tool) throw new Error(`missing tool: ${name}`);
   return tool;
 }
@@ -157,6 +159,18 @@ describe("the automations plugin", () => {
       .resolves.toMatchObject({ output: listed });
     expect(plugin.systemMessage).toContain("read its current definition with sidekick_sidekicks_list first");
     expect(plugin.systemMessage).toContain("submit the whole revised draft");
+  });
+
+  it("names a listed Sidekick's own scope organization, and passes its saved configuration through as written", async () => {
+    const customTool = { name: "lookup", inputSchema: { type: "object", properties: { scope: { type: "string", enum: ["workspace"] } } } };
+    const listed = { sidekicks: [{ sidekickId: "a-1", scope: "workspace", currentDefinition: {
+      suggestedScope: "workspace", defaultBehavior: { scope: "workspace" }, customTools: [customTool],
+    } }] };
+    const state = host({ automationDirectoryPort: { listAutomations: async () => listed } });
+    const result = await toolNamed(createAutomationsPlugin(state).tools, "sidekicks_list").execute({}, toolContext);
+    expect(result.output).toEqual({ sidekicks: [{ sidekickId: "a-1", scope: "organization", currentDefinition: {
+      suggestedScope: "organization", defaultBehavior: { scope: "workspace" }, customTools: [customTool],
+    } }] });
   });
 
   it("hands the named automation to the host beside the draft, and never inside it", async () => {

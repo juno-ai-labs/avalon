@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RETIRED_MODEL_NAMES } from "@rally/contracts/model-names";
 
 const MAX_SCHEMA_DEPTH = 64;
 const MAX_SCHEMA_VISITS = 10_000;
@@ -228,6 +229,12 @@ function normalizeDirect(
   required: RequiredKeys = NO_REQUIRED_KEYS,
   mode: ToolArgumentMode = "write",
 ): Normalized {
+  // A value sent under a retired name, from instructions saved before a
+  // rename, becomes the model name this enum offers in its place.
+  if (typeof input === "string" && Array.isArray(schema.enum) && !schema.enum.includes(input)) {
+    const offered = RETIRED_MODEL_NAMES[input]?.find((name) => (schema.enum as unknown[]).includes(name));
+    if (offered !== undefined) return { value: offered, changed: true };
+  }
   const numericKind = exclusiveNumericKind(schema);
   if (numericKind && typeof input === "string") {
     const parsed = parseExactNumericString(input, numericKind);
