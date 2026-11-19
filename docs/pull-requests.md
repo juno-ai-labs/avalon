@@ -10,6 +10,45 @@ reviewer's map through the change.
 pre-fills a new PR with this shape. The template is the layout; this document is
 the specification behind it, and the two are updated together.
 
+## This repository is public
+
+`juno-ai-labs/avalon` is a public repository. Anyone on the internet can read
+every pull request title, description, comment, review, commit message, branch
+name, and attached screenshot or log, and GitHub keeps edit history, so deleting
+something later does not take it back. Write every one of them for that reader.
+
+Never put any of the following into a pull request or its commits:
+
+- **Personal information**: anything that identifies a user or customer,
+  an employee's contact details, and any content from users' Canvases,
+  Sidekicks, connectors, or messages. Authors, reviewers, and `Co-Authored-By`
+  lines name employees by design and are fine.
+- **Device identifiers**: hardware or install IDs, serial numbers, UDIDs, push
+  tokens, Expo or EAS device and build IDs, machine or internal hostnames, IP
+  addresses, or MAC addresses. Public service hostnames are fine.
+- **Resource IDs**: any real ID from production or staging (Rally entities,
+  Cloudflare resources, provider objects such as Slack, Linear, or Stripe IDs),
+  and request or trace IDs. Config that already tracks such IDs because
+  deploys need them, such as `database_id` and KV `id` in the
+  `apps/api/wrangler*.jsonc` files, may carry them in commits; keep them out of
+  the PR text.
+- **Secrets**, as [`security.md`](security.md) already forbids.
+
+This is stricter than the logging policy. [`runbook.md`](runbook.md) keeps
+identifiers in logs because operators need them and logs are private; a pull
+request is neither. When a description needs to point at a specific record,
+write a placeholder (`<org-id>`, `<canvas-id>`) or use a value from the local
+seed data, and describe the case in words ("an organization with two regions and
+a paused Sidekick"). Crop or blur screenshots taken against real accounts, and
+cut identifiers out of pasted logs and error output before they go in
+**Validation** or **Reviewer notes**.
+
+If one slips in, edit it out and tell the team in private. A secret is
+compromised the moment it is pushed: rotate it. An edited comment keeps the old
+text in its edit history until someone with write access deletes that revision,
+and a pushed commit stays reachable through the pull request even after the
+branch is rewritten; only GitHub Support can purge it.
+
 ## Required sections
 
 Every PR description **must** include these sections, in this order, as Markdown
