@@ -145,15 +145,19 @@ homepage story uses only the kit.
 ## Invariants
 
 - **Every claim is something the product does.** Rally searches and reads
-  Gmail, writes drafts and sends mail when asked; it cannot delete mail or
-  change labels. A page updates when an email arrives or on a schedule.
-  Several people's inboxes feed one page when each of them connects their own
-  Gmail and allows it. Pages can be shared with teammates, with a guest by
-  email, or with everyone, and can send email and push notifications. Rally
-  does not connect to Outlook, and a story must not show Rally reading inside
-  an attachment or a tool it has no connector for. A false claim on a page
-  aimed at one trade is the first thing that trade notices. Verified by
-  review, no automated guard.
+  Gmail. When asked, it also writes drafts, sends mail, and labels, archives,
+  marks as spam or moves mail to Trash; it has no tool that deletes mail for
+  good ([`google-workflows.md`](google-workflows.md#inbox-management)). So a
+  page may say "a page like this only needs to read" and "Rally cannot
+  permanently delete mail", and must not say Rally cannot change a mailbox.
+  A page updates when an email arrives or on a schedule. Several people's
+  inboxes feed one page when each of them connects their own Gmail and allows
+  it. Pages can be shared with teammates, with a guest by email, or with
+  everyone, and can send email and push notifications. Rally does not connect
+  to Outlook, and a story must not show Rally reading inside an attachment or
+  a tool it has no connector for. A false claim on a page aimed at one trade
+  is the first thing that trade notices. Verified by review, no automated
+  guard.
 - **Every example says it updates itself.** Whichever page a story shows, it
   carries the `kit-live` mark ("Updates itself from your Gmail", or its own
   equivalent), the copy beside it says so in plain words, and every change in

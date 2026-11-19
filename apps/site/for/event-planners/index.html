@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fcfbf7" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="description" content="Connect Gmail and Rally turns the email your vendors and clients already send into a page for each event: who is booked, who has confirmed for the day, and what is still open. It updates itself as replies arrive." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Rally" />
+    <meta property="og:title" content="Everything due before the date, on one page." />
+    <meta property="og:description" content="Connect Gmail and get a page for each event in five minutes: every vendor, every client request and what is due before the date. It keeps itself up to date." />
+    <meta property="og:url" content="https://rallywith.ai/for/event-planners/" />
+    <meta name="twitter:title" content="Everything due before the date, on one page." />
+    <meta name="twitter:description" content="Connect Gmail and get a page for each event in five minutes: every vendor, every client request and what is due before the date. It keeps itself up to date." />
+    <link rel="canonical" href="https://rallywith.ai/for/event-planners/" />
+    <link
+      rel="preload"
+      as="font"
+      href="/src/fonts/instrument-serif-latin-400-normal.woff2"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/src/for/event-planners.css" />
+    <script type="module" src="/src/story.ts"></script>
+    <title>Everything due before the date, on one page. Rally for event planners.</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <!-- rally:home-header -->
+    <main id="content" class="ev-page">
+      <!-- The hero is one story: the headline, one event's countdown, and its vendors.
+           Drawn at its last step; story.ts plays it. Contract: docs/site-audience-pages.md. -->
+      <section class="ev-hero wrap" aria-labelledby="ev-title">
+        <div class="story ev-event" data-story>
+          <div class="story-stage">
+            <div class="story-slide ev-event-slide" data-slide data-steps="4">
+              <div class="ev-hero-copy">
+                <p class="eyebrow">For wedding and event planners</p>
+                <h1 id="ev-title">
+                  Everything due before
+                  <span class="pencil-underline">the date,</span> on one page.
+                </h1>
+                <p class="ev-hero-intro">
+                  Connect your Gmail. In five minutes, Rally turns the email
+                  your vendors and clients already send into a page for each
+                  event: who has quoted, who is booked, who has confirmed for
+                  the day. The page updates itself as replies come in. Nobody
+                  fills it in.
+                </p>
+                <div class="ev-hero-actions">
+                  <a
+                    class="button primary"
+                    data-site-action="web-app-hero"
+                    href="https://app.rallywith.ai"
+                    >Connect your Gmail <span aria-hidden="true"><!-- rally:arrow --></span></a
+                  ><a class="text-link" href="#start"
+                    >How to start <span aria-hidden="true">↓</span></a
+                  >
+                </div>
+                <p class="trial-note">Free to start. No credit card needed.</p>
+              </div>
+
+              <div class="story-page ev-count">
+                <p class="ev-count-event">
+                  <strong>Lee &amp; Park wedding</strong>
+                  <span>June 14, The Glasshouse</span>
+                </p>
+                <p class="ev-count-num">
+                  <span class="ev-reel" aria-hidden="true"
+                    ><span>23</span><span>21</span><span>16</span><span>9</span
+                    ><span>6</span></span
+                  >
+                  <span class="kit-sr">6</span>
+                  <span class="ev-count-unit">days to go</span>
+                </p>
+                <div class="ev-track" aria-hidden="true">
+                  <span class="ev-track-line"
+                    ><i class="ev-track-fill"></i><i class="ev-track-now"></i
+                  ></span>
+                  <span class="ev-track-date">June 14</span>
+                </div>
+                <p class="ev-count-sum" data-touch="3 4">
+                  <b data-until="3">1</b><b data-at="3" data-until="4">2</b
+                  ><b data-at="4">3</b> of 8 vendors confirmed for the day
+                </p>
+              </div>
+
+              <div class="story-bar ev-event-bar">
+                <p class="ev-bar-note">
+                  An example event, played back. Every change is caused by an
+                  email arriving.
+                </p>
+                <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+              </div>
+
+              <div class="story-mail ev-strip">
+                <div class="story-ask" data-until="1">
+                  <p class="story-label">You ask Rally</p>
+                  <p class="story-quote">“Make a page for the Lee and Park wedding on June 14: every vendor and where each one stands.”</p>
+                </div>
+                <div class="story-email" data-at="1" data-until="2">
+                  <p class="story-label"><!-- rally:gmail-mark -->New email <b>21 days out</b></p>
+                  <p class="story-from">Bayline Coaches</p>
+                  <p class="story-subject">Re: Shuttle for June 14. You’re booked</p>
+                  <p class="story-did">Moved the shuttle to Booked.</p>
+                </div>
+                <div class="story-email" data-at="2" data-until="3">
+                  <p class="story-label"><!-- rally:gmail-mark -->New email <b>16 days out</b></p>
+                  <p class="story-from">Harbor Party Hire</p>
+                  <p class="story-subject">Deposit received, thank you</p>
+                  <p class="story-did">Marked the rentals deposit paid.</p>
+                </div>
+                <div class="story-email" data-at="3" data-until="4">
+                  <p class="story-label"><!-- rally:gmail-mark -->New email <b>9 days out</b></p>
+                  <p class="story-from">June Studio</p>
+                  <p class="story-subject">Confirming June 14, arriving 2pm</p>
+                  <p class="story-did">The photographer is confirmed for the day.</p>
+                </div>
+                <div class="story-email" data-at="4">
+                  <p class="story-label"><!-- rally:gmail-mark -->New email <b>6 days out</b></p>
+                  <p class="story-from">The Night Owls</p>
+                  <p class="story-subject">All set for the 14th. Load-in at 4pm</p>
+                  <p class="story-did">The band is confirmed for the day.</p>
+                </div>
+              </div>
+
+              <div class="story-page ev-sheet ev-vendors">
+                <div class="ev-head">
+                  <h2>Vendors</h2>
+                  <span class="kit-live">Updates itself from your Gmail</span>
+                </div>
+                <ol class="ev-legend" aria-label="The path each vendor moves along">
+                  <li>Asked</li>
+                  <li>Quoted</li>
+                  <li>Booked</li>
+                  <li>Deposit paid</li>
+                  <li>Confirmed for the day</li>
+                </ol>
+                <ul class="ev-vendor-list">
+                  <li data-touch="1">
+                    <div class="ev-who"><span>Shuttle</span><strong>Bayline Coaches</strong></div>
+                    <span class="ev-path" aria-hidden="true"><i class="done"></i><i class="done"></i><i data-done="1"></i><i></i><i></i></span>
+                    <span class="ev-state" data-until="1">Quoted</span><span class="ev-state" data-at="1">Booked</span>
+                  </li>
+                  <li data-touch="2">
+                    <div class="ev-who"><span>Rentals</span><strong>Harbor Party Hire</strong></div>
+                    <span class="ev-path" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i data-done="2"></i><i></i></span>
+                    <span class="ev-state" data-until="2">Booked</span><span class="ev-state" data-at="2">Deposit paid</span>
+                  </li>
+                  <li data-touch="3">
+                    <div class="ev-who"><span>Photographer</span><strong>June Studio</strong></div>
+                    <span class="ev-path" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i data-done="3"></i></span>
+                    <span class="ev-state" data-until="3">Deposit paid</span><span class="ev-state good" data-at="3">Confirmed, arriving 2pm</span>
+                  </li>
+                  <li data-touch="4">
+                    <div class="ev-who"><span>Band</span><strong>The Night Owls</strong></div>
+                    <span class="ev-path" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i data-done="4"></i></span>
+                    <span class="ev-state" data-until="4">Deposit paid</span><span class="ev-state good" data-at="4">Confirmed, load-in 4pm</span>
+                  </li>
+                  <li>
+                    <div class="ev-who"><span>Caterer</span><strong>Table &amp; Thyme</strong></div>
+                    <span class="ev-path" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i></i></span>
+                    <span class="ev-state">Deposit paid</span>
+                  </li>
+                  <li>
+                    <div class="ev-who"><span>Florist</span><strong>Fern &amp; Wire</strong></div>
+                    <span class="ev-path" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i></i></span>
+                    <span class="ev-state">Deposit paid</span>
+                  </li>
+                  <li>
+                    <div class="ev-who"><span>Cake</span><strong>Sugar &amp; Rye</strong></div>
+                    <span class="ev-path" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i></i></span>
+                    <span class="ev-state">Deposit paid</span>
+                  </li>
+                  <li>
+                    <div class="ev-who"><span>Venue</span><strong>The Glasshouse</strong></div>
+                    <span class="ev-path" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i></span>
+                    <span class="ev-state good">Confirmed, doors at 10am</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- The 11pm email: the stage is night until the morning beat. -->
+      <section class="ev-section ev-late wrap" aria-labelledby="ev-late-title">
+        <div class="ev-intro ev-intro-center">
+          <p class="ev-moment">11:07 pm</p>
+          <h2 id="ev-late-title">
+            The late email is on the page by
+            <span class="pencil-underline short">morning.</span>
+          </h2>
+          <p>
+            Clients remember things at night. When a request lands after you
+            have closed the laptop, Rally reads it, puts it under the right
+            event and notes what it changes. Nobody copies it anywhere. When
+            you sit down in the morning it is on the page, not buried under
+            the mail that came in after it.
+          </p>
+        </div>
+        <div class="story ev-night" data-story>
+          <div class="story-bar">
+            <p class="ev-bar-note">
+              One night, played back. The page fills itself in from the email.
+              Nobody refreshes it.
+            </p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <div class="story-slide" data-slide data-steps="3">
+              <i class="ev-sky" aria-hidden="true"></i>
+              <div class="story-mail">
+                <div class="ev-beat ev-beat-night" data-until="1">
+                  <p class="ev-clock">10:15 <small>pm</small></p>
+                  <div class="story-ask">
+                    <p class="story-label">You asked Rally, once</p>
+                    <p class="story-quote">“Put every client request under its event, and show me what it changes.”</p>
+                  </div>
+                </div>
+                <div class="ev-beat ev-beat-night" data-at="1" data-until="2">
+                  <p class="ev-clock">11:07 <small>pm</small></p>
+                  <div class="story-email">
+                    <p class="story-label"><!-- rally:gmail-mark -->New email</p>
+                    <p class="story-from">Dana Whitfield, Northwind</p>
+                    <p class="story-subject">Sorry, late one. Can we add twelve for the welcome dinner?</p>
+                    <p class="story-did">Filed under the Northwind offsite. Headcount 96 → 108.</p>
+                  </div>
+                </div>
+                <div class="ev-beat ev-beat-night" data-at="2" data-until="3">
+                  <p class="ev-clock">11:48 <small>pm</small></p>
+                  <div class="story-email">
+                    <p class="story-label"><!-- rally:gmail-mark -->New email</p>
+                    <p class="story-from">Anika Raman</p>
+                    <p class="story-subject">Could we move Dad’s toast to 8:00?</p>
+                    <p class="story-did">Filed under the Raman 60th. It changes the run of show.</p>
+                  </div>
+                </div>
+                <div class="ev-beat ev-beat-morning" data-at="3">
+                  <p class="ev-clock">7:30 <small>am</small></p>
+                  <div class="ev-morning">
+                    <p class="story-label">Morning</p>
+                    <p class="ev-morning-line">You open the page. Both requests are there, each under its event.</p>
+                    <p class="ev-morning-note">Fourteen other emails came in overnight. You did not have to find these two.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="story-page ev-sheet ev-requests">
+                <div class="ev-head">
+                  <h3>Client requests, by event</h3>
+                  <span class="kit-live">Updates itself from your Gmail</span>
+                </div>
+                <div class="ev-req-event" data-touch="1">
+                  <div class="ev-req-head">
+                    <h4>Northwind leadership offsite</h4>
+                    <p>
+                      June 26
+                      <span class="ev-headcount"
+                        >Headcount
+                        <span class="ev-reel" data-roll="1" aria-hidden="true"><span>96</span><span>108</span></span
+                        ><span class="kit-sr">108</span></span
+                      >
+                    </p>
+                  </div>
+                  <ul class="ev-req-list">
+                    <li data-at="1">
+                      <div>
+                        <strong>Add twelve to the welcome dinner</strong>
+                        <span>Dana Whitfield, 11:07 pm</span>
+                      </div>
+                      <span class="kit-pill new">New</span>
+                      <p class="ev-req-change"><b>Changes</b> Headcount 96 → 108. The caterer and the rental company need the new number.</p>
+                    </li>
+                    <li>
+                      <div>
+                        <strong>Projector in the breakout room</strong>
+                        <span>Dana Whitfield, Tuesday</span>
+                      </div>
+                      <span class="kit-pill good">Venue said yes</span>
+                    </li>
+                  </ul>
+                </div>
+                <div class="ev-req-event" data-touch="2">
+                  <div class="ev-req-head">
+                    <h4>Raman 60th birthday</h4>
+                    <p>July 11 <span class="ev-headcount">Headcount 60</span></p>
+                  </div>
+                  <ul class="ev-req-list">
+                    <li data-at="2">
+                      <div>
+                        <strong>Move the toast to 8:00</strong>
+                        <span>Anika Raman, 11:48 pm</span>
+                      </div>
+                      <span class="kit-pill new">New</span>
+                      <p class="ev-req-change"><b>Changes</b> The run of show: the toast at 8:00, not 7:30.</p>
+                    </li>
+                    <li>
+                      <div>
+                        <strong>A gluten-free cake as well</strong>
+                        <span>Anika Raman, Monday</span>
+                      </div>
+                      <span class="kit-pill wait">Asked Sugar &amp; Rye</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Every event at once, from three planners' inboxes. -->
+      <section class="ev-section ev-season wrap" aria-labelledby="ev-season-title">
+        <div class="ev-intro ev-intro-split">
+          <div>
+            <p class="ev-moment">Any Monday</p>
+            <h2 id="ev-season-title">Every event at once, nearest date first.</h2>
+          </div>
+          <div>
+            <p>
+              Four events are four countdowns. Rally sets them side by side,
+              each with what is still open, and keeps them in date order. You
+              do not update it. It reads the mail and moves on its own.
+            </p>
+            <p>
+              It works from one inbox if it is only you. In a studio, each
+              planner connects their own Gmail and allows it, and every inbox
+              feeds the same page, so you can see who is running what without
+              asking. Nobody’s mail is read until they connect it themselves.
+            </p>
+            <p class="ev-inbox-sum" aria-hidden="true">
+              <i class="kit-face maya">M</i><i class="kit-face theo">T</i
+              ><i class="kit-face priya">P</i><span>3 inboxes</span><b>→</b
+              ><span>1 page</span>
+            </p>
+          </div>
+        </div>
+        <div class="story ev-all" data-story>
+          <div class="story-bar">
+            <p class="ev-bar-note">
+              Two days at a studio, played back. Each email lands in one
+              planner’s inbox and changes the page for all three.
+            </p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <div class="story-slide" data-slide data-steps="3">
+              <div class="story-mail ev-strip">
+                <div class="story-ask" data-until="1">
+                  <p class="story-label">You ask Rally</p>
+                  <p class="story-quote">“Show every event the three of us are running, nearest date first, with what is still open.”</p>
+                </div>
+                <div class="story-email" data-at="1" data-until="2">
+                  <p class="story-label"><i class="kit-face theo" aria-hidden="true">T</i>Monday <b>in Theo’s inbox</b></p>
+                  <p class="story-from">Harbor AV</p>
+                  <p class="story-subject">Quote for two mics and a projector: $840</p>
+                  <p class="story-did">Northwind offsite: the AV quote is in.</p>
+                </div>
+                <div class="story-email" data-at="2" data-until="3">
+                  <p class="story-label"><i class="kit-face priya" aria-hidden="true">P</i>Tuesday <b>in Priya’s inbox</b></p>
+                  <p class="story-from">Sugar &amp; Rye</p>
+                  <p class="story-subject">Tasting confirmed for Thursday at 4</p>
+                  <p class="story-did">A day closer. The Raman tasting is set.</p>
+                </div>
+                <div class="story-email" data-at="3">
+                  <p class="story-label"><i class="kit-face maya" aria-hidden="true">M</i>Tuesday <b>in Maya’s inbox</b></p>
+                  <p class="story-from">Jess Lee</p>
+                  <p class="story-subject">Final headcount is 142</p>
+                  <p class="story-did">Lee &amp; Park: the final headcount is in.</p>
+                </div>
+              </div>
+              <div class="story-page ev-sheet ev-events">
+                <div class="ev-head">
+                  <h3>All events</h3>
+                  <span class="kit-live">Updates itself from 3 inboxes <i class="kit-face maya" aria-hidden="true">M</i><i class="kit-face theo" aria-hidden="true">T</i><i class="kit-face priya" aria-hidden="true">P</i></span>
+                </div>
+                <ol class="ev-cards">
+                  <li class="ev-card" data-touch="3">
+                    <p class="ev-card-count">
+                      <span class="ev-reel" data-roll="2" aria-hidden="true"><span>6</span><span>5</span></span
+                      ><span class="kit-sr">5</span>
+                      <span>days to go</span>
+                    </p>
+                    <div class="ev-card-body">
+                      <h4>Lee &amp; Park wedding</h4>
+                      <p class="ev-card-meta">June 14 <i class="kit-face maya" aria-hidden="true">M</i>Maya is running it</p>
+                      <p class="ev-open-title">Still open</p>
+                      <ul class="ev-open">
+                        <li data-done="3">Final headcount</li>
+                        <li>Florist arrival time</li>
+                      </ul>
+                    </div>
+                  </li>
+                  <li class="ev-card" data-touch="1">
+                    <p class="ev-card-count">
+                      <span class="ev-reel" data-roll="2" aria-hidden="true"><span>18</span><span>17</span></span
+                      ><span class="kit-sr">17</span>
+                      <span>days to go</span>
+                    </p>
+                    <div class="ev-card-body">
+                      <h4>Northwind offsite</h4>
+                      <p class="ev-card-meta">June 26 <i class="kit-face theo" aria-hidden="true">T</i>Theo is running it</p>
+                      <p class="ev-open-title">Still open</p>
+                      <ul class="ev-open">
+                        <li data-done="1">AV quote</li>
+                        <li>Rooming list from Dana</li>
+                      </ul>
+                    </div>
+                  </li>
+                  <li class="ev-card" data-touch="2">
+                    <p class="ev-card-count">
+                      <span class="ev-reel" data-roll="2" aria-hidden="true"><span>33</span><span>32</span></span
+                      ><span class="kit-sr">32</span>
+                      <span>days to go</span>
+                    </p>
+                    <div class="ev-card-body">
+                      <h4>Raman 60th birthday</h4>
+                      <p class="ev-card-meta">July 11 <i class="kit-face priya" aria-hidden="true">P</i>Priya is running it</p>
+                      <p class="ev-open-title">Still open</p>
+                      <ul class="ev-open">
+                        <li data-done="2">Cake tasting date</li>
+                        <li>Band deposit, due June 20</li>
+                      </ul>
+                    </div>
+                  </li>
+                  <li class="ev-card">
+                    <p class="ev-card-count">
+                      <span class="ev-reel" data-roll="2" aria-hidden="true"><span>75</span><span>74</span></span
+                      ><span class="kit-sr">74</span>
+                      <span>days to go</span>
+                    </p>
+                    <div class="ev-card-body">
+                      <h4>Okafor &amp; Lind wedding</h4>
+                      <p class="ev-card-meta">Aug 22 <i class="kit-face maya" aria-hidden="true">M</i>Maya is running it</p>
+                      <p class="ev-open-title">Still open</p>
+                      <ul class="ev-open">
+                        <li>Photographer quote</li>
+                        <li>Venue walkthrough date</li>
+                      </ul>
+                    </div>
+                  </li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- A page for the client, and drafts that wait in Gmail. -->
+      <section class="ev-section ev-client wrap" aria-labelledby="ev-client-title">
+        <div class="ev-client-copy">
+          <p class="ev-moment">For the couple, or the company</p>
+          <h2 id="ev-client-title">Give your client a page of their own.</h2>
+          <p>
+            Share one page with a client by email: what is settled, and what
+            you still need from them. They open that page and nothing else of
+            yours. Every page has its own access.
+          </p>
+          <p>
+            It updates itself like every other page here. When the couple
+            sends the final headcount, it moves to Settled on its own. Nobody
+            on either side keeps it up.
+          </p>
+        </div>
+        <div class="story ev-shared" data-story>
+          <div class="story-bar">
+            <p class="ev-bar-note">
+              What Jess and Sam see. It changes when an email arrives, not when
+              someone edits it.
+            </p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <div class="story-slide" data-slide data-steps="3">
+              <div class="story-mail">
+                <div class="story-ask" data-until="1">
+                  <p class="story-label">You ask Rally</p>
+                  <p class="story-quote">“Make a page I can share with Jess and Sam: what is settled, and what I still need from them.”</p>
+                </div>
+                <div class="story-email" data-at="1" data-until="2">
+                  <p class="story-label"><!-- rally:gmail-mark -->New email</p>
+                  <p class="story-from">Jess Lee</p>
+                  <p class="story-subject">Final headcount is 142</p>
+                  <p class="story-did">Moved the final headcount to Settled.</p>
+                </div>
+                <div class="story-email" data-at="2" data-until="3">
+                  <p class="story-label"><!-- rally:gmail-mark -->New email</p>
+                  <p class="story-from">June Studio</p>
+                  <p class="story-subject">Confirming June 14, arriving 2pm</p>
+                  <p class="story-did">Added the photographer’s arrival to Settled.</p>
+                </div>
+                <div class="story-email" data-at="3">
+                  <p class="story-label"><!-- rally:gmail-mark -->New email</p>
+                  <p class="story-from">Sam Park</p>
+                  <p class="story-subject">Seating chart, final version this time</p>
+                  <p class="story-did">Moved the seating chart to Settled.</p>
+                </div>
+              </div>
+              <div class="story-page ev-sheet ev-guest">
+                <p class="ev-guest-access">Shared by email with Jess Lee and Sam Park. They see this page only.</p>
+                <div class="ev-head">
+                  <h3>Your wedding, June 14</h3>
+                  <span class="kit-live">Updates itself from your Gmail</span>
+                </div>
+                <div class="ev-guest-cols">
+                  <div class="ev-guest-col ev-guest-need">
+                    <h4>We need from you</h4>
+                    <ul>
+                      <li data-key="headcount" data-until="1"><i class="kit-tick" aria-hidden="true"></i>Final headcount</li>
+                      <li data-key="seating" data-until="3"><i class="kit-tick" aria-hidden="true"></i>Seating chart</li>
+                      <li><i class="kit-tick" aria-hidden="true"></i>Shuttle departure time</li>
+                      <li><i class="kit-tick" aria-hidden="true"></i>A song for the first dance</li>
+                    </ul>
+                  </div>
+                  <div class="ev-guest-col ev-guest-done">
+                    <h4>Settled</h4>
+                    <ul>
+                      <li data-key="seating" data-at="3" data-touch="3"><i class="kit-tick done" aria-hidden="true"></i>Seating chart received</li>
+                      <li data-at="2" data-touch="2"><i class="kit-tick done" aria-hidden="true"></i>Photographer arrives at 2pm</li>
+                      <li data-key="headcount" data-at="1" data-touch="1"><i class="kit-tick done" aria-hidden="true"></i>Final headcount: 142</li>
+                      <li><i class="kit-tick done" aria-hidden="true"></i>Venue doors open at 10am</li>
+                      <li><i class="kit-tick done" aria-hidden="true"></i>Menu chosen with the caterer</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="ev-drafts">
+          <h3>And the chasing emails, drafted.</h3>
+          <p>
+            Ask Rally to draft an arrival-time confirmation to every vendor
+            on an event, or a reminder to a client. The drafts wait in your
+            Gmail Drafts. You read them, change what you like and send them
+            yourself.
+          </p>
+          <div class="ev-draft-box">
+            <p class="ev-draft-head"><!-- rally:gmail-mark -->Gmail Drafts <span>3 waiting for you</span></p>
+            <ul>
+              <li><span>To Fern &amp; Wire</span><strong>Confirming your arrival time on June 14</strong><em>Draft</em></li>
+              <li><span>To Sugar &amp; Rye</span><strong>Confirming the cake delivery on June 14</strong><em>Draft</em></li>
+              <li><span>To Table &amp; Thyme</span><strong>Final headcount for June 14 is 142</strong><em>Draft</em></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Nothing new to keep up. -->
+      <section class="ev-section ev-keep wrap" aria-labelledby="ev-keep-title">
+        <div class="ev-keep-head">
+          <p class="ev-moment">The busiest weeks</p>
+          <h2 id="ev-keep-title">Nothing new to keep up.</h2>
+          <p>
+            The month before an event is the wrong time to feed a planning
+            tool. There is not one here. Your calendar, your folders and your
+            spreadsheets stay where they are. Rally adds one window on top of
+            the email you already have, and keeps that window current by
+            itself.
+          </p>
+        </div>
+        <dl class="ev-ledger">
+          <div>
+            <dt>Your vendors</dt>
+            <dd>keep emailing you, the way they always have. Nobody logs in anywhere.</dd>
+          </div>
+          <div>
+            <dt>Your clients</dt>
+            <dd>keep emailing you, at whatever hour it occurs to them.</dd>
+          </div>
+          <div>
+            <dt>You</dt>
+            <dd>keep replying from Gmail. Nothing to log, tag, forward or copy across.</dd>
+          </div>
+          <div class="ev-ledger-rally">
+            <dt>Rally</dt>
+            <dd>reads the mail as it arrives and updates every page. No one fills them in.</dd>
+          </div>
+        </dl>
+      </section>
+
+      <!-- How to start, set out as a run of show. -->
+      <section class="ev-section ev-start wrap" id="start" aria-labelledby="ev-start-title">
+        <div class="ev-intro ev-intro-split">
+          <div>
+            <p class="ev-moment">Your first five minutes</p>
+            <h2 id="ev-start-title">How to start, as a run of show.</h2>
+          </div>
+          <div>
+            <p>
+              Nothing to install and nothing to set up. You can do it between
+              two vendor calls.
+            </p>
+          </div>
+        </div>
+        <ol class="ev-run">
+          <li>
+            <p class="ev-run-time" aria-hidden="true">0:00</p>
+            <div>
+              <h3>Connect your Gmail</h3>
+              <p>
+                Sign up for free and connect your Gmail. Google asks you to
+                approve it once.
+              </p>
+            </div>
+          </li>
+          <li>
+            <p class="ev-run-time" aria-hidden="true">0:01</p>
+            <div>
+              <h3>Say what you want to see</h3>
+              <p>Type one sentence, in your own words. A planner might type:</p>
+              <ul class="ev-asks">
+                <li>“Make a page for the Lee and Park wedding on June 14: every vendor and where each one stands.”</li>
+                <li>“Show all my events, nearest date first, with what is still open on each.”</li>
+                <li>“List every deposit and final payment a vendor has asked me for, by due date.”</li>
+              </ul>
+            </div>
+          </li>
+          <li>
+            <p class="ev-run-time" aria-hidden="true">0:05</p>
+            <div>
+              <h3>Your page is there, and it stays current</h3>
+              <p>
+                Rally reads the mail and builds the page. From then on, every
+                time a vendor or a client emails, the page updates itself. You
+                never refresh it or fill it in. Want it to look different? Say
+                so, and Rally changes it.
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <!-- The email-safety note. -->
+      <section class="ev-section ev-safe wrap" aria-labelledby="ev-safe-title">
+        <div class="ev-safe-box">
+          <div>
+            <p class="ev-moment">Before you connect</p>
+            <h2 id="ev-safe-title">A plain note on your email.</h2>
+          </div>
+          <div>
+            <p>
+              Rally reads your mail only after you connect Gmail yourself, and
+              you can remove the connection whenever you like. A page like
+              the ones above only needs to read your mail. Rally changes
+              nothing in your mailbox unless you ask it to, such as drafting
+              a confirmation to a vendor. It has no way to delete mail for
+              good.
+            </p>
+            <p>
+              It works from what the emails say. It does not read inside
+              attached contracts or invoices, take payments or sign anything,
+              so a deposit counts as paid when an email says so. Rally has
+              completed an independent security assessment.
+            </p>
+            <a class="text-link" href="/trust/security/"
+              >See our security controls <span aria-hidden="true"><!-- rally:arrow --></span></a
+            >
+          </div>
+        </div>
+      </section>
+
+      <section class="ev-section ev-others wrap" aria-labelledby="ev-others-title">
+        <h2 id="ev-others-title">Not planning events?</h2>
+        <p>Rally does the same for other work that runs on email.</p>
+        <!-- rally:audience-others event-planners -->
+      </section>
+
+      <section class="ev-closer wrap" aria-labelledby="ev-closer-title">
+        <p class="ev-moment">Five minutes from now</p>
+        <h2 id="ev-closer-title">
+          The date is set. See everything
+          <span class="pencil-underline short">before it.</span>
+        </h2>
+        <a
+          class="button primary"
+          data-site-action="web-app-hero"
+          href="https://app.rallywith.ai"
+          >Connect your Gmail <span aria-hidden="true"><!-- rally:arrow --></span></a
+        >
+        <p class="trial-note">
+          Free to start. No credit card needed. Priced per team, not per
+          seat.
+        </p>
+      </section>
+    </main>
+    <!-- rally:site-footer -->
+  </body>
+</html>

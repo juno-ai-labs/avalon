@@ -1,0 +1,1161 @@
+@import "../home.css";
+
+/*
+ * /for/legal/: "the docket". A quiet page for general counsel: a text-only
+ * hero, numbered sections hung off a ruled margin, and four example pages
+ * drawn as registers. Its one motion of its own is the turn passing: a marker
+ * crosses from one lane to the next, level, when an email arrives
+ * (legal.ts slows the player's keyed move). Everything here is under `lg-`.
+ */
+
+.lg {
+  --lg-text: #595e53; --lg-margin: 124px; --lg-rule: #cfd3c2; --lg-hair: #ecede3;
+  --lg-legal: #536547; --lg-legal-mark: #6f8259; --lg-legal-tint: #f1f4e8; --lg-legal-line: #c3cdb1;
+  --lg-biz: #5b4a68; --lg-biz-mark: #9a86a8; --lg-biz-tint: #f5f1f7; --lg-biz-line: #d3c7dc;
+  --lg-other: #6b5a1f; --lg-other-mark: #c2aa55; --lg-other-tint: #f9f4e2; --lg-other-line: #dccf9f;
+  --lg-late: #8a4a26;
+}
+
+/* ---- The sheet: one ruled margin down the page, section marks to its left ---- */
+
+.lg-sheet {
+  position: relative;
+}
+
+.lg-sheet::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 88px; width: 4px;
+  border-inline: 1px solid var(--line); pointer-events: none;
+}
+
+/* Text wraps on its own: headings balance, prose avoids a short last line, and
+   each element's measure is set in em. No line is broken by hand. */
+.lg h1,
+.lg h2,
+.lg h3 {
+  text-wrap: balance;
+}
+
+.lg p,
+.lg li,
+.lg dd,
+.lg td,
+.lg caption {
+  text-wrap: pretty;
+}
+
+.lg-eyebrow {
+  font-size: 12.5px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: var(--green);
+}
+
+.lg-hero {
+  padding: 58px 0 96px var(--lg-margin);
+}
+
+.lg-hero h1 {
+  max-width: 10.5em; margin-top: 26px; font-family: var(--display-font); font-weight: 400; font-size: 80px;
+  line-height: 1; letter-spacing: -0.032em;
+}
+
+.lg-lede {
+  max-width: 34em; margin-top: 30px; font-size: 17px; line-height: 1.75; color: var(--lg-text);
+}
+
+.lg-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px 26px; margin-top: 32px;
+}
+
+.lg-actions .text-link {
+  gap: 8px; font-size: 14px;
+}
+
+.lg .lg-note {
+  font-size: 12.5px; line-height: 1.7;
+}
+
+.lg-maxim {
+  max-width: 26em; margin-top: 46px; border-top: 1px solid var(--line); padding-top: 18px;
+  font-family: var(--display-font); font-style: italic; font-size: 22px; line-height: 1.3; color: #60694f;
+}
+
+.lg-section {
+  display: grid; grid-template-columns: var(--lg-margin) minmax(0, 1fr); border-top: 1px solid var(--line);
+  padding-block: 84px 92px;
+}
+
+.lg-mark {
+  padding-top: 1px; font-family: var(--display-font); font-size: 30px; line-height: 1; white-space: nowrap;
+  color: #7d8a68;
+}
+
+.lg-body {
+  grid-column: 2; min-width: 0;
+}
+
+.lg-intro h2 {
+  max-width: 14em; margin-top: 18px; font-family: var(--display-font); font-weight: 400; font-size: 50px;
+  line-height: 1.05; letter-spacing: -0.03em;
+}
+
+.lg-intro p:not(.eyebrow) {
+  max-width: 36em; margin-top: 20px; font-size: 16px; line-height: 1.75; color: var(--lg-text);
+}
+
+/* A heading on the left and its two paragraphs on the right. */
+.lg-intro-pair {
+  display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 56px; align-items: start;
+}
+
+.lg-intro-pair > div > p:first-child:not(.eyebrow) {
+  margin-top: 34px;
+}
+
+/* Copy beside its example. */
+.lg-split {
+  display: grid; grid-template-columns: minmax(0, 0.74fr) minmax(0, 1.26fr); gap: 60px; align-items: start;
+}
+
+.lg-split-flip {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+}
+
+.lg-split-flip > .lg-intro {
+  order: 2;
+}
+
+.lg-split .lg-intro h2 {
+  font-size: 44px;
+}
+
+/* ---- The examples: mail above, the page it changes below ---- */
+
+.lg-story {
+  margin-top: 40px;
+}
+
+.lg-split .lg-story {
+  margin-top: 0;
+}
+
+.lg-bar {
+  justify-content: space-between; min-height: 34px; margin-bottom: 10px;
+}
+
+.lg-bar-note {
+  font-size: 13px; line-height: 1.5; color: var(--muted);
+}
+
+.lg-story .story-ask,
+.lg-story .story-email {
+  border-radius: 4px; padding: 13px 16px;
+}
+
+.lg-story .story-ask {
+  border-style: dashed; border-color: var(--lg-rule); background: transparent;
+}
+
+.lg-story .story-email {
+  border-color: #d4d9c8; border-left: 3px solid var(--green); box-shadow: none;
+}
+
+.lg-story .story-label {
+  font-size: 12px;
+}
+
+.lg-story .story-quote {
+  font-size: 20px;
+}
+
+.lg-story .story-did {
+  font-size: 13.5px;
+}
+
+.lg-story .story-email.is-new {
+  animation: lg-set 0.5s ease-out both;
+}
+
+.lg-story .story-page {
+  margin-top: 12px; border-radius: 6px; padding: 20px 22px 8px; box-shadow: none;
+}
+
+.lg-story .kit-head {
+  margin-bottom: 12px;
+}
+
+.lg-story .kit-head h3 {
+  font-size: 27px;
+}
+
+.lg-story .kit-live {
+  border-radius: 3px; padding: 4px 10px 4px 9px; font-size: 12px;
+}
+
+.lg-story .kit-live::before {
+  border-radius: 1px;
+}
+
+.lg-story .kit-live .kit-face + .kit-face {
+  margin-left: -7px;
+}
+
+/* How a change looks here: the new value fades in and takes a brief underline,
+   and its row a brief wash. Nothing scales and nothing bounces. */
+.lg-story .lg-page [data-at].is-new:not(.is-moved) {
+  animation: lg-set 0.45s ease-out both;
+}
+
+.lg-story .lg-page .is-touched {
+  animation: none;
+}
+
+.lg-story .lg-page [role="cell"] > [data-at].is-new:not(.lg-marker),
+.lg-story .lg-page .lg-tally b > [data-at].is-new,
+.lg-story .lg-page .lg-lane.is-touched b,
+.lg-story .lg-page .lg-marker.is-touched b,
+.lg-story .lg-page .lg-status p[data-at].is-new .lg-turn {
+  /* Longhands, so a value that sits on a tinted chip keeps its tint under the line. */
+  background-image: linear-gradient(currentColor, currentColor); background-position: left bottom;
+  background-size: 0 1.5px; background-repeat: no-repeat;
+  animation: lg-set 0.45s ease-out both, lg-underline 2.8s ease-out both;
+}
+
+/* A marker's count is underlined once it has landed. */
+.lg-story .lg-page .lg-marker.is-touched b {
+  animation: lg-underline 2.4s 1s ease-out both;
+}
+
+.lg-story .lg-page .lg-reg-row.is-touched,
+.lg-story .lg-page .lg-nda-row.is-touched,
+.lg-story .lg-page .lg-status > li.is-touched {
+  animation: lg-wash 2.8s ease-out both;
+}
+
+.lg-story .lg-page .lg-reg-row[data-at].is-new:not(.is-moved),
+.lg-story .lg-page .lg-nda-row[data-at].is-new:not(.is-moved),
+.lg-story .lg-page .lg-status > li[data-at].is-new:not(.is-moved) {
+  animation: lg-open 0.6s ease-out backwards, lg-wash 2.8s ease-out both;
+}
+
+@keyframes lg-set {
+  from { opacity: 0; }
+}
+
+@keyframes lg-underline {
+  0% { background-size: 0 1.5px; }
+  22%, 72% { background-size: 100% 1.5px; }
+  100% { background-size: 100% 0; }
+}
+
+@keyframes lg-wash {
+  0%, 30% { background-color: #eef1e2; }
+  100% { background-color: #eef1e200; }
+}
+
+@keyframes lg-open {
+  from { max-height: 0; padding-block: 0; opacity: 0; }
+  to { max-height: 120px; }
+}
+
+/* The count across the top of a page: how much is open, and with whom. */
+.lg-tally {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 24px; padding-bottom: 14px;
+  font-size: 13px; line-height: 1.5; color: var(--muted);
+}
+
+.lg-tally > span {
+  display: inline-flex; align-items: baseline; gap: 6px;
+}
+
+.lg-tally b {
+  font-size: 13.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink);
+}
+
+.lg-tally-total b {
+  font-family: var(--display-font); font-size: 32px; font-weight: 400; line-height: 1;
+}
+
+.lg-key {
+  align-self: center; width: 8px; height: 8px; border-radius: 1px; background: var(--lg-legal-mark);
+}
+
+.lg-key.lg-biz {
+  background: var(--lg-biz-mark);
+}
+
+.lg-key.lg-other {
+  background: var(--lg-other-mark);
+}
+
+/* Whose turn, in words, with its lane's mark. */
+.lg-turn {
+  display: inline-flex; align-items: center; gap: 8px; font-weight: 500;
+}
+
+.lg-turn::before {
+  content: ""; flex: none; width: 8px; height: 8px; border-radius: 1px; background: var(--lg-legal-mark);
+}
+
+.lg-turn.lg-biz::before {
+  background: var(--lg-biz-mark);
+}
+
+.lg-turn.lg-other::before {
+  background: var(--lg-other-mark);
+}
+
+/* ---- § 1: the docket, a numbered register ---- */
+
+.lg-register,
+.lg-lanes,
+.lg-nda,
+.lg-status {
+  border-top: 1.5px solid var(--ink);
+}
+
+.lg-reg-head,
+.lg-reg-row {
+  display: grid; grid-template-columns: 52px minmax(0, 1.5fr) minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr) 78px;
+  column-gap: 18px; align-items: baseline;
+}
+
+.lg-reg-head,
+.lg-nda-head,
+.lg-lanes-head > span,
+.lg-map th {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; line-height: 1.4; text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lg-reg-head,
+.lg-nda-head {
+  border-bottom: 1px solid var(--lg-rule); padding: 9px 4px 8px;
+}
+
+.lg-reg-row {
+  overflow: hidden; border-bottom: 1px solid var(--lg-hair); padding: 12px 4px; font-size: 14px; line-height: 1.4;
+}
+
+.lg-reg-row:last-child,
+.lg-nda-row:last-child,
+.lg-status > li:last-child {
+  border-bottom: 0;
+}
+
+.lg-c-no {
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+}
+
+.lg-c-matter {
+  font-weight: 600;
+}
+
+.lg-c-by,
+.lg-c-stage {
+  font-size: 13.5px; color: var(--lg-text);
+}
+
+.lg-c-days {
+  text-align: right; white-space: nowrap;
+}
+
+.lg-reg-row .lg-c-days {
+  font-size: 13px; color: var(--muted);
+}
+
+.lg-reg-row .lg-c-days b {
+  font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink);
+}
+
+/* A wait long enough to notice. */
+.lg-reg-row .lg-late {
+  margin-right: -6px; border-radius: 3px; background: var(--peach); padding: 2px 6px; color: var(--lg-late);
+}
+
+.lg-reg-row .lg-late b {
+  color: var(--lg-late);
+}
+
+/* The questions the docket answers, under it. */
+.lg-answers {
+  list-style: none; margin: 46px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 40px;
+}
+
+.lg-answers li {
+  border-top: 1px solid var(--line); padding-top: 18px;
+}
+
+.lg-answers h3 {
+  font-family: var(--display-font); font-style: italic; font-weight: 400; font-size: 24px; line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.lg-answers p {
+  max-width: 23em; margin-top: 10px; font-size: 15px; line-height: 1.7; color: var(--lg-text);
+}
+
+/* ---- § 2: three lanes, one marker a matter ---- */
+
+.lg-lanes-head,
+.lg-lane-row {
+  display: grid; grid-template-columns: minmax(0, 1.05fr) repeat(3, minmax(0, 1fr)); column-gap: 4px;
+}
+
+.lg-lanes-head > span {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 9px 12px 8px;
+}
+
+.lg-lanes-head > .lg-lanes-matter {
+  border-bottom: 1px solid var(--lg-rule); padding-left: 4px;
+}
+
+.lg-lane b {
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0; color: var(--ink);
+}
+
+.lg-lane.lg-legal {
+  border-bottom: 2px solid var(--lg-legal-mark); background: var(--lg-legal-tint);
+}
+
+.lg-lane.lg-biz {
+  border-bottom: 2px solid var(--lg-biz-mark); background: var(--lg-biz-tint);
+}
+
+.lg-lane.lg-other {
+  border-bottom: 2px solid var(--lg-other-mark); background: var(--lg-other-tint);
+}
+
+.lg-matter {
+  display: grid; gap: 1px; align-content: center; border-bottom: 1px solid var(--lg-hair);
+  padding: 10px 12px 10px 4px;
+}
+
+.lg-lane-row:last-child .lg-matter {
+  border-bottom: 0;
+}
+
+.lg-matter strong {
+  font-size: 14px; font-weight: 600; line-height: 1.35;
+}
+
+.lg-matter small {
+  font-size: 12.5px; line-height: 1.4; color: var(--muted);
+}
+
+.lg-slot {
+  display: grid; place-items: center; min-height: 60px; border-bottom: 1px solid var(--white); padding: 8px 6px;
+}
+
+.lg-matter,
+.lg-slot {
+  grid-row: 1;
+}
+
+.lg-slot.lg-legal {
+  grid-column: 2; background: var(--lg-legal-tint);
+}
+
+.lg-slot.lg-biz {
+  grid-column: 3; background: var(--lg-biz-tint);
+}
+
+.lg-slot.lg-other {
+  grid-column: 4; background: var(--lg-other-tint);
+}
+
+/* The rail a marker travels along: one level line across the three lanes. */
+.lg-lane-row::after {
+  content: ""; grid-column: 2 / -1; grid-row: 1; align-self: center; border-top: 1px dashed #c6cab9;
+  pointer-events: none;
+}
+
+.lg-marker {
+  position: relative; z-index: 1; display: inline-flex; align-items: baseline; gap: 9px;
+  border: 1px solid var(--lg-legal-line); border-left: 3px solid var(--lg-legal-mark); border-radius: 3px;
+  background: var(--white); padding: 6px 11px 6px 9px; font-size: 13px; line-height: 1.3; white-space: nowrap;
+}
+
+.lg-marker.lg-biz {
+  border-color: var(--lg-biz-line); border-left-color: var(--lg-biz-mark);
+}
+
+.lg-marker.lg-other {
+  border-color: var(--lg-other-line); border-left-color: var(--lg-other-mark);
+}
+
+.lg-marker i {
+  font-style: normal; font-weight: 600;
+}
+
+.lg-marker b {
+  font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--lg-text);
+}
+
+.lg-marker.lg-late b {
+  color: var(--lg-late);
+}
+
+.lg-caption {
+  margin-top: 16px; font-size: 15px; line-height: 1.7; color: var(--lg-text);
+}
+
+/* ---- § 3: the NDA queue ---- */
+
+.lg-nda-head,
+.lg-nda-row {
+  display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 0.7fr)) minmax(0, 1.3fr);
+  column-gap: 12px; align-items: center;
+}
+
+.lg-nda-row {
+  overflow: hidden; border-bottom: 1px solid var(--lg-hair); padding: 11px 4px;
+}
+
+.lg-nda-who {
+  display: grid; gap: 1px; min-width: 0;
+}
+
+.lg-nda-who strong {
+  display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; line-height: 1.35;
+}
+
+.lg-nda-who small {
+  padding-left: 27px; font-size: 12.5px; line-height: 1.4; color: var(--muted);
+}
+
+/* One station of three: request in, paper out, signed copy back. */
+.lg-st {
+  display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-variant-numeric: tabular-nums;
+  line-height: 1.4; white-space: nowrap; color: var(--lg-text);
+}
+
+.lg-st small {
+  display: none; font-size: 12px; color: var(--muted);
+}
+
+.lg-tick {
+  position: relative; flex: none; width: 15px; height: 15px; border: 1.5px solid #bcc2ae; border-radius: 3px;
+}
+
+.lg-tick.lg-ticked,
+.lg-tick.is-done,
+.story:not(.is-live) .lg-tick[data-done] {
+  border-color: var(--green); background: var(--green);
+}
+
+.lg-tick.lg-ticked::after,
+.lg-tick.is-done::after,
+.story:not(.is-live) .lg-tick[data-done]::after {
+  content: ""; position: absolute; left: 3.5px; top: 0.5px; width: 4px; height: 8px; border: solid var(--paper);
+  border-width: 0 1.8px 1.8px 0; transform: rotate(40deg);
+}
+
+.lg-nda-state {
+  text-align: right;
+}
+
+.lg-state {
+  display: inline-block; font-size: 12.5px; font-weight: 500; line-height: 1.4; white-space: nowrap;
+  color: var(--lg-text);
+}
+
+.lg-state-done {
+  color: var(--green);
+}
+
+.lg-state-new,
+.lg-state-late {
+  border-radius: 3px; padding: 2px 7px;
+}
+
+.lg-state-new {
+  background: var(--lilac); color: var(--lg-biz);
+}
+
+.lg-state-late {
+  background: var(--peach); color: var(--lg-late);
+}
+
+.lg-inboxes {
+  max-width: 36em; margin: 26px 0 0; border-top: 1px solid var(--line);
+}
+
+.lg-inboxes > div {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px; border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.lg-inboxes dt {
+  font-size: 15px; font-weight: 600; line-height: 1.6;
+}
+
+.lg-inboxes dd {
+  margin: 0; font-size: 15px; line-height: 1.6; color: var(--lg-text);
+}
+
+/* ---- § 4: the status page the business reads ---- */
+
+.lg-shared {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 14px; font-size: 12.5px; line-height: 1.4;
+  color: var(--muted);
+}
+
+.lg-shared span {
+  border: 1px solid var(--line); border-radius: 3px; padding: 2px 8px;
+}
+
+.lg-status {
+  list-style: none; margin: 0; padding: 0;
+}
+
+.lg-status > li {
+  display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 4px 20px; align-items: start;
+  overflow: hidden; border-bottom: 1px solid var(--lg-hair); padding: 12px 4px;
+}
+
+.lg-status > li > div,
+.lg-status > li > p {
+  display: grid; gap: 1px; min-width: 0;
+}
+
+.lg-status strong {
+  font-size: 14px; font-weight: 600; line-height: 1.4;
+}
+
+.lg-status small {
+  font-size: 12.5px; line-height: 1.4; color: var(--muted);
+}
+
+.lg-status .lg-turn {
+  justify-self: start; font-size: 14px; font-weight: 600; line-height: 1.4;
+}
+
+.lg-why {
+  padding-left: 16px; font-size: 13px; line-height: 1.4; color: var(--lg-text);
+}
+
+/* ---- § 5: what the business writes, and what Rally does with it ---- */
+
+.lg-map {
+  width: 100%; border-collapse: collapse; border-top: 1.5px solid var(--ink);
+}
+
+.lg-map caption {
+  caption-side: top; padding-bottom: 10px; text-align: left; font-size: 13px; color: var(--muted);
+}
+
+.lg-map th {
+  border-bottom: 1px solid var(--lg-rule); padding: 9px 16px 8px 4px; text-align: left;
+}
+
+.lg-map td {
+  border-bottom: 1px solid var(--lg-hair); padding: 17px 16px 17px 4px; vertical-align: top; font-size: 15px;
+  line-height: 1.6;
+}
+
+.lg-map td:first-child {
+  width: 46%; font-family: var(--display-font); font-style: italic; font-size: 21px; line-height: 1.25;
+  color: #4c5540;
+}
+
+/* ---- § 6: three steps ---- */
+
+.lg-steps {
+  list-style: none; max-width: 54em; margin: 40px 0 0; padding: 0;
+}
+
+.lg-steps > li {
+  display: grid; grid-template-columns: 68px minmax(0, 1fr); border-top: 1px solid var(--line);
+  padding: 26px 0 30px;
+}
+
+.lg-step-no {
+  font-family: var(--display-font); font-size: 46px; line-height: 0.9; color: #7d8a68;
+}
+
+.lg-steps h3 {
+  font-family: var(--display-font); font-weight: 400; font-size: 30px; line-height: 1.1; letter-spacing: -0.02em;
+}
+
+.lg-steps p {
+  max-width: 37em; margin-top: 10px; font-size: 16px; line-height: 1.75; color: var(--lg-text);
+}
+
+.lg-asks {
+  list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 12px;
+}
+
+.lg-asks li {
+  max-width: 31em; border-left: 2px solid var(--lg-legal-line); padding: 1px 0 1px 16px;
+  font-family: var(--display-font); font-style: italic; font-size: 21px; line-height: 1.3; color: #4c5540;
+}
+
+/* ---- § 7: what Rally can and cannot do with mail ---- */
+
+.lg-trust {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 40px; border: 1px solid #d4d9c8;
+  border-radius: 6px; background: var(--white);
+}
+
+.lg-trust-col {
+  padding: 24px 26px 28px;
+}
+
+.lg-trust-col + .lg-trust-col {
+  border-left: 1px solid var(--line);
+}
+
+.lg-trust h3,
+.lg-assess h3 {
+  font-family: var(--display-font); font-weight: 400; font-size: 27px; line-height: 1.1; letter-spacing: -0.02em;
+}
+
+.lg-trust ul {
+  list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 11px;
+}
+
+.lg-trust li {
+  position: relative; padding-left: 26px; font-size: 15px; line-height: 1.6;
+}
+
+.lg-trust li::before {
+  content: ""; position: absolute; left: 3px; top: 9px; width: 7px; height: 7px; border-radius: 1px;
+  background: #b9c0aa;
+}
+
+.lg-can li::before {
+  left: 5px; top: 5px; width: 5px; height: 10px; border: solid var(--green); border-width: 0 2px 2px 0;
+  border-radius: 0; background: none; transform: rotate(40deg);
+}
+
+.lg-cannot li::before {
+  left: 1px; top: 6px; width: 13px; height: 13px; border-radius: 0;
+  background:
+    linear-gradient(45deg, transparent 44%, var(--lg-late) 44%, var(--lg-late) 56%, transparent 56%),
+    linear-gradient(-45deg, transparent 44%, var(--lg-late) 44%, var(--lg-late) 56%, transparent 56%);
+}
+
+.lg-assess {
+  display: grid; grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 28px 36px;
+  align-items: start; margin-top: 40px;
+}
+
+.lg-assess-badge {
+  color: var(--green); line-height: 0;
+}
+
+.lg-assess-badge .casa-badge {
+  width: 80px; height: auto;
+}
+
+.lg-assess p {
+  max-width: 29em; margin-top: 10px; font-size: 16px; line-height: 1.75; color: var(--lg-text);
+}
+
+.lg-assess .lg-scope {
+  margin-top: 18px; border-left: 2px solid var(--lg-legal-line); padding-left: 16px; color: var(--ink);
+}
+
+.lg-docs ul {
+  list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid var(--line);
+}
+
+.lg-docs li {
+  border-bottom: 1px solid var(--line);
+}
+
+.lg-docs a {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px;
+  font-size: 15px; line-height: 1.5; text-decoration: none;
+}
+
+.lg-docs a:hover {
+  color: var(--green); text-decoration: underline;
+}
+
+/* ---- The foot: other audiences, and the last call to action ---- */
+
+.lg-plain-section {
+  padding-block: 54px;
+}
+
+.lg-others-title {
+  max-width: 36em; margin-bottom: 18px; font-family: var(--body); font-size: 16px; font-weight: 400;
+  line-height: 1.75; letter-spacing: 0; color: var(--lg-text);
+}
+
+.lg-close {
+  padding-block: 84px 110px;
+}
+
+.lg-close h2 {
+  max-width: 9em; margin-top: 18px; font-family: var(--display-font); font-weight: 400; font-size: 66px; line-height: 1.02;
+  letter-spacing: -0.032em;
+}
+
+.lg-close-text {
+  max-width: 36em; margin-top: 20px; font-size: 16px; line-height: 1.75; color: var(--lg-text);
+}
+
+.lg-close .lg-note {
+  max-width: 40em;
+}
+
+/* On a wide screen an email is one line across the page: who wrote, then what Rally did. */
+@media (min-width: 901px) {
+  .lg-story-wide .lg-slip {
+    display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 0.85fr); column-gap: 24px;
+    align-items: center;
+  }
+
+  .lg-story-wide .story-ask .lg-slip {
+    grid-template-columns: 150px minmax(0, 1fr); align-items: baseline;
+  }
+
+  .lg-story-wide .story-email .story-label {
+    grid-row: 1 / 3;
+  }
+
+  .lg-story-wide .story-quote,
+  .lg-story-wide .story-from {
+    margin-top: 0;
+  }
+
+  .lg-story-wide .story-from {
+    grid-column: 2; grid-row: 1;
+  }
+
+  .lg-story-wide .story-subject {
+    grid-column: 2; grid-row: 2;
+  }
+
+  .lg-story-wide .story-did {
+    grid-column: 3; grid-row: 1 / 3; align-self: stretch; align-items: center; margin: 0;
+    border-top: 0; border-left: 1px dashed var(--lg-rule); padding: 0 0 0 24px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .lg-hero h1 {
+    font-size: 68px;
+  }
+
+  .lg-split,
+  .lg-split-flip {
+    grid-template-columns: minmax(0, 1fr); gap: 36px;
+  }
+
+  .lg-split-flip > .lg-intro {
+    order: 0;
+  }
+
+  .lg-split .lg-intro h2 {
+    font-size: 46px;
+  }
+
+  .lg-assess {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .lg-docs {
+    grid-column: 1 / -1;
+  }
+}
+
+/* The margin folds away: each section's mark sits above its heading. */
+@media (max-width: 900px) {
+  .lg {
+    --lg-margin: 0px;
+  }
+
+  .lg-sheet::before {
+    display: none;
+  }
+
+  .lg-section {
+    display: block;
+  }
+
+  .lg-mark {
+    margin-bottom: 14px; font-size: 26px;
+  }
+
+  .lg-intro-pair {
+    grid-template-columns: minmax(0, 1fr); gap: 20px;
+  }
+
+  .lg-answers {
+    gap: 28px;
+  }
+
+  .lg-trust {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-trust-col + .lg-trust-col {
+    border-left: 0; border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 760px) {
+  /* The docket's header row is read out but not drawn: each line carries its own two rows. */
+  .lg-reg-head,
+  .lg-nda-head,
+  .lg-lanes-head > .lg-lanes-matter {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+
+  .lg-reg-row {
+    grid-template-columns: 34px auto minmax(0, 1fr) auto; grid-template-areas: "no matter matter turn" "no by stage days";
+    column-gap: 7px; row-gap: 3px; padding: 11px 2px;
+  }
+
+  .lg-c-no {
+    grid-area: no;
+  }
+
+  .lg-c-matter {
+    grid-area: matter;
+  }
+
+  .lg-c-by {
+    grid-area: by;
+  }
+
+  .lg-c-by::after {
+    content: "·"; margin-left: 7px; color: #9aa08c;
+  }
+
+  .lg-c-stage {
+    grid-area: stage;
+  }
+
+  .lg-c-turn {
+    grid-area: turn; justify-self: end; font-size: 13.5px;
+  }
+
+  .lg-reg-row .lg-c-days {
+    grid-area: days; justify-self: end;
+  }
+
+  .lg-reg-row .lg-c-by,
+  .lg-reg-row .lg-c-stage {
+    font-size: 12.5px;
+  }
+
+  .lg-person {
+    display: none;
+  }
+
+  .lg-answers {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Each matter's name sits above its own three slots. */
+  .lg-lanes-head,
+  .lg-lane-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 3px;
+  }
+
+  .lg-lanes-head > span {
+    display: grid; justify-content: stretch; gap: 0; padding: 8px 7px 7px; font-size: 11.5px; letter-spacing: 0.03em;
+  }
+
+  .lg-lane b {
+    justify-self: start;
+  }
+
+  .lg-matter {
+    grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; border-bottom: 0;
+    padding: 11px 2px 6px;
+  }
+
+  .lg-slot {
+    grid-row: 2; min-height: 46px; border-bottom: 0; padding: 6px 3px;
+  }
+
+  .lg-slot.lg-legal {
+    grid-column: 1;
+  }
+
+  .lg-slot.lg-biz {
+    grid-column: 2;
+  }
+
+  .lg-slot.lg-other {
+    grid-column: 3;
+  }
+
+  .lg-lane-row::after {
+    grid-column: 1 / -1; grid-row: 2;
+  }
+
+  .lg-marker {
+    padding: 5px 8px 5px 7px;
+  }
+
+  /* The lane already says who has it; the marker keeps only its count. */
+  .lg-marker i {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+  }
+
+  .lg-nda-row {
+    grid-template-columns: repeat(3, max-content) minmax(0, 1fr); column-gap: 16px; row-gap: 8px;
+    padding: 12px 2px;
+  }
+
+  .lg-nda-who,
+  .lg-nda-row > .lg-nda-state {
+    grid-column: 1 / -1; grid-row: 1;
+  }
+
+  .lg-nda-row > .lg-nda-state {
+    justify-self: end; align-self: start;
+  }
+
+  .lg-st {
+    grid-row: 2; gap: 5px;
+  }
+
+  .lg-st small {
+    display: inline;
+  }
+}
+
+@media (max-width: 650px) {
+  .lg-hero {
+    padding: 78px 0 60px;
+  }
+
+  .lg-hero h1 {
+    margin-top: 20px; font-size: 47px; line-height: 1.02;
+  }
+
+  .lg-lede {
+    margin-top: 24px; font-size: 16px; line-height: 1.7;
+  }
+
+  .lg-maxim {
+    margin-top: 36px; font-size: 20px;
+  }
+
+  .lg .lg-note {
+    font-size: 12.5px;
+  }
+
+  .lg-section {
+    padding-block: 54px 60px;
+  }
+
+  .lg-intro h2,
+  .lg-split .lg-intro h2 {
+    margin-top: 14px; font-size: 37px;
+  }
+
+  .lg-intro p:not(.eyebrow) {
+    margin-top: 16px; font-size: 15.5px;
+  }
+
+  .lg-story {
+    margin-top: 28px;
+  }
+
+  .lg-story .story-page {
+    padding: 16px 13px 6px;
+  }
+
+  .lg-story .kit-head h3 {
+    font-size: 24px;
+  }
+
+  .lg-story .story-quote {
+    font-size: 18.5px;
+  }
+
+  .lg-tally {
+    gap: 2px 16px;
+  }
+
+  .lg-tally-total {
+    flex-basis: 100%;
+  }
+
+  .lg-status > li {
+    grid-template-columns: minmax(0, 1fr); gap: 6px;
+  }
+
+  .lg-map td {
+    padding: 14px 10px 14px 2px;
+  }
+
+  .lg-map td:first-child {
+    width: 44%; font-size: 18.5px;
+  }
+
+  .lg-inboxes > div {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+
+  .lg-steps {
+    margin-top: 28px;
+  }
+
+  .lg-steps > li {
+    grid-template-columns: 44px minmax(0, 1fr); padding: 22px 0 24px;
+  }
+
+  .lg-step-no {
+    font-size: 38px;
+  }
+
+  .lg-steps h3 {
+    font-size: 27px;
+  }
+
+  .lg-steps p,
+  .lg-close-text,
+  .lg-assess p {
+    font-size: 15.5px;
+  }
+
+  .lg-asks li {
+    font-size: 19px;
+  }
+
+  .lg-trust {
+    margin-top: 28px;
+  }
+
+  .lg-trust-col {
+    padding: 20px 18px 22px;
+  }
+
+  .lg-assess {
+    gap: 22px 20px; margin-top: 30px;
+  }
+
+  .lg-assess-badge .casa-badge {
+    width: 64px;
+  }
+
+  .lg-plain-section {
+    padding-block: 40px;
+  }
+
+  .lg-close {
+    padding-block: 54px 70px;
+  }
+
+  .lg-close h2 {
+    font-size: 46px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg-story .story-email.is-new,
+  .lg-story .lg-page [data-at].is-new,
+  .lg-story .lg-page .is-touched,
+  .lg-story .lg-page .is-touched b,
+  .lg-story .lg-page .is-new .lg-turn {
+    animation: none !important;
+  }
+}

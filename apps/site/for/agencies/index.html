@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fcfbf7" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="description" content="Connect Gmail and Rally builds a wall of your clients in five minutes: what each one last asked, who owes whom a reply, and how long they have waited. It updates itself as client mail arrives." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Rally" />
+    <meta property="og:title" content="Which client did you forget to answer?" />
+    <meta property="og:description" content="Connect Gmail and get a wall of your clients in five minutes: who is waiting on you, for how long, and what they asked. It updates itself." />
+    <meta property="og:url" content="https://rallywith.ai/for/agencies/" />
+    <meta name="twitter:title" content="Which client did you forget to answer?" />
+    <meta name="twitter:description" content="Connect Gmail and get a wall of your clients in five minutes: who is waiting on you, for how long, and what they asked. It updates itself." />
+    <link rel="canonical" href="https://rallywith.ai/for/agencies/" />
+    <link
+      rel="preload"
+      as="font"
+      href="/src/fonts/instrument-serif-latin-400-normal.woff2"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/src/for/agencies.css" />
+    <script type="module" src="/src/story.ts"></script>
+    <title>Which client did you forget to answer? Rally for agencies and freelancers</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <!-- rally:home-header -->
+    <main id="content" class="ag-page">
+      <!-- The hero: a centered question, then the client wall. Hand-written and drawn
+           at its last step; story.ts plays it. Contract: docs/site-audience-pages.md.
+           A tile that moves is two elements with one data-key: the one leaving and
+           the one arriving, in the order the wall reads at every step. -->
+      <section class="ag-hero wrap" aria-labelledby="ag-title">
+        <p class="eyebrow">For agencies and freelancers</p>
+        <h1 id="ag-title">
+          Which client did you
+          <span class="pencil-underline">forget</span> to answer?
+        </h1>
+        <p class="ag-lede">
+          Connect your Gmail and, five minutes later, Rally has built you a
+          client wall: one tile per client, what they last asked, who owes whom
+          a reply and how long it’s been. It updates itself every time a client
+          writes. You never fill it in.
+        </p>
+        <div class="ag-actions">
+          <a
+            class="button primary"
+            data-site-action="web-app-hero"
+            href="https://app.rallywith.ai"
+            >Connect your Gmail <span aria-hidden="true"><!-- rally:arrow --></span></a
+          >
+          <p class="trial-note">Free to start. No credit card needed.</p>
+        </div>
+
+        <div class="story ag-hero-story" data-story>
+          <div class="story-bar">
+            <p class="ag-bar-note">An example. Watch what each email does to the wall.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide aria-label="Example: a client wall that changes as three emails arrive">
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Make me a wall of my clients. Who’s waiting on me, and for how long? Longest wait first.”</p></div>
+                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Love the draft. One small change to the header</p><p class="story-did">Wren Yoga is waiting on you now.</p></div>
+                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Halden Dental</p><p class="story-subject">Circling back on the launch date</p><p class="story-did">Dana asked twice. Halden Dental jumps the queue.</p></div>
+                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Otis Brewing</p><p class="story-subject">Approved. Send the labels to print!</p><p class="story-did">Signed off. Otis Brewing is all square.</p></div>
+              </div>
+              <div class="story-page ag-board">
+                <div class="ag-board-head">
+                  <h2>Client wall</h2>
+                  <p class="ag-sort">Longest wait first. A client who chases you jumps the queue.</p>
+                  <span class="kit-live">Updates itself from your Gmail</span>
+                </div>
+                <ul class="ag-wall" role="list">
+                  <li class="ag-tile ag-w1 ag-hot ag-tilt-c ag-was-w1 ag-jump" data-key="halden" data-at="2">
+                    <div class="ag-who"><h3 class="ag-name">Halden Dental</h3><p class="ag-ask">“Circling back on the launch date”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>1 day</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                    <em class="ag-chase">Asked twice</em>
+                  </li>
+                  <li class="ag-tile ag-w3 ag-tilt-a" data-key="fern" data-until="2">
+                    <div class="ag-who"><h3 class="ag-name">Fern &amp; Fig Bakery</h3><p class="ag-ask">“Two small changes to the menu proof”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>3 days</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w3 ag-tilt-a" data-key="fern" data-at="2">
+                    <div class="ag-who"><h3 class="ag-name">Fern &amp; Fig Bakery</h3><p class="ag-ask">“Two small changes to the menu proof”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>3 days</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w2 ag-tilt-b" data-key="marlow" data-until="2">
+                    <div class="ag-who"><h3 class="ag-name">Marlow Cycles</h3><p class="ag-ask">“Quick question about the invoice”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>2 days</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w2 ag-tilt-b" data-key="marlow" data-at="2">
+                    <div class="ag-who"><h3 class="ag-name">Marlow Cycles</h3><p class="ag-ask">“Quick question about the invoice”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>2 days</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w1 ag-tilt-c" data-key="halden" data-until="2">
+                    <div class="ag-who"><h3 class="ag-name">Halden Dental</h3><p class="ag-ask">“Can we move launch up a week?”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>1 day</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w0 ag-tilt-d ag-was-them ag-jump" data-key="wren" data-at="1">
+                    <div class="ag-who"><h3 class="ag-name">Wren Yoga</h3><p class="ag-ask">“One small change to the header”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>just now</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-them ag-tilt-a" data-key="otis" data-until="1">
+                    <div class="ag-who"><h3 class="ag-name">Otis Brewing</h3><p class="ag-ask">You sent the label proofs</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>3 days</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-them ag-tilt-a" data-key="otis" data-at="1" data-until="3">
+                    <div class="ag-who"><h3 class="ag-name">Otis Brewing</h3><p class="ag-ask">You sent the label proofs</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>3 days</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-them ag-tilt-d" data-key="wren" data-until="1">
+                    <div class="ag-who"><h3 class="ag-name">Wren Yoga</h3><p class="ag-ask">You sent the homepage draft</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>1 day</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-square ag-tilt-b" data-key="pine" data-until="3">
+                    <div class="ag-who"><h3 class="ag-name">Pine Street Books</h3><p class="ag-ask">Poster signed off last week</p></div>
+                    <div class="ag-wait"><p><b>All square</b><span>nothing owed</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-square ag-tilt-b" data-key="pine" data-at="3">
+                    <div class="ag-who"><h3 class="ag-name">Pine Street Books</h3><p class="ag-ask">Poster signed off last week</p></div>
+                    <div class="ag-wait"><p><b>All square</b><span>nothing owed</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-square ag-tilt-a ag-was-them ag-jump" data-key="otis" data-at="3">
+                    <div class="ag-who"><h3 class="ag-name">Otis Brewing</h3><p class="ag-ask">“Approved. Send the labels to print!”</p></div>
+                    <div class="ag-wait"><p><b>All square</b><span>nothing owed</span></p></div>
+                  </li>
+                </ul>
+                <ul class="ag-legend" role="list">
+                  <li class="ag-legend-you"><i aria-hidden="true"></i>Waiting on you. Warmer means longer.</li>
+                  <li class="ag-legend-them"><i aria-hidden="true"></i>Waiting on them</li>
+                  <li class="ag-legend-square"><i aria-hidden="true"></i>All square</li>
+                </ul>
+              </div>
+            </article>
+          </div>
+        </div>
+        <p class="ag-hero-note">
+          Nobody dragged those tiles. Rally read each email as it came in and
+          moved them itself.
+        </p>
+      </section>
+
+      <!-- Monday’s note: one tile over four mornings. A drawing, not a story: nothing here moves. -->
+      <section class="ag-monday wrap" aria-labelledby="ag-monday-title">
+        <div class="ag-head">
+          <p class="eyebrow">Monday’s note</p>
+          <h2 id="ag-monday-title">“Following up on my note from Monday.”</h2>
+          <p>
+            You know the drop in your stomach. It’s Thursday. You scroll back.
+            It really was Monday.
+          </p>
+          <p>
+            The wall saw Dana’s note on Monday. Her tile has been getting
+            warmer every morning since, up at the front where you can’t miss
+            it. So you answer on Tuesday, and that follow-up never gets
+            written.
+          </p>
+          <p>
+            Short on time? Ask Rally to draft the reply. The draft waits in
+            your Gmail Drafts until you read it and hit send.
+          </p>
+        </div>
+        <figure class="ag-week">
+          <div class="ag-week-page">
+            <div class="ag-week-head">
+              <div>
+                <h3 class="ag-name">Halden Dental</h3>
+                <p class="ag-ask">“Can we move launch up a week?”</p>
+              </div>
+              <span class="kit-live">Updates itself from your Gmail</span>
+            </div>
+            <ol class="ag-mornings" role="list">
+              <li class="ag-morning ag-w0"><span class="ag-day">Mon</span><b>Waiting on you</b><span class="ag-since">just now</span><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></li>
+              <li class="ag-morning ag-w1"><span class="ag-day">Tue</span><b>Waiting on you</b><span class="ag-since">1 day</span><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></li>
+              <li class="ag-morning ag-w2"><span class="ag-day">Wed</span><b>Waiting on you</b><span class="ag-since">2 days</span><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></li>
+              <li class="ag-morning ag-w3"><span class="ag-day">Thu</span><b>Waiting on you</b><span class="ag-since">3 days</span><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></li>
+            </ol>
+          </div>
+          <figcaption>
+            One tile, four mornings running. Nobody touched it: Rally counts the
+            days again each morning.
+          </figcaption>
+          <div class="ag-week-mail">
+            <div class="ag-ghost">
+              <p class="story-label"><!-- rally:gmail-mark -->Thursday, 9:02. The email Dana never had to send</p>
+              <p class="story-from">Dana, Halden Dental</p>
+              <p class="story-subject"><s>Following up on my note from Monday</s></p>
+            </div>
+            <div class="ag-draft">
+              <p class="story-label"><!-- rally:gmail-mark -->Waiting in your Gmail Drafts</p>
+              <p class="story-from">Re: Can we move launch up a week?</p>
+              <p class="story-subject">“Hi Dana, sorry for the slow reply. A week earlier can work if we…”</p>
+              <p class="story-did">Rally wrote it. You read it and send it.</p>
+            </div>
+          </div>
+        </figure>
+      </section>
+
+      <!-- Solo or studio: the same three emails, built from one inbox and then from three. -->
+      <section class="ag-studio wrap" aria-labelledby="ag-studio-title">
+        <div class="ag-head ag-center">
+          <p class="eyebrow">One inbox, or everyone’s</p>
+          <h2 id="ag-studio-title">Just you, or the whole studio</h2>
+          <p>
+            Working alone? The wall is built from your inbox. Three of you?
+            Each person connects their own Gmail and says yes, and all three
+            inboxes feed one wall. Every tile shows whose inbox the email
+            landed in and who owes the reply, so nobody assumes somebody else
+            answered.
+          </p>
+        </div>
+        <div class="story ag-studio-story" data-story data-story-manual>
+          <div class="story-bar">
+            <div class="story-tabs ag-switch" role="tablist" aria-label="Build the wall from one inbox or from three">
+              <button type="button" role="tab" id="ag-tab-solo" aria-controls="ag-panel-solo" aria-selected="true">Just me<i class="story-progress" aria-hidden="true"></i></button>
+              <button type="button" role="tab" id="ag-tab-studio" aria-controls="ag-panel-studio" aria-selected="false" tabindex="-1">My studio<i class="story-progress" aria-hidden="true"></i></button>
+            </div>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide role="tabpanel" id="ag-panel-solo" aria-labelledby="ag-tab-solo">
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show me which clients are waiting on me, longest wait first.”</p></div>
+                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in your inbox</b></p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Feedback on the homepage draft</p><p class="story-did">Wren Yoga is waiting on you now.</p></div>
+                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in your inbox</b></p><p class="story-from">Bea, Fern &amp; Fig Bakery</p><p class="story-subject">Checking you saw my note about the menu</p><p class="story-did">Bea asked twice. Answer her first.</p></div>
+                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in your inbox</b></p><p class="story-from">Sam, Otis Brewing</p><p class="story-subject">Approved. Send the labels to print!</p><p class="story-did">Signed off. Otis Brewing is all square.</p></div>
+              </div>
+              <div class="story-page ag-board ag-board-small">
+                <div class="ag-board-head">
+                  <h3>Client wall</h3>
+                  <span class="kit-live">Updates itself from your Gmail</span>
+                </div>
+                <ul class="ag-wall" role="list">
+                  <li class="ag-tile ag-w2" data-key="fern" data-until="2">
+                    <div class="ag-who"><h4 class="ag-name">Fern &amp; Fig Bakery</h4><p class="ag-ask">“Two small changes to the menu proof”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>2 days</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w2 ag-hot ag-was-w2 ag-jump" data-key="fern" data-at="2">
+                    <div class="ag-who"><h4 class="ag-name">Fern &amp; Fig Bakery</h4><p class="ag-ask">“Checking you saw my note about the menu”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>2 days</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                    <em class="ag-chase">Asked twice</em>
+                  </li>
+                  <li class="ag-tile ag-w1">
+                    <div class="ag-who"><h4 class="ag-name">Marlow Cycles</h4><p class="ag-ask">“Quick question about the invoice”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>1 day</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w0 ag-was-them ag-jump" data-key="wren" data-at="1">
+                    <div class="ag-who"><h4 class="ag-name">Wren Yoga</h4><p class="ag-ask">“Feedback on the homepage draft”</p></div>
+                    <div class="ag-wait"><p><b>Waiting on you</b><span>just now</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-them" data-key="otis" data-until="1">
+                    <div class="ag-who"><h4 class="ag-name">Otis Brewing</h4><p class="ag-ask">You sent the label proofs</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>3 days</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-them" data-key="otis" data-at="1" data-until="3">
+                    <div class="ag-who"><h4 class="ag-name">Otis Brewing</h4><p class="ag-ask">You sent the label proofs</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>3 days</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-square ag-was-them ag-jump" data-key="otis" data-at="3">
+                    <div class="ag-who"><h4 class="ag-name">Otis Brewing</h4><p class="ag-ask">“Approved. Send the labels to print!”</p></div>
+                    <div class="ag-wait"><p><b>All square</b><span>nothing owed</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-them" data-key="wren" data-until="1">
+                    <div class="ag-who"><h4 class="ag-name">Wren Yoga</h4><p class="ag-ask">You sent the homepage draft</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>1 day</span></p></div>
+                  </li>
+                </ul>
+              </div>
+              <p class="ag-feeds"><b>One inbox, one wall.</b> Built from your own Gmail and nobody else’s.</p>
+            </article>
+            <article class="story-slide" data-slide role="tabpanel" id="ag-panel-studio" aria-labelledby="ag-tab-studio">
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Same wall, for all three of us. Show whose inbox it landed in and who owes the reply.”</p></div>
+                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Feedback on the homepage draft</p><p class="story-did">Wren Yoga is waiting on Theo now.</p></div>
+                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>to Priya, cc Maya</b></p><p class="story-from">Bea, Fern &amp; Fig Bakery</p><p class="story-subject">Checking you saw my note about the menu</p><p class="story-did">Bea asked twice. It was sent to Priya, so the reply is hers.</p></div>
+                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Sam, Otis Brewing</p><p class="story-subject">Approved. Send the labels to print!</p><p class="story-did">Signed off. Otis Brewing is all square.</p></div>
+              </div>
+              <div class="story-page ag-board ag-board-small">
+                <div class="ag-board-head">
+                  <h3>Studio client wall</h3>
+                  <span class="kit-live">Updates itself from 3 inboxes <i class="kit-face maya" aria-hidden="true">M</i><i class="kit-face theo" aria-hidden="true">T</i><i class="kit-face priya" aria-hidden="true">P</i></span>
+                </div>
+                <ul class="ag-wall" role="list">
+                  <li class="ag-tile ag-w2" data-key="fern" data-until="2">
+                    <div class="ag-who"><h4 class="ag-name">Fern &amp; Fig Bakery</h4><p class="ag-ask">“Two small changes to the menu proof”</p><p class="ag-inbox"><i class="kit-face priya" aria-hidden="true">P</i><i class="kit-face maya" aria-hidden="true">M</i>To Priya, cc Maya</p></div>
+                    <div class="ag-wait"><p><b>Waiting on Priya</b><span>2 days</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w2 ag-hot ag-was-w2 ag-jump" data-key="fern" data-at="2">
+                    <div class="ag-who"><h4 class="ag-name">Fern &amp; Fig Bakery</h4><p class="ag-ask">“Checking you saw my note about the menu”</p><p class="ag-inbox"><i class="kit-face priya" aria-hidden="true">P</i><i class="kit-face maya" aria-hidden="true">M</i>To Priya, cc Maya</p></div>
+                    <div class="ag-wait"><p><b>Waiting on Priya</b><span>2 days</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                    <em class="ag-chase">Asked twice</em>
+                  </li>
+                  <li class="ag-tile ag-w1">
+                    <div class="ag-who"><h4 class="ag-name">Marlow Cycles</h4><p class="ag-ask">“Quick question about the invoice”</p><p class="ag-inbox"><i class="kit-face maya" aria-hidden="true">M</i>Maya’s inbox</p></div>
+                    <div class="ag-wait"><p><b>Waiting on Maya</b><span>1 day</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-w0 ag-was-them ag-jump" data-key="wren" data-at="1">
+                    <div class="ag-who"><h4 class="ag-name">Wren Yoga</h4><p class="ag-ask">“Feedback on the homepage draft”</p><p class="ag-inbox"><i class="kit-face theo" aria-hidden="true">T</i>Theo’s inbox</p></div>
+                    <div class="ag-wait"><p><b>Waiting on Theo</b><span>just now</span></p><i class="ag-meter" aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+                  </li>
+                  <li class="ag-tile ag-them" data-key="otis" data-until="1">
+                    <div class="ag-who"><h4 class="ag-name">Otis Brewing</h4><p class="ag-ask">Theo sent the label proofs</p><p class="ag-inbox"><i class="kit-face theo" aria-hidden="true">T</i>Theo’s inbox</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>3 days</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-them" data-key="otis" data-at="1" data-until="3">
+                    <div class="ag-who"><h4 class="ag-name">Otis Brewing</h4><p class="ag-ask">Theo sent the label proofs</p><p class="ag-inbox"><i class="kit-face theo" aria-hidden="true">T</i>Theo’s inbox</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>3 days</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-square ag-was-them ag-jump" data-key="otis" data-at="3">
+                    <div class="ag-who"><h4 class="ag-name">Otis Brewing</h4><p class="ag-ask">“Approved. Send the labels to print!”</p><p class="ag-inbox"><i class="kit-face theo" aria-hidden="true">T</i>Theo’s inbox</p></div>
+                    <div class="ag-wait"><p><b>All square</b><span>nothing owed</span></p></div>
+                  </li>
+                  <li class="ag-tile ag-them" data-key="wren" data-until="1">
+                    <div class="ag-who"><h4 class="ag-name">Wren Yoga</h4><p class="ag-ask">Theo sent the homepage draft</p><p class="ag-inbox"><i class="kit-face theo" aria-hidden="true">T</i>Theo’s inbox</p></div>
+                    <div class="ag-wait"><p><b>Waiting on them</b><span>1 day</span></p></div>
+                  </li>
+                </ul>
+              </div>
+              <p class="ag-feeds"><b>Three inboxes, one wall.</b> <span class="ag-feeds-who"><i class="kit-face maya" aria-hidden="true">M</i>Maya</span> <span class="ag-feeds-who"><i class="kit-face theo" aria-hidden="true">T</i>Theo</span> <span class="ag-feeds-who"><i class="kit-face priya" aria-hidden="true">P</i>Priya</span> each connected their own Gmail and said yes.</p>
+            </article>
+          </div>
+        </div>
+        <p class="ag-studio-note">
+          Same three emails, shown both ways. Either way nobody keeps the wall
+          up: the tiles move when the mail does. Nobody’s inbox is read until
+          they connect it themselves.
+        </p>
+      </section>
+
+      <!-- Requests by client: one client’s asks from many threads in one list, newest first. -->
+      <section class="ag-scope wrap" aria-labelledby="ag-scope-title">
+        <div class="ag-head">
+          <p class="eyebrow">Requests by client</p>
+          <h2 id="ag-scope-title">Scope creeps in one “quick question” at a time</h2>
+          <p>
+            No single email looks like much. “One small change.” “Could we
+            also…” A dozen of those later, you’ve built a second project for
+            free.
+          </p>
+          <p>
+            Ask Rally for everything one client has asked for, and it gathers
+            every request from every thread into one list. Tell it what the
+            brief covered, and anything outside it stands out.
+          </p>
+          <p>
+            New asks land on the list as they arrive. You don’t log a thing.
+            Handy on the day you sit down to talk about the retainer.
+          </p>
+        </div>
+        <div class="story ag-scope-story" data-story>
+          <div class="story-bar">
+            <p class="ag-bar-note">An example list. Each new line comes from an email.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide aria-label="Example: one client’s requests, gathered as three emails arrive">
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“List everything Wren Yoga has asked for. The brief was five pages, a logo and two rounds of changes. Flag anything extra.”</p></div>
+                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Can we swap the header photo?</p><p class="story-did">Added it. That’s inside the brief.</p></div>
+                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">A few more tweaks to the logo</p><p class="story-did">That’s round three. The brief had two.</p></div>
+                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">One more thing: a booking page?</p><p class="story-did">A sixth page. Not in the brief.</p></div>
+              </div>
+              <div class="story-page ag-slip">
+                <div class="kit-head"><h3>Wren Yoga: every ask</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+                <p class="ag-brief"><b>The brief</b> Five pages, a logo, two rounds of changes.</p>
+                <div class="ag-tally">
+                  <div class="ag-tally-in" data-touch="1">
+                    <strong><span data-until="1">3</span><span data-at="1">4</span></strong>
+                    <small>inside the brief</small>
+                    <i class="ag-marks" aria-hidden="true"><b></b><b></b><b></b><b data-at="1"></b></i>
+                  </div>
+                  <div class="ag-tally-out" data-touch="2 3">
+                    <strong><span data-until="2">1</span><span data-at="2" data-until="3">2</span><span data-at="3">3</span></strong>
+                    <small>extra asks</small>
+                    <i class="ag-marks" aria-hidden="true"><b></b><b data-at="2"></b><b data-at="3"></b></i>
+                  </div>
+                </div>
+                <ul class="ag-asks" role="list">
+                  <li class="ag-extra" data-at="3"><time>Nov 12</time><div><strong>Add a booking page</strong><span>from “One more thing: a booking page?”</span></div><em class="ag-tag">Not in the brief</em></li>
+                  <li class="ag-extra" data-at="2"><time>Nov 11</time><div><strong>More tweaks to the logo</strong><span>from “A few more tweaks to the logo”</span></div><em class="ag-tag">Round 3 of 2</em></li>
+                  <li data-at="1"><time>Nov 10</time><div><strong>Swap the header photo</strong><span>from “Can we swap the header photo?”</span></div><em class="ag-tag">In the brief</em></li>
+                  <li class="ag-extra"><time>Nov 6</time><div><strong>Instagram templates, “just three”</strong><span>from “Quick question”</span></div><em class="ag-tag">Not in the brief</em></li>
+                  <li><time>Nov 4</time><div><strong>A rounder font on the logo</strong><span>from “Re: Re: Logo options”</span></div><em class="ag-tag">Round 2 of 2</em></li>
+                  <li><time>Nov 3</time><div><strong>Shorter copy on the About page</strong><span>from “Site copy, first pass”</span></div><em class="ag-tag">In the brief</em></li>
+                  <li><time>Oct 29</time><div><strong>Logo in a darker green</strong><span>from “Re: Logo options”</span></div><em class="ag-tag">Round 1 of 2</em></li>
+                </ul>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- Nothing new to keep up: three notes pinned in a row. -->
+      <section class="ag-keep wrap" aria-labelledby="ag-keep-title">
+        <div class="ag-head ag-center">
+          <p class="eyebrow">Nothing new to keep up</p>
+          <h2 id="ag-keep-title">You didn’t go freelance to maintain a project tool</h2>
+          <p>
+            Rally sits on top of the Gmail you already have. It adds one
+            window and changes nothing else.
+          </p>
+        </div>
+        <ul class="ag-notes" role="list">
+          <li>
+            <h3>Clients keep emailing</h3>
+            <p>
+              They write “quick question” the way they always have. They never
+              see Rally, sign up for anything or fill in a form.
+            </p>
+          </li>
+          <li>
+            <h3>You keep replying from Gmail</h3>
+            <p>
+              No cards to drag, no statuses to set, no tickets to close. Rally
+              works out who owes whom from the mail itself.
+            </p>
+          </li>
+          <li>
+            <h3>The wall keeps itself</h3>
+            <p>
+              It updates when mail arrives. Nobody has to remember to update
+              it, which is lucky, because nobody would.
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <!-- How to start: three plain steps, with sentences a freelancer would type. -->
+      <section class="ag-start wrap" id="start" aria-labelledby="ag-start-title">
+        <div class="ag-head">
+          <p class="eyebrow">How to start</p>
+          <h2 id="ag-start-title">Three steps. About five minutes.</h2>
+          <p>Nothing to install and nothing to set up. You can do it between two emails.</p>
+        </div>
+        <ol class="ag-steps" role="list">
+          <li>
+            <span class="ag-step-number" aria-hidden="true">1</span>
+            <div>
+              <h3>Connect your Gmail</h3>
+              <p>
+                Sign up for free and connect your Gmail. Google asks you to
+                approve it once. Rally works with Gmail today, not Outlook.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="ag-step-number" aria-hidden="true">2</span>
+            <div>
+              <h3>Say what you want to see</h3>
+              <p>Type one sentence, the way you’d say it to a colleague. Any of these will do:</p>
+              <ul class="ag-says" role="list">
+                <li>“Make me a wall of my clients. Who’s waiting on me, and for how long?”</li>
+                <li>“List everything Halden Dental has asked for since we signed.”</li>
+                <li>“Which proofs are out for sign-off, and since when?”</li>
+              </ul>
+              <p>Rally reads the mail and builds the page.</p>
+            </div>
+          </li>
+          <li>
+            <span class="ag-step-number" aria-hidden="true">3</span>
+            <div>
+              <h3>Leave it alone</h3>
+              <p>
+                From then on, every client email updates the page on its own.
+                You never refresh it or fill it in. Want it different? Say
+                “put retainer clients first” and Rally changes it. Want a
+                nudge? Ask it to email you each morning with who has waited
+                longest.
+              </p>
+            </div>
+          </li>
+        </ol>
+        <p class="ag-start-foot">
+          Works in your browser, with desktop apps for macOS and Linux. Priced
+          per team, not per seat.
+        </p>
+      </section>
+
+      <!-- The email-safety note: short and plain. -->
+      <section class="ag-safe wrap" aria-labelledby="ag-safe-title">
+        <div class="ag-safe-card">
+          <div class="ag-head">
+            <p class="eyebrow">Before you connect</p>
+            <h2 id="ag-safe-title">It’s your clients’ mail too</h2>
+            <p>So here, plainly, is what Rally can and can’t do with it.</p>
+          </div>
+          <ul class="ag-safe-list" role="list">
+            <li>A wall like this only needs to read your mail. Rally reads it only after you connect Gmail yourself, and you can remove the connection at any time.</li>
+            <li>Rally changes nothing in your mailbox unless you ask it to. Ask, and it can write a draft, send a reply, or label and archive mail.</li>
+            <li class="ag-cannot">It has no way to delete mail for good.</li>
+            <li>In a studio, each person connects their own inbox. Nobody’s mail is read until they allow it.</li>
+            <li>You choose who sees each page: a teammate, the whole studio, or a guest by email.</li>
+            <li>
+              Rally has completed an independent security assessment.
+              <a href="/trust/security/">See our security controls <!-- rally:arrow --></a>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="ag-others wrap" aria-labelledby="ag-others-title">
+        <h2 id="ag-others-title">Not an agency?</h2>
+        <p>Rally builds the same kind of page for other work that runs on email.</p>
+        <!-- rally:audience-others agencies -->
+      </section>
+
+      <section class="ag-closer wrap" aria-labelledby="ag-closer-title">
+        <ul class="ag-closer-tiles" role="list" aria-hidden="true">
+          <li class="ag-w3"></li>
+          <li class="ag-w2"></li>
+          <li class="ag-w1"></li>
+          <li class="ag-w0"></li>
+          <li class="ag-them"></li>
+          <li class="ag-square"></li>
+        </ul>
+        <p class="eyebrow">Five minutes from now</p>
+        <h2 id="ag-closer-title">Know who’s waiting on you.</h2>
+        <a
+          class="button primary"
+          data-site-action="web-app-hero"
+          href="https://app.rallywith.ai"
+          >Connect your Gmail <span aria-hidden="true"><!-- rally:arrow --></span></a
+        >
+        <p class="trial-note">Free to start. No credit card needed.</p>
+      </section>
+    </main>
+    <!-- rally:site-footer -->
+  </body>
+</html>

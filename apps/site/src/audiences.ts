@@ -24,13 +24,13 @@ export interface Audience {
 
 /** In the order the homepage lists them. */
 export const audiences: readonly Audience[] = [
-  { slug: 'wholesalers', name: 'Wholesalers and small sellers', short: 'Wholesalers', line: 'Orders, quotes and supplier back-and-forth in one place.', headline: '', pitch: '' },
-  { slug: 'agencies', name: 'Agencies and freelancers', short: 'Agencies', line: 'Client requests, open threads and overdue replies on one page.', headline: '', pitch: '' },
-  { slug: 'legal', name: 'In-house legal teams', short: 'Legal teams', line: 'Contract reviews, NDA requests, and who’s waiting on whom.', headline: '', pitch: '' },
-  { slug: 'accountants', name: 'Accountants and bookkeepers', short: 'Accountants', line: 'Document requests, client status and deadlines.', headline: '', pitch: '' },
-  { slug: 'recruiters', name: 'Recruiters and staffing shops', short: 'Recruiters', line: 'Candidates, intros and placements.', headline: '', pitch: '' },
+  { slug: 'wholesalers', name: 'Wholesalers and small sellers', short: 'Wholesalers', line: 'Orders, quotes and supplier back-and-forth in one place.', headline: 'Every order in your inbox, on one board.', pitch: 'Connect Gmail and get an order board in five minutes: orders, quotes and supplier deliveries, kept up to date by your mail.' },
+  { slug: 'agencies', name: 'Agencies and freelancers', short: 'Agencies', line: 'Client requests, open threads and overdue replies on one page.', headline: 'Which client did you forget to answer?', pitch: 'Connect Gmail and get a wall of your clients in five minutes: who’s waiting on you, for how long, and what they asked.' },
+  { slug: 'legal', name: 'In-house legal teams', short: 'Legal teams', line: 'Contract reviews, NDA requests, and who’s waiting on whom.', headline: 'Every open matter, and whose turn it is.', pitch: 'Connect Gmail and get a docket of every legal request: who asked, whose turn it is, and for how many days. It updates itself.' },
+  { slug: 'accountants', name: 'Accountants and bookkeepers', short: 'Accountants', line: 'Document requests, client status and deadlines.', headline: 'The client checklist that ticks itself off.', pitch: 'Connect Gmail and get a checklist of the documents each client owes you. It ticks itself off as they arrive.' },
+  { slug: 'recruiters', name: 'Recruiters and staffing shops', short: 'Recruiters', line: 'Candidates, intros and placements.', headline: 'Candidates on one side, clients on the other.', pitch: 'Connect Gmail and get one page of every candidate, client and intro, and whose reply you’re waiting on. It updates itself.' },
   { slug: 'brokers', name: 'Real estate, mortgage and insurance brokers', short: 'Brokers', line: 'Leads, deals in progress and follow-ups due.', headline: '', pitch: '' },
-  { slug: 'event-planners', name: 'Wedding and event planners', short: 'Event planners', line: 'Vendors, client requests and what’s due before each date.', headline: '', pitch: '' },
+  { slug: 'event-planners', name: 'Wedding and event planners', short: 'Event planners', line: 'Vendors, client requests and what’s due before each date.', headline: 'Everything due before the date, on one page.', pitch: 'Connect Gmail and get a page for each event in five minutes: every vendor, every client request and what is due before the date.' },
 ];
 
 const ORIGIN = 'https://rallywith.ai';
