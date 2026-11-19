@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * What a person reviews of agent memory. Each review route answers
@@ -15,14 +16,14 @@ import { z } from "zod";
  */
 
 /** The conversation a fact was first learned in. A Breakout names its Thread too, so it can be opened there. */
-export const MemoryReviewSourceSchema = z.discriminatedUnion("kind", [
+export const MemoryReviewSourceSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("thread"), workstreamId: z.string().min(1), title: z.string().nullable() }),
   z.strictObject({ kind: z.literal("breakout"), workstreamId: z.string().min(1), substreamId: z.string().min(1), title: z.string().nullable() }),
   z.strictObject({ kind: z.literal("channel"), spaceId: z.string().min(1), title: z.string().nullable() }),
   z.strictObject({ kind: z.literal("sidekick"), automationId: z.string().min(1), title: z.string().nullable() }),
-]);
+]));
 
-export const MemoryReviewFactSchema = z.strictObject({
+export const MemoryReviewFactSchema = deferredZodSchema(() => z.strictObject({
   factId: z.string().min(1),
   subjectKind: z.enum(["person", "organization", "channel", "thread", "breakout"]),
   /** The Channel's, Thread's or Breakout's title for a `channel`, `thread` or `breakout` fact; null otherwise. */
@@ -46,14 +47,14 @@ export const MemoryReviewFactSchema = z.strictObject({
    * administrator.
    */
   removable: z.boolean(),
-});
+}));
 
-export const MemoryReviewSchema = z.strictObject({
+export const MemoryReviewSchema = deferredZodSchema(() => z.strictObject({
   /** The scope's facts the caller may see, newest first, expired included, retracted excluded. */
   facts: z.array(MemoryReviewFactSchema),
-});
+}));
 
-export const MemoryForgetResponseSchema = z.strictObject({ factId: z.string().min(1), retractedAt: z.string() });
+export const MemoryForgetResponseSchema = deferredZodSchema(() => z.strictObject({ factId: z.string().min(1), retractedAt: z.string() }));
 
 export type MemoryReviewSource = z.infer<typeof MemoryReviewSourceSchema>;
 export type MemoryReviewFact = z.infer<typeof MemoryReviewFactSchema>;

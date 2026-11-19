@@ -6,6 +6,7 @@ import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from "./identifiers";
 import { ResourceRelationshipTypeSchema } from "./resource-relationships";
 import { HttpUrlSchema } from "./url-schemas";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * What a conversation tells its parent, and what a parent tells the workspace.
@@ -18,13 +19,13 @@ import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
  */
 
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
 const NullableTimestampSchema = TimestampSchema.nullable();
 const ShortTextSchema = z.string().max(500);
 export const WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT = 10_000;
 
 /** A child's, or a parent's aggregated, common state. */
-export const WorkstreamDirectoryCommonEffectSchema = z.object({
+export const WorkstreamDirectoryCommonEffectSchema = deferredZodSchema(() => z.object({
   kind: z.literal("directory_common"),
   /** Internal classification for a parent's aggregate running-agent count. */
   backgroundAgent: z.boolean().optional(),
@@ -81,9 +82,9 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
   })).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
   createdAt: TimestampSchema.optional(),
   updatedAt: TimestampSchema.optional(),
-});
+}));
 
-export const WorkstreamDirectoryUserEffectSchema = z.object({
+export const WorkstreamDirectoryUserEffectSchema = deferredZodSchema(() => z.object({
   kind: z.literal("directory_user"),
   userId: IdSchema,
   isParticipant: z.boolean(),
@@ -105,13 +106,13 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
    * the parent dates the read by it. Absent from an older object.
    */
   lastReadAt: TimestampSchema.nullable().optional(),
-});
+}));
 
 /**
  * An automation's own sidebar row, published by `AutomationDO` through the
  * same outbox its children's aggregates travel through.
  */
-export const AutomationDirectoryEffectSchema = z.strictObject({
+export const AutomationDirectoryEffectSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("directory_automation"),
   loadable: z.boolean().optional(),
   /**
@@ -161,9 +162,9 @@ export const AutomationDirectoryEffectSchema = z.strictObject({
       message: "only a room-scoped automation has a home Breakout",
     });
   }
-});
+}));
 
-export const WorkstreamActivityEffectSchema = z.strictObject({
+export const WorkstreamActivityEffectSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("activity_event"),
   eventId: IdSchema,
   eventType: z.string().min(1).max(160),
@@ -184,9 +185,9 @@ export const WorkstreamActivityEffectSchema = z.strictObject({
     userId: IdSchema,
     relation: z.string().min(1).max(80),
   })).max(100),
-});
+}));
 
-export const WorkstreamMentionNotificationEffectSchema = z.strictObject({
+export const WorkstreamMentionNotificationEffectSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("mention_notification"),
   substreamId: SubstreamIdSchema.optional(),
   intentId: z.string().min(1).max(300),
@@ -210,14 +211,14 @@ export const WorkstreamMentionNotificationEffectSchema = z.strictObject({
    */
   transcriptSequence: z.number().int().positive().optional(),
   occurredAt: TimestampSchema,
-});
+}));
 
 /**
  * Somebody was added to a work stream and should be told. A sibling of the
  * mention effect rather than a field on it: the two carry different facts, and
  * the payload hash is computed over the effect object.
  */
-export const WorkstreamParticipantNotificationEffectSchema = z.strictObject({
+export const WorkstreamParticipantNotificationEffectSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("participant_notification"),
   substreamId: SubstreamIdSchema.optional(),
   intentId: z.string().min(1).max(300),
@@ -230,7 +231,7 @@ export const WorkstreamParticipantNotificationEffectSchema = z.strictObject({
   /** Whether the title above is a placeholder the naming agent has not replaced. */
   titleIsProvisional: z.boolean().default(false),
   occurredAt: TimestampSchema,
-});
+}));
 
 /**
  * A person's message in a Canvas's Chat or a Sidekick's shared conversation,
@@ -241,7 +242,7 @@ export const WorkstreamParticipantNotificationEffectSchema = z.strictObject({
  * anyone it seated (being added already tells them). The parent batches it
  * (`docs/push-notifications.md`).
  */
-export const WorkstreamNewMessageNotificationEffectSchema = z.strictObject({
+export const WorkstreamNewMessageNotificationEffectSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("new_message_notification"),
   messageId: IdSchema,
   authorUserId: IdSchema,
@@ -251,26 +252,26 @@ export const WorkstreamNewMessageNotificationEffectSchema = z.strictObject({
   transcriptSequence: z.number().int().positive(),
   recipientUserIds: z.array(IdSchema).min(1),
   occurredAt: TimestampSchema,
-});
+}));
 
 /** Effects a conversation (child) may produce. */
-export const ConversationEffectSchema = z.discriminatedUnion("kind", [
+export const ConversationEffectSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
   WorkstreamNewMessageNotificationEffectSchema,
-]);
+]));
 export type ConversationEffect = z.infer<typeof ConversationEffectSchema>;
 
-export const ScopeGrantDirectoryEffectSchema = z.strictObject({
+export const ScopeGrantDirectoryEffectSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("scope_grant_directory"),
   grant: ScopeGrantSchema,
-});
+}));
 
 /** Effects a parent may forward to the workspace: the child kinds plus its own row. */
-export const ParentEffectSchema = z.discriminatedUnion("kind", [
+export const ParentEffectSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   ScopeGrantDirectoryEffectSchema,
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
@@ -279,7 +280,7 @@ export const ParentEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
   WorkstreamNewMessageNotificationEffectSchema,
-]);
+]));
 export type ParentEffect = z.infer<typeof ParentEffectSchema>;
 
 /**
@@ -301,7 +302,7 @@ export function isDirectoryEffect(
   return effect.kind === "directory_common" || effect.kind === "directory_user";
 }
 
-const HashSchema = z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u);
+const HashSchema = deferredZodSchema(() => z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u));
 
 function requireViewerVersionForNotifications(
   envelope: { effect: ParentEffect; requiredProjectionVersion: number | null },
@@ -328,10 +329,10 @@ function requireViewerVersionForNotifications(
  * dead-letter queue. A retired parent's effect is a defect to find, not
  * traffic to drop (docs/hosted-conversation-parents.md).
  */
-export const EffectParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
+export const EffectParentKindSchema = deferredZodSchema(() => z.enum(["workstream", "automation", "space", "canvas"]));
 
 /** One child's versioned effect, addressed to its parent. */
-export const ConversationEffectEnvelopeSchema = z.strictObject({
+export const ConversationEffectEnvelopeSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("conversation_effect"),
   contractVersion: z.literal(1),
   region: RegionSchema,
@@ -346,11 +347,11 @@ export const ConversationEffectEnvelopeSchema = z.strictObject({
   requiredProjectionVersion: z.number().int().positive().nullable(),
   payloadHash: HashSchema,
   effect: ConversationEffectSchema,
-}).superRefine(requireViewerVersionForNotifications);
+}).superRefine(requireViewerVersionForNotifications));
 export type ConversationEffectEnvelope = z.infer<typeof ConversationEffectEnvelopeSchema>;
 
 /** One parent's versioned effect, addressed to the workspace. */
-export const ParentEffectEnvelopeSchema = z.strictObject({
+export const ParentEffectEnvelopeSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("parent_effect"),
   contractVersion: z.literal(1),
   region: RegionSchema,
@@ -381,14 +382,14 @@ export const ParentEffectEnvelopeSchema = z.strictObject({
   requiredProjectionVersion: z.number().int().positive().nullable(),
   payloadHash: HashSchema,
   effect: ParentEffectSchema,
-}).superRefine(requireViewerVersionForNotifications);
+}).superRefine(requireViewerVersionForNotifications));
 export type ParentEffectEnvelope = z.infer<typeof ParentEffectEnvelopeSchema>;
 
 /** Either envelope, as the activity Queue consumer sees it. */
-export const EffectQueueMessageSchema = z.union([
+export const EffectQueueMessageSchema = deferredZodSchema(() => z.union([
   ConversationEffectEnvelopeSchema,
   ParentEffectEnvelopeSchema,
-]);
+]));
 export type EffectQueueMessage = z.infer<typeof EffectQueueMessageSchema>;
 
 /**

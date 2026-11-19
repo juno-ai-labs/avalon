@@ -11,6 +11,7 @@ import {
   WorkstreamTranscriptSnapshotSchema,
   type TranscriptRangeResult,
 } from "./workstream-transcript";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /** A display projection has no tool payloads, call identities, or reasoning. */
 export const ConversationViewTurnSchema = TranscriptTurnSchema.safeExtend({
@@ -18,28 +19,28 @@ export const ConversationViewTurnSchema = TranscriptTurnSchema.safeExtend({
     structuredContent: z.strictObject({ kind: z.literal("agent_message") }).optional(),
   }).strict()),
 });
-export const ConversationViewContentSchema = z.strictObject({
+export const ConversationViewContentSchema = deferredZodSchema(() => z.strictObject({
   turn: ConversationViewTurnSchema,
   activities: z.array(TranscriptActivitySchema.extend({
     scope: z.enum(["assistant_turn", "plugin"]),
   })),
   pluginRuns: z.array(TranscriptPluginRunSchema.omit({ toolCallIds: true }).strict()),
-});
-export const ConversationViewHeaderSchema = z.strictObject({
+}));
+export const ConversationViewHeaderSchema = deferredZodSchema(() => z.strictObject({
   title: z.string(),
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   scope: z.enum(["personal", "workspace"]),
   harnessStatus: HarnessStatusSchema,
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
-});
+}));
 export const ConversationViewRequestSchema = z.strictObject({
   type: z.literal("conversation_view"),
   requestId: IdSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
 });
-export const WorkspaceConversationViewEventSchema = z.strictObject({
+export const WorkspaceConversationViewEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_conversation_view"),
   requestId: IdSchema,
   parentId: IdSchema,
@@ -48,7 +49,7 @@ export const WorkspaceConversationViewEventSchema = z.strictObject({
     header: ConversationViewHeaderSchema,
     transcript: WorkstreamTranscriptSnapshotSchema,
   }).nullable(),
-});
+}));
 export type ConversationViewContent = z.infer<typeof ConversationViewContentSchema>;
 export type ConversationViewHeader = z.infer<typeof ConversationViewHeaderSchema>;
 export type WorkspaceConversationViewEvent = z.infer<typeof WorkspaceConversationViewEventSchema>;

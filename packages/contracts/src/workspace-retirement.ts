@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { IdSchema } from "./identifiers";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * Retiring a workspace, on the wire: what the regional API answers Ace with.
@@ -18,7 +19,7 @@ import { IdSchema } from "./identifiers";
  * parsed on both sides, so widening it is a deliberate decision about what an
  * operator is told, not a transitive one.
  */
-export const RetirementParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
+export const RetirementParentKindSchema = deferredZodSchema(() => z.enum(["workstream", "automation", "space", "canvas"]));
 export type RetirementParentKind = z.infer<typeof RetirementParentKindSchema>;
 
 /** What retiring a workspace answers with. */

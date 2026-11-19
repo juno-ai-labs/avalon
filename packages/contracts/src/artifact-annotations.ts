@@ -1,13 +1,14 @@
 import { MESSAGE_MAX_CHARACTERS } from './message-limits';
 import { z } from 'zod';
 import { classifyAttachmentKind } from './attachment-contracts';
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 const offset = z.number().int().nonnegative();
 const span = { start: offset, end: offset };
 const fraction = z.number().min(0).max(1);
 const boxShape = { x: fraction, y: fraction, w: fraction, h: fraction };
-const box = z.strictObject(boxShape)
-  .refine((v) => v.x + v.w <= 1.000001 && v.y + v.h <= 1.000001, 'annotation_box_outside_image');
+const box = deferredZodSchema(() => z.strictObject(boxShape)
+  .refine((v) => v.x + v.w <= 1.000001 && v.y + v.h <= 1.000001, 'annotation_box_outside_image'));
 /**
  * One absolute path on the site, as the picker reads `location.pathname +
  * location.search`: never protocol-relative, so the skill's recipe, which
@@ -15,7 +16,7 @@ const box = z.strictObject(boxShape)
  * URL parser reads a backslash as a slash and drops tabs and newlines, so
  * those are refused too rather than relied on to stay where they are.
  */
-export const PagePathSchema = z.string().regex(/^\/(?![/\\])[^\\\t\n\r]*$/u);
+export const PagePathSchema = deferredZodSchema(() => z.string().regex(/^\/(?![/\\])[^\\\t\n\r]*$/u));
 /**
  * The window a person saw an element in when they pinned it: enough for the
  * agent to rebuild that view in its own browser when no screenshot travels
@@ -30,7 +31,7 @@ const viewportShape = {
   devicePixelRatio: z.number().finite().positive(),
   colorScheme: z.enum(['light', 'dark']),
 };
-export const AnnotationViewportSchema = z.strictObject(viewportShape);
+export const AnnotationViewportSchema = deferredZodSchema(() => z.strictObject(viewportShape));
 export type AnnotationViewport = z.infer<typeof AnnotationViewportSchema>;
 
 /**
@@ -50,7 +51,7 @@ const region = { type: z.literal('region'), ...boxShape };
 const element = <Box extends z.ZodType, Viewport extends z.ZodType>(boxSchema: Box, viewportSchema: Viewport) =>
   ({ type: z.literal('element'), pagePath: PagePathSchema.optional(), css: z.string().min(1), box: boxSchema, visibleText: z.string(), viewport: viewportSchema.optional() });
 const file = { type: z.literal('file') };
-export const AnnotationLocatorSchema = z.discriminatedUnion('type', [
+export const AnnotationLocatorSchema = deferredZodSchema(() => z.discriminatedUnion('type', [
   z.strictObject(markdown),
   z.strictObject(text),
   z.strictObject(pdfText),
@@ -63,8 +64,8 @@ export const AnnotationLocatorSchema = z.discriminatedUnion('type', [
 ]).superRefine((v, ctx) => {
   if ('start' in v && v.end < v.start) ctx.addIssue({ code: 'custom', path: ['end'], message: 'annotation_range_reversed' });
   if (v.type === 'region' && (v.x + v.w > 1.000001 || v.y + v.h > 1.000001)) ctx.addIssue({ code: 'custom', path: ['w'], message: 'annotation_box_outside_image' });
-});
-const StoredAnnotationLocatorSchema = z.discriminatedUnion('type', [
+}));
+const StoredAnnotationLocatorSchema = deferredZodSchema(() => z.discriminatedUnion('type', [
   z.object(markdown),
   z.object(text),
   z.object(pdfText),
@@ -74,7 +75,7 @@ const StoredAnnotationLocatorSchema = z.discriminatedUnion('type', [
   z.object(region),
   z.object(element(z.object(boxShape), z.object(viewportShape))),
   z.object(file),
-]);
+]));
 
 // LIMIT UNSET: team-owned defensive guards, inert until finite values are chosen.
 // Bounds: selected characters, and serialized annotation characters per send.
@@ -101,18 +102,18 @@ export function buildAnnotation(input: Annotation): Annotation {
   const tail = Math.floor(ANNOTATION_EXACT_MAX_CHARACTERS / 2);
   return { ...value, content: { ...value.content, exact: value.content.exact.slice(0, head) + (tail ? value.content.exact.slice(-tail) : ''), truncated: true } };
 }
-export const AnnotationsSchema = z.array(AnnotationSchema.transform(buildAnnotation)).refine(
+export const AnnotationsSchema = deferredZodSchema(() => z.array(AnnotationSchema.transform(buildAnnotation)).refine(
   (v) => ANNOTATIONS_MAX_CHARACTERS === Number.POSITIVE_INFINITY || JSON.stringify(v).length <= ANNOTATIONS_MAX_CHARACTERS, 'annotations_too_large',
-);
+));
 // Stored turns must not be truncated or rejected when admission budgets or
 // shapes change: a key this build does not know is stripped, not refused.
-const StoredAnnotationSchema = z.object({
+const StoredAnnotationSchema = deferredZodSchema(() => z.object({
   target: z.object({ resourceId: z.string().uuid(), version: z.number().int().positive(), locator: StoredAnnotationLocatorSchema }),
   content: z.object(contentShape),
   comment: z.string(),
-});
-export const AnnotatedMessageContentSchema = z.object({ kind: z.literal('artifact_annotations'), annotations: z.array(StoredAnnotationSchema),
-  names: z.record(z.string(), z.string()).optional() });
+}));
+export const AnnotatedMessageContentSchema = deferredZodSchema(() => z.object({ kind: z.literal('artifact_annotations'), annotations: z.array(StoredAnnotationSchema),
+  names: z.record(z.string(), z.string()).optional() }));
 export function messageAnnotations(content: unknown): Annotation[] {
   const parsed = AnnotatedMessageContentSchema.safeParse(content);
   return parsed.success ? parsed.data.annotations : [];
@@ -143,10 +144,10 @@ export function annotationAllowedForResource(annotation: Annotation, resource: {
 export const ArtifactPickerPinSchema = z.strictObject({ css: z.string().min(1), box, visibleText: z.string(), before: z.string().optional(), after: z.string().optional(), html: z.string(), pagePath: z.string(), replace: z.boolean(), point: z.strictObject({x:z.number().finite().nonnegative(),y:z.number().finite().nonnegative()}).optional(), rect: z.strictObject({x:z.number().finite(),y:z.number().finite(),width:z.number().finite().nonnegative(),height:z.number().finite().nonnegative()}).optional(), viewport: AnnotationViewportSchema.optional(), screenshot: z.string().optional() });
 export type ArtifactPickerPin = z.infer<typeof ArtifactPickerPinSchema>;
 
-export const AnnotationCommentPinsSchema = z.array(z.strictObject({id:z.string(),annotation:AnnotationSchema}));
+export const AnnotationCommentPinsSchema = deferredZodSchema(() => z.array(z.strictObject({id:z.string(),annotation:AnnotationSchema})));
 /** The selection a host wants highlighted: a pin being edited, or a saved spot being viewed. */
-export const AnnotationSelectionSchema = z.strictObject({ css: z.string().min(1), pagePath: z.string().optional(), exact: z.string().optional() });
+export const AnnotationSelectionSchema = deferredZodSchema(() => z.strictObject({ css: z.string().min(1), pagePath: z.string().optional(), exact: z.string().optional() }));
 export type AnnotationSelection = z.infer<typeof AnnotationSelectionSchema>;
 export type AnnotationCommentPins = z.infer<typeof AnnotationCommentPinsSchema>;
-export const AnnotationCommentActionSchema = z.strictObject({id:z.string(),action:z.enum(['edit','remove']),point:z.strictObject({x:z.number().finite(),y:z.number().finite()}).optional()});
+export const AnnotationCommentActionSchema = deferredZodSchema(() => z.strictObject({id:z.string(),action:z.enum(['edit','remove']),point:z.strictObject({x:z.number().finite(),y:z.number().finite()}).optional()}));
 export type AnnotationCommentAction = z.infer<typeof AnnotationCommentActionSchema>;

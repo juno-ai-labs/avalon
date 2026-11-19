@@ -104,6 +104,13 @@ of these are true:
 - its factory is deterministic and independent of request data, bindings,
   credentials, mutable state, and environment-specific values.
 
+`@rally/contracts` meets the third condition package-wide: every Worker and
+client imports it, and none uses more than a fraction of its schemas. Its
+top-level object, union, enum and refined schemas are therefore deferred by
+default. Leave a schema eager when another schema calls an object-only method on
+it (`.extend()`, `.shape`, `.options`, `.pick()`), when it is a small scalar, or
+when it carries a type annotation for recursion.
+
 A retained `wrangler check startup` profile that shows schema construction or
 allocation is the strongest evidence for applying the pattern. An obviously
 cold capability-specific schema family is also enough; do not invent a timing

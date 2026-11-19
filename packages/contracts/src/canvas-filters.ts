@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The Canvases dashboard's filters, on every client: desktop and web filter
@@ -17,12 +18,12 @@ export const CANVAS_FILTERS = [
 export type CanvasFilter = (typeof CANVAS_FILTERS)[number][0];
 
 /** What the filters read about one Canvas, for one viewer. */
-export const CanvasFilterFactsSchema = z.object({
+export const CanvasFilterFactsSchema = deferredZodSchema(() => z.object({
   reactive: z.boolean(),
   dataBacked: z.boolean(),
   mine: z.boolean(),
   sharedWithMe: z.boolean(),
-});
+}));
 export type CanvasFilterFacts = z.infer<typeof CanvasFilterFactsSchema>;
 
 /**

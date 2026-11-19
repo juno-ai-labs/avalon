@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { RegionSchema } from "./regions";
 import { PLAN_IDS, type PlanId } from "./plans";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 export { PLAN_IDS, PLANS, weeklyQuotaMicrousd, type PlanId } from "./plans";
 
@@ -11,7 +12,7 @@ export { PLAN_IDS, PLANS, weeklyQuotaMicrousd, type PlanId } from "./plans";
  * comes from docs/PRDs/2026-10-03_usage-quota-metering/prd.md.
  */
 
-export const PlanIdSchema = z.enum(PLAN_IDS);
+export const PlanIdSchema = deferredZodSchema(() => z.enum(PLAN_IDS));
 
 /** Below this percentage left, the meter turns to the warning color (PRD decision 13). */
 export const LOW_QUOTA_PERCENT = 20;
@@ -44,7 +45,7 @@ export const METERED_ACTIVITIES = [
   "dictation",
   "document_ocr",
 ] as const;
-export const MeteredActivitySchema = z.enum(METERED_ACTIVITIES);
+export const MeteredActivitySchema = deferredZodSchema(() => z.enum(METERED_ACTIVITIES));
 export type MeteredActivity = z.infer<typeof MeteredActivitySchema>;
 
 /**
@@ -79,7 +80,7 @@ export const ORGANIZATION_PAYS = {
 } as const satisfies Record<MeteredActivity, boolean>;
 
 /** One metered call. Carries no prompt, output or tool argument. */
-export const UsageEventSchema = z.object({
+export const UsageEventSchema = deferredZodSchema(() => z.object({
   v: z.literal(1),
   eventId: z.string().min(1),
   workspaceId: z.string().min(1),
@@ -94,11 +95,11 @@ export const UsageEventSchema = z.object({
     substreamId: z.string().optional(),
     sidekickId: z.string().optional(),
   }),
-});
+}));
 export type UsageEvent = z.infer<typeof UsageEventSchema>;
 
 /** What `GET /usage` returns. Allowance and spend dollars never cross the wire. */
-export const OrganizationUsageSchema = z.object({
+export const OrganizationUsageSchema = deferredZodSchema(() => z.object({
   plan: PlanIdSchema,
   quotaRemainingPercent: z.number().int().min(0).max(100),
   weekResetsAt: z.string().datetime(),
@@ -119,15 +120,15 @@ export const OrganizationUsageSchema = z.object({
    * and overages are not admitted. Absent where billing is not configured.
    */
   stopsAtAllowance: z.boolean().optional(),
-});
+}));
 export type OrganizationUsage = z.infer<typeof OrganizationUsageSchema>;
 
 /** Sent on the workspace socket after a plan change; see docs/usage-metering.md. */
-export const WorkspaceUsageEventSchema = z.strictObject({
+export const WorkspaceUsageEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_usage"),
   occurredAt: z.string().datetime(),
   usage: OrganizationUsageSchema,
-});
+}));
 export type WorkspaceUsageEvent = z.infer<typeof WorkspaceUsageEventSchema>;
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -232,6 +233,6 @@ export function deriveOrganizationUsage(input: {
 }
 
 /** Moving an Organization to a plan: an operator from Ace, or an administrator from Settings. */
-export const WorkspacePlanChangeSchema = z.strictObject({ plan: PlanIdSchema });
-export const WorkspacePlanResultSchema = z.strictObject({ workspaceId: z.string().uuid(), plan: PlanIdSchema });
+export const WorkspacePlanChangeSchema = deferredZodSchema(() => z.strictObject({ plan: PlanIdSchema }));
+export const WorkspacePlanResultSchema = deferredZodSchema(() => z.strictObject({ workspaceId: z.string().uuid(), plan: PlanIdSchema }));
 export type WorkspacePlanResult = z.infer<typeof WorkspacePlanResultSchema>;

@@ -14,6 +14,7 @@
     "build:artifacts": "wrangler deploy --dry-run --config wrangler.artifacts.global.jsonc --outfile dist-artifacts/worker.bundle && wrangler check startup --worker dist-artifacts/worker.bundle --outfile dist-artifacts/startup.cpuprofile",
     "build:telemetry": "wrangler deploy --dry-run --config wrangler.telemetry.global.jsonc --outfile dist-telemetry/worker.bundle && wrangler check startup --worker dist-telemetry/worker.bundle --outfile dist-telemetry/startup.cpuprofile",
     "check:telemetry-startup-boundary": "node ../../scripts/check-telemetry-startup-boundary.mjs",
+    "check:object-startup-boundary": "node ../../scripts/check-object-startup-boundary.mjs",
     "build:pricing": "wrangler deploy --dry-run --config wrangler.pricing.global.jsonc --outfile dist-pricing/worker.bundle && wrangler check startup --worker dist-pricing/worker.bundle --outfile dist-pricing/startup.cpuprofile",
     "build:deployed": "wrangler deploy --dry-run --containers-rollout none --config .wrangler.lakehouses.global.json --outfile dist/worker.bundle && wrangler check startup --worker dist/worker.bundle --outfile dist/startup.cpuprofile",
     "typecheck": "tsc --noEmit",

@@ -20,6 +20,7 @@ import { z } from "zod";
 
 import { RALLY_HEADERS } from "./http-headers";
 import { ArtifactIdSchema } from "./identifiers";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The MIME type of a site resource's stored content.
@@ -40,7 +41,7 @@ import { ArtifactIdSchema } from "./identifiers";
 export const SITE_MANIFEST_MIME_TYPE = "application/vnd.rally.site-manifest+json";
 
 /** What a published directory resolved to, decided by its root entry alone. */
-export const ArtifactModeSchema = z.enum(["static", "active"]);
+export const ArtifactModeSchema = deferredZodSchema(() => z.enum(["static", "active"]));
 export type ArtifactMode = z.infer<typeof ArtifactModeSchema>;
 
 /**
@@ -180,13 +181,13 @@ export const ARTIFACT_VIEWER_NAME_HEADER = RALLY_HEADERS.VIEWER_NAME;
  * machinery, and a type that could change between requests for identical bytes
  * is a type a cache cannot be given a long TTL against.
  */
-export const ArtifactManifestEntrySchema = z.strictObject({
+export const ArtifactManifestEntrySchema = deferredZodSchema(() => z.strictObject({
   /** Directory-relative, `/`-separated, no leading slash. */
   path: z.string().min(1).max(1_024),
   contentType: z.string().min(1).max(160),
   sizeBytes: z.number().int().nonnegative(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/u),
-});
+}));
 export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
 
 /** Existing manifest ceiling; publishers reserve one slot for derived assets. */
@@ -204,7 +205,7 @@ export const ARTIFACT_MAX_ASSET_COUNT = 10_000;
 export const DEFAULT_MAX_ATTACHMENT_BYTES = 25_000_000;
 
 /** Normalized metadata Rally can inject into a site's HTML response. */
-export const ArtifactSocialPreviewSchema = z.strictObject({
+export const ArtifactSocialPreviewSchema = deferredZodSchema(() => z.strictObject({
   title: z.string().min(1).max(300),
   description: z.string().min(1).max(500),
   image: z.strictObject({
@@ -217,7 +218,7 @@ export const ArtifactSocialPreviewSchema = z.strictObject({
     /** Rally generated this asset, so source import must leave it behind. */
     generated: z.boolean(),
   }),
-});
+}));
 export type ArtifactSocialPreview = z.infer<typeof ArtifactSocialPreviewSchema>;
 
 /**
@@ -232,7 +233,7 @@ export type ArtifactSocialPreview = z.infer<typeof ArtifactSocialPreviewSchema>;
  * nothing and 404s. No secret can be in it — the sandbox guarantees that — but
  * serving a site's source to its viewers is surface nobody asked for.
  */
-export const ArtifactManifestSchema = z.strictObject({
+export const ArtifactManifestSchema = deferredZodSchema(() => z.strictObject({
   version: z.literal(1),
   artifactId: ArtifactIdSchema,
   artifactVersion: z.number().int().positive(),
@@ -254,7 +255,7 @@ export const ArtifactManifestSchema = z.strictObject({
    * `manifestServerModuleKey`, never by building one.
    */
   assetStore: z.literal("blobs").optional(),
-});
+}));
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
 
 /**
@@ -320,17 +321,17 @@ export function artifactIsolateId(artifactId: string, version: number): string {
  * resource aliases. The regional allocator reserves it before publication;
  * this parser only establishes the wire shape.
  */
-export const ArtifactHostnameStubSchema = z.string()
+export const ArtifactHostnameStubSchema = deferredZodSchema(() => z.string()
   .regex(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u)
-  .brand<"ArtifactHostnameStub">();
+  .brand<"ArtifactHostnameStub">());
 export type ArtifactHostnameStub = z.infer<typeof ArtifactHostnameStubSchema>;
 
-export const ArtifactHostnameRouteSchema = z.strictObject({
+export const ArtifactHostnameRouteSchema = deferredZodSchema(() => z.strictObject({
   version: z.literal(1),
   hostnameStub: ArtifactHostnameStubSchema,
   artifactId: ArtifactIdSchema,
   region: RegionSchema,
-});
+}));
 export type ArtifactHostnameRoute = z.infer<typeof ArtifactHostnameRouteSchema>;
 
 /**

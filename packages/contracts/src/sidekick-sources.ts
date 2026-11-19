@@ -2,6 +2,7 @@ import { z } from "zod";
 import { IdSchema, UserIdSchema } from "./identifiers";
 import { PersonalPresentationSchema } from "./onboarding";
 import { ConnectorConnectionCardIds } from "./connector-connection-card";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * A Sidekick source: one person's permission for events they can see on one
@@ -12,9 +13,9 @@ import { ConnectorConnectionCardIds } from "./connector-connection-card";
  * the mechanism.
  */
 const ConnectorTypeNameSchema = z.string().min(1);
-const EventTypesSchema = z.array(z.string().min(1)).min(1);
+const EventTypesSchema = deferredZodSchema(() => z.array(z.string().min(1)).min(1));
 /** The person's own filter: an event enters only when this sentence holds for it. */
-const SourceConditionSchema = z.string().trim().min(1).nullable();
+const SourceConditionSchema = deferredZodSchema(() => z.string().trim().min(1).nullable());
 
 /**
  * Internal record: one person, one connection, one event type. Each event
@@ -25,7 +26,7 @@ const SourceConditionSchema = z.string().trim().min(1).nullable();
  * Sidekick", where a source a saved rule made stands for that rule alone.
  * Membership incarnation and provenance never reach a tool or a client.
  */
-export const SidekickSourceSchema = z.strictObject({
+export const SidekickSourceSchema = deferredZodSchema(() => z.strictObject({
   sidekickId: IdSchema,
   userId: UserIdSchema,
   connectionId: IdSchema,
@@ -36,20 +37,20 @@ export const SidekickSourceSchema = z.strictObject({
   requestId: IdSchema.nullable(),
   approvedAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
-});
+}));
 export type SidekickSource = z.infer<typeof SidekickSourceSchema>;
 
-export const SidekickSourceRequestStateSchema = z.enum(["pending", "approved", "declined", "cancelled"]);
+export const SidekickSourceRequestStateSchema = deferredZodSchema(() => z.enum(["pending", "approved", "declined", "cancelled"]));
 export type SidekickSourceRequestState = z.infer<typeof SidekickSourceRequestStateSchema>;
 
 /** Where a request's card is shown: the conversation it was asked from. */
-export const SidekickSourceRequestPlaceSchema = z.strictObject({
+export const SidekickSourceRequestPlaceSchema = deferredZodSchema(() => z.strictObject({
   parentKind: z.enum(["canvas", "automation"]),
   parentId: IdSchema,
-});
+}));
 
 /** One ask of one person. Only that person decides it. */
-export const SidekickSourceRequestSchema = z.strictObject({
+export const SidekickSourceRequestSchema = deferredZodSchema(() => z.strictObject({
   requestId: IdSchema,
   sidekickId: IdSchema,
   userId: UserIdSchema,
@@ -62,15 +63,15 @@ export const SidekickSourceRequestSchema = z.strictObject({
   place: SidekickSourceRequestPlaceSchema.nullable(),
   createdAt: z.number().int().nonnegative(),
   decidedAt: z.number().int().nonnegative().nullable(),
-});
+}));
 export type SidekickSourceRequest = z.infer<typeof SidekickSourceRequestSchema>;
 
-const SourcePersonSchema = z.strictObject({
+const SourcePersonSchema = deferredZodSchema(() => z.strictObject({
   userId: UserIdSchema,
   displayName: z.string(),
   avatarUrl: z.string().nullable().optional(),
   presentation: PersonalPresentationSchema.nullable().optional(),
-});
+}));
 
 /**
  * Whether the person asked has an account that carries the asked events: one
@@ -78,11 +79,11 @@ const SourcePersonSchema = z.strictObject({
  * Connecting is part of answering, so a request is made either way and its
  * card offers the connection before Approve.
  */
-export const SidekickSourceConnectionStateSchema = z.enum(["connected", "reconnect_required", "not_connected"]);
+export const SidekickSourceConnectionStateSchema = deferredZodSchema(() => z.enum(["connected", "reconnect_required", "not_connected"]));
 export type SidekickSourceConnectionState = z.infer<typeof SidekickSourceConnectionStateSchema>;
 
 /** What a person reads about one request: who is asked, for what, and where it stands. */
-export const SidekickSourceRequestViewSchema = z.object({
+export const SidekickSourceRequestViewSchema = deferredZodSchema(() => z.object({
   requestId: IdSchema,
   sidekickId: IdSchema,
   sidekickName: z.string(),
@@ -112,11 +113,11 @@ export const SidekickSourceRequestViewSchema = z.object({
   }).optional(),
   createdAt: z.number().int().nonnegative(),
   decidedAt: z.number().int().nonnegative().nullable(),
-});
+}));
 export type SidekickSourceRequestView = z.infer<typeof SidekickSourceRequestViewSchema>;
 
 /** `GET /automations/:id/sources`: who lets events in, and who has been asked. */
-export const SidekickSourcesResultSchema = z.object({
+export const SidekickSourcesResultSchema = deferredZodSchema(() => z.object({
   sidekickId: IdSchema,
   sources: z.array(z.object({
     person: SourcePersonSchema,
@@ -131,11 +132,11 @@ export const SidekickSourcesResultSchema = z.object({
     yours: z.boolean(),
   })),
   requests: z.array(SidekickSourceRequestViewSchema),
-});
+}));
 export type SidekickSourcesResult = z.infer<typeof SidekickSourcesResultSchema>;
 
 /** `POST /automations/:id/source-requests`: a manager asks people for a source. */
-export const SidekickSourceRequestInputSchema = z.strictObject({
+export const SidekickSourceRequestInputSchema = deferredZodSchema(() => z.strictObject({
   userIds: z.array(UserIdSchema).min(1),
   connectorType: ConnectorTypeNameSchema,
   eventTypes: EventTypesSchema,
@@ -147,28 +148,28 @@ export const SidekickSourceRequestInputSchema = z.strictObject({
    * so a retried call never asks a person again who has since answered.
    */
   operationId: IdSchema.optional(),
-});
+}));
 export type SidekickSourceRequestInput = z.infer<typeof SidekickSourceRequestInputSchema>;
 
-export const SidekickSourceRequestResultSchema = z.object({
+export const SidekickSourceRequestResultSchema = deferredZodSchema(() => z.object({
   sidekickId: IdSchema,
   requests: z.array(SidekickSourceRequestViewSchema),
-});
+}));
 export type SidekickSourceRequestResult = z.infer<typeof SidekickSourceRequestResultSchema>;
 
 /** `POST /automations/:id/source-requests/:requestId/decision`. */
-export const SidekickSourceDecisionInputSchema = z.strictObject({ decision: z.enum(["approve", "decline"]) });
+export const SidekickSourceDecisionInputSchema = deferredZodSchema(() => z.strictObject({ decision: z.enum(["approve", "decline"]) }));
 export type SidekickSourceDecisionInput = z.infer<typeof SidekickSourceDecisionInputSchema>;
 
 /** `POST /automations/source-requests/read`: requests by id, each only if the reader may see it. */
-export const SidekickSourceRequestsReadInputSchema = z.strictObject({ requestIds: z.array(IdSchema).min(1) });
-export const SidekickSourceRequestsReadResultSchema = z.object({ requests: z.array(SidekickSourceRequestViewSchema) });
+export const SidekickSourceRequestsReadInputSchema = deferredZodSchema(() => z.strictObject({ requestIds: z.array(IdSchema).min(1) }));
+export const SidekickSourceRequestsReadResultSchema = deferredZodSchema(() => z.object({ requests: z.array(SidekickSourceRequestViewSchema) }));
 export type SidekickSourceRequestsReadResult = z.infer<typeof SidekickSourceRequestsReadResultSchema>;
 
-export const SidekickSourceWithdrawResultSchema = z.object({ withdrawn: z.boolean() });
+export const SidekickSourceWithdrawResultSchema = deferredZodSchema(() => z.object({ withdrawn: z.boolean() }));
 
 /** `POST /automations/:id/sources/withdraw`: a person takes their own source back. */
-export const SidekickSourceWithdrawInputSchema = z.strictObject({ connectionId: IdSchema });
+export const SidekickSourceWithdrawInputSchema = deferredZodSchema(() => z.strictObject({ connectionId: IdSchema }));
 
 export const SIDEKICK_SOURCE_ERRORS = {
   sidekick_source_request_not_found: "This request does not exist.",

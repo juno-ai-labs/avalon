@@ -216,6 +216,12 @@ A missing binding or failed health check stops the release through the existing 
 
 ## Testing
 
+- `pnpm --filter @rally/api check:object-startup-boundary` bundles
+  `src/worker-events.ts` (the HTTP app, queue consumers and crons) with
+  Wrangler and fails if `agent-loop-do.ts` or `workspace-do.ts` is in the graph.
+  CI runs it beside the telemetry check. It changes nothing for today's single
+  Worker; it keeps a front-door split possible.
+
 - `pnpm --filter @rally/api check:telemetry-startup-boundary` reads Wrangler's
   emitted bundles and requires the PostHog SDK, core, and adapter modules to be
   absent from configured regional APIs. The provider build and production-entrypoint
@@ -338,6 +344,39 @@ for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
 ## Changelog
+
+### 2026-11-19 — Defer `@rally/contracts` schemas; keep both Durable Objects out of the HTTP and queue graphs
+
+**What changed:** 573 top-level schemas in `packages/contracts/src` now build
+through `deferredZodSchema()`. About 100 stay eager: any schema a caller uses
+`.extend`, `.shape`, `.options` or `.pick` on (typecheck finds them, since a
+deferred schema is a `ZodLazy`), small scalars, and annotated recursive schemas.
+Two imports that pulled AgentLoopDO and WorkspaceDO into the HTTP/queue/cron
+graph are gone: `conversationObjectName` now comes from `durable-objects/names`,
+and `WORKSPACE_DO_SCHEMA_MIGRATIONS` moved to `workspace-do-schema-migrations.ts`
+(`workspace-do.ts` re-exports it). `check:object-startup-boundary` keeps both
+objects out of that graph in CI.
+
+**Why:** Global uploads kept failing with the startup-budget form of 10021, and
+the 2026-11-18 entry found no single module left to fix. `@rally/contracts`
+alone cost 84–111 ms of local active startup, about a third of the Worker. Six
+alternating local profiles of the full Global bundle put median active startup
+at about 236 ms before and 191 ms after. These are local proportions, not
+Cloudflare's numbers.
+
+**Considered and rejected:** Splitting the Worker first: trial bundles of each
+candidate piece kept 70–90% of the cost, because contracts, connectors and the
+harness reach all of them. Deferring family by family: the cost is spread over
+hundreds of schemas, so only a sweep moves it. Turning off `keep_names` (about
+12 ms of `__name` calls): function names may be relied on at runtime.
+
+**Consequences:** A deferred schema builds on first parse or JSON Schema
+conversion, once per isolate. New contracts schemas are eager until someone
+wraps them; nothing enforces it. To derive from a deferred schema, unwrap it
+inside the deriving schema's own deferred factory; don't cast. A few tool
+schemas emit `description` before `type` in their JSON Schema now, so their
+definitions change byte order once. `@rally/connectors` and
+`@rally/agent-harness` (about 100–130 ms each alone) have not had the sweep.
 
 ### 2026-11-18 — Take the Google tool catalog and a sentinel Error out of startup
 

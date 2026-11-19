@@ -5,11 +5,12 @@ import {
   IdSchema,
   ModelPluginIdSchema,
 } from "./identifiers";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 const NonEmptyStringSchema = z.string().min(1);
-const NonEmptyStringArraySchema = z.array(NonEmptyStringSchema).min(1);
+const NonEmptyStringArraySchema = deferredZodSchema(() => z.array(NonEmptyStringSchema).min(1));
 const FiniteNumberSchema = z.number().finite();
-const FiniteNumberArraySchema = z.array(FiniteNumberSchema).min(1);
+const FiniteNumberArraySchema = deferredZodSchema(() => z.array(FiniteNumberSchema).min(1));
 const PersonIdSchema = IdSchema.brand<"PersonId">();
 
 /**
@@ -24,7 +25,7 @@ const PersonIdSchema = IdSchema.brand<"PersonId">();
  * then had its registration projection rejected at this field on a hop where
  * the rejection was unreadable. It never fired, and nothing said why.
  */
-export const ConnectorTypeSchema = z.enum([
+export const ConnectorTypeSchema = deferredZodSchema(() => z.enum([
   "google",
   "generic_webhook",
   "github",
@@ -35,36 +36,36 @@ export const ConnectorTypeSchema = z.enum([
   "notion",
   "slack",
   "x",
-]);
+]));
 
-export const ExternalEventStringOperatorSchema = z.enum([
+export const ExternalEventStringOperatorSchema = deferredZodSchema(() => z.enum([
   "equals",
   "not_equals",
   "contains",
   "starts_with",
   "ends_with",
-]);
-export const ExternalEventStringSetOperatorSchema = z.enum(["in", "not_in"]);
-export const ExternalEventNumberOperatorSchema = z.enum([
+]));
+export const ExternalEventStringSetOperatorSchema = deferredZodSchema(() => z.enum(["in", "not_in"]));
+export const ExternalEventNumberOperatorSchema = deferredZodSchema(() => z.enum([
   "equals",
   "not_equals",
   "greater_than",
   "less_than",
   "greater_than_or_equals",
   "less_than_or_equals",
-]);
-export const ExternalEventArraySetOperatorSchema = z.enum(["has_any", "has_all", "has_none"]);
-export const ExternalEventPresenceOperatorSchema = z.enum(["exists", "not_exists"]);
-export const ExternalEventOperatorSchema = z.union([
+]));
+export const ExternalEventArraySetOperatorSchema = deferredZodSchema(() => z.enum(["has_any", "has_all", "has_none"]));
+export const ExternalEventPresenceOperatorSchema = deferredZodSchema(() => z.enum(["exists", "not_exists"]));
+export const ExternalEventOperatorSchema = deferredZodSchema(() => z.union([
   ExternalEventStringOperatorSchema,
   ExternalEventStringSetOperatorSchema,
   ExternalEventNumberOperatorSchema,
   z.enum(["has"]),
   ExternalEventArraySetOperatorSchema,
   ExternalEventPresenceOperatorSchema,
-]);
+]));
 
-const StringLeafSchema = z.union([
+const StringLeafSchema = deferredZodSchema(() => z.union([
   z.strictObject({
     kind: z.literal("string"),
     attribute: NonEmptyStringSchema,
@@ -77,9 +78,9 @@ const StringLeafSchema = z.union([
     operator: ExternalEventStringSetOperatorSchema,
     value: NonEmptyStringArraySchema,
   }),
-]);
+]));
 
-const NumberLeafSchema = z.union([
+const NumberLeafSchema = deferredZodSchema(() => z.union([
   z.strictObject({
     kind: z.literal("number"),
     attribute: NonEmptyStringSchema,
@@ -92,9 +93,9 @@ const NumberLeafSchema = z.union([
     operator: ExternalEventStringSetOperatorSchema,
     value: FiniteNumberArraySchema,
   }),
-]);
+]));
 
-export const ExternalEventPredicateLeafV1Schema = z.union([
+export const ExternalEventPredicateLeafV1Schema = deferredZodSchema(() => z.union([
   StringLeafSchema,
   NumberLeafSchema,
   z.strictObject({
@@ -138,7 +139,7 @@ export const ExternalEventPredicateLeafV1Schema = z.union([
     attribute: NonEmptyStringSchema,
     operator: ExternalEventPresenceOperatorSchema,
   }),
-]);
+]));
 
 /**
  * One rule is one AND group. There is no OR inside a rule: a draft that needs
@@ -161,13 +162,13 @@ export const ExternalEventPredicateLeafV1Schema = z.union([
  * The rename that this spelling reads as ambiguous is therefore confined to the
  * model's side of the boundary; see `ModelFacingExternalEventPredicateV1Schema`.
  */
-export const ExternalEventPredicateV1Schema = z.union([
+export const ExternalEventPredicateV1Schema = deferredZodSchema(() => z.union([
   z.strictObject({ kind: z.literal("always") }),
   z.strictObject({
     kind: z.literal("all"),
     allOf: z.array(ExternalEventPredicateLeafV1Schema).min(1),
   }),
-]);
+]));
 
 /**
  * What the drafting model writes, and the one place `matching` exists.
@@ -190,7 +191,7 @@ export const ExternalEventPredicateV1Schema = z.union([
  * transform becomes an identity and should be deleted rather than left to
  * suggest the two ever disagreed.
  */
-export const ModelFacingExternalEventPredicateV1Schema = z.union([
+export const ModelFacingExternalEventPredicateV1Schema = deferredZodSchema(() => z.union([
   z.strictObject({ kind: z.literal("always") }),
   z.strictObject({
     kind: z.literal("matching"),
@@ -200,9 +201,9 @@ export const ModelFacingExternalEventPredicateV1Schema = z.union([
   predicate.kind === "matching"
     ? { kind: "all", allOf: predicate.allOf }
     : predicate
-));
+)));
 
-export const ExternalEventEvaluatorV1Schema = z.strictObject({
+export const ExternalEventEvaluatorV1Schema = deferredZodSchema(() => z.strictObject({
   evaluatorId: IdSchema.brand<"ExternalEventEvaluatorId">(),
   /** Host-only expansion of a configured rule through another delegated connection. */
   sourceEvaluatorId: IdSchema.optional(),
@@ -213,9 +214,9 @@ export const ExternalEventEvaluatorV1Schema = z.strictObject({
     resourceId: IdSchema.brand<"ResourceId">().optional(),
   }),
   when: ExternalEventPredicateV1Schema,
-});
+}));
 
-export const AutomationExternalEvaluatorSetV1Schema = z.strictObject({
+export const AutomationExternalEvaluatorSetV1Schema = deferredZodSchema(() => z.strictObject({
   schemaVersion: z.literal(1),
   automationId: IdSchema,
   definitionRevision: z.number().int().positive(),
@@ -247,9 +248,9 @@ export const AutomationExternalEvaluatorSetV1Schema = z.strictObject({
     }
     sources.add(source);
   });
-});
+}));
 
-export const DraftEvaluatorKeySchema = z.string().regex(/^[a-z][a-z0-9_-]*$/u).brand<"DraftEvaluatorKey">();
+export const DraftEvaluatorKeySchema = deferredZodSchema(() => z.string().regex(/^[a-z][a-z0-9_-]*$/u).brand<"DraftEvaluatorKey">());
 export const DraftExternalEventEvaluatorV1Schema = z.strictObject({
   evaluatorKey: DraftEvaluatorKeySchema,
   source: z.strictObject({
@@ -287,12 +288,12 @@ function assertUniqueEvaluatorKeys(
   });
 }
 
-export const AutomationSetEvaluatorRulesInputV1Schema = z.strictObject({
+export const AutomationSetEvaluatorRulesInputV1Schema = deferredZodSchema(() => z.strictObject({
   schemaVersion: z.literal(1)
     .describe("Always 1. It fixes how the rules below are read, so a rule set written for a later shape is refused rather than half-understood."),
   evaluators: z.array(DraftExternalEventEvaluatorV1Schema)
     .describe("The complete set of rules deciding which external events wake this Sidekick. It replaces every rule the draft currently has rather than adding to it, so send the whole set each time and send [] to clear it. Each rule needs an `evaluatorKey` unique within the set."),
-}).superRefine(assertUniqueEvaluatorKeys);
+}).superRefine(assertUniqueEvaluatorKeys));
 
 /**
  * The same rule set as `AutomationSetEvaluatorRulesInputV1Schema`, in the
@@ -313,16 +314,16 @@ export const AutomationSetEvaluatorRulesInputV1Schema = z.strictObject({
  * caught it. The boundary is one tool call wide, so the schema that spans it
  * should be too.
  */
-export const AutomationSetEvaluatorRulesModelInputV1Schema = z.strictObject({
+export const AutomationSetEvaluatorRulesModelInputV1Schema = deferredZodSchema(() => z.strictObject({
   schemaVersion: z.literal(1)
     .describe("Always 1. It fixes how the rules below are read, so a rule set written for a later shape is refused rather than half-understood."),
   evaluators: z.array(DraftExternalEventEvaluatorV1Schema.extend({
     when: ModelFacingExternalEventPredicateV1Schema,
   }))
     .describe("The complete set of rules deciding which external events wake this Sidekick. It replaces every rule the draft currently has rather than adding to it, so send the whole set each time and send [] to clear it. Each rule needs an `evaluatorKey` unique within the set."),
-}).superRefine(assertUniqueEvaluatorKeys);
+}).superRefine(assertUniqueEvaluatorKeys));
 
-export const ExternalEventDestinationSchema = z.discriminatedUnion("kind", [
+export const ExternalEventDestinationSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("automation"), automationId: IdSchema }),
   z.strictObject({
     kind: z.literal("workstream_resource_update"),
@@ -330,21 +331,21 @@ export const ExternalEventDestinationSchema = z.discriminatedUnion("kind", [
     substreamId: z.union([z.literal("0"), IdSchema]),
     resourceId: IdSchema,
   }),
-]);
+]));
 export type ExternalEventDestination = z.infer<typeof ExternalEventDestinationSchema>;
 
 /**
  * Complete replacement of one destination's evaluators. A repeat with the same
  * set is equivalent; there is no coordinate to compare and no hash to conflict.
  */
-export const ExternalEventRegistrationProjectionV1Schema = z.strictObject({
+export const ExternalEventRegistrationProjectionV1Schema = deferredZodSchema(() => z.strictObject({
   schemaVersion: z.literal(1),
   workspaceId: IdSchema.brand<"WorkspaceId">(),
   // A Sidekick is the only writer; a `workstream_resource_update` destination
   // survives only on rows a Thread registered, which the matcher still reads.
   destination: z.strictObject({ kind: z.literal("automation"), automationId: IdSchema }),
   evaluators: z.array(ExternalEventEvaluatorV1Schema),
-});
+}));
 
 /**
  * One matched event for one destination, carried whole.
@@ -353,7 +354,7 @@ export const ExternalEventRegistrationProjectionV1Schema = z.strictObject({
  * on the event id; a watched work stream keys its receipt on the event and
  * registration ids), so a redelivery is a no-op and the message needs no lease.
  */
-export const WorkspaceExternalEventSchema = z.strictObject({
+export const WorkspaceExternalEventSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   eventSequence: z.number().int().positive(),
   eventType: NonEmptyStringSchema,
@@ -376,7 +377,7 @@ export const WorkspaceExternalEventSchema = z.strictObject({
   sourceConnectionId: IdSchema.optional(),
   sourceConnectionScope: z.enum(["personal", "workspace"]).optional(),
   sourceConnectionOwnerUserId: IdSchema.nullable().optional(),
-});
+}));
 export type WorkspaceExternalEvent = z.infer<typeof WorkspaceExternalEventSchema>;
 
 /**
@@ -396,7 +397,7 @@ export function externalEventOccurrenceKey(event: Pick<WorkspaceExternalEvent, "
   return event.occurrenceKey ? `occurrence:${event.occurrenceKey}` : `external:${event.id}`;
 }
 
-export const WorkspaceExternalEventDeliveryQueueMessageSchema = z.strictObject({
+export const WorkspaceExternalEventDeliveryQueueMessageSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_external_event_delivery_v1"),
   schemaVersion: z.literal(1),
   region: RegionSchema,
@@ -405,22 +406,22 @@ export const WorkspaceExternalEventDeliveryQueueMessageSchema = z.strictObject({
   destination: ExternalEventDestinationSchema,
   event: WorkspaceExternalEventSchema,
   payloadHash: NonEmptyStringSchema,
-});
+}));
 
-export const WorkspaceExternalEventMatchResultSchema = z.strictObject({
+export const WorkspaceExternalEventMatchResultSchema = deferredZodSchema(() => z.strictObject({
   /** Whether any registration matched, whatever was already delivered. */
   matched: z.boolean(),
   deliveries: z.array(WorkspaceExternalEventDeliveryQueueMessageSchema),
-});
+}));
 
-export const ConnectorActivityFilterValueTypeV2Schema = z.enum([
+export const ConnectorActivityFilterValueTypeV2Schema = deferredZodSchema(() => z.enum([
   "string",
   "number",
   "boolean",
   "string_array",
   "person_id",
   "person_id_array",
-]);
+]));
 
 /**
  * How an activity's event relates to the resource it names.
@@ -430,7 +431,7 @@ export const ConnectorActivityFilterValueTypeV2Schema = z.enum([
  * each the thing somebody attached and turned watching on for, and neither is a
  * `folder` or a `parent`.
  */
-export const ConnectorResourceRelationshipSchema = z.enum([
+export const ConnectorResourceRelationshipSchema = deferredZodSchema(() => z.enum([
   "channel",
   "file",
   "folder",
@@ -440,9 +441,9 @@ export const ConnectorResourceRelationshipSchema = z.enum([
   "page",
   "thread",
   "application",
-]);
+]));
 
-export const ConnectorActivityTriggerDescriptorV2Schema = z.strictObject({
+export const ConnectorActivityTriggerDescriptorV2Schema = deferredZodSchema(() => z.strictObject({
   eventType: NonEmptyStringSchema,
   label: NonEmptyStringSchema,
   description: NonEmptyStringSchema,
@@ -467,7 +468,7 @@ export const ConnectorActivityTriggerDescriptorV2Schema = z.strictObject({
    * flattened metadata is what the leaf is read against.
    */
   openFilterFields: z.boolean().optional(),
-});
+}));
 
 export type ExternalEventPredicateLeafV1 = z.infer<typeof ExternalEventPredicateLeafV1Schema>;
 export type ExternalEventPredicateV1 = z.infer<typeof ExternalEventPredicateV1Schema>;

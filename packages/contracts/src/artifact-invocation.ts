@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import { ArtifactIdSchema, IdSchema, WorkspaceIdSchema } from "./identifiers";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /** A server-side name, used as env.SIDEKICKS.shoppingOrganizer. */
-export const ArtifactSidekickBindingNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
+export const ArtifactSidekickBindingNameSchema = deferredZodSchema(() => z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u));
 
 export const ArtifactSidekickInputSchema = z.strictObject({
   operationId: z.string().min(1),
@@ -25,7 +26,7 @@ export const ArtifactSidekickInvocationSchema = ArtifactSidekickAddressSchema.ex
 });
 export type ArtifactSidekickInvocation = z.infer<typeof ArtifactSidekickInvocationSchema>;
 
-export const ArtifactSidekickAdmissionSchema = z.strictObject({ runId: IdSchema, reused: z.boolean() });
+export const ArtifactSidekickAdmissionSchema = deferredZodSchema(() => z.strictObject({ runId: IdSchema, reused: z.boolean() }));
 export type ArtifactSidekickAdmission = z.infer<typeof ArtifactSidekickAdmissionSchema>;
 
 /** The serving Worker's narrow service binding into the regional API. */

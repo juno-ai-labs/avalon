@@ -1,26 +1,27 @@
 import { HttpUrlSchema } from './url-schemas';
 import { z } from 'zod';
 import { PlanIdSchema } from './usage';
-export const BillingStatusSchema = z.discriminatedUnion('enabled', [
+import { deferredZodSchema } from "./deferred-zod-schema";
+export const BillingStatusSchema = deferredZodSchema(() => z.discriminatedUnion('enabled', [
   z.object({ enabled: z.literal(false) }),
   z.object({ enabled: z.literal(true), status: z.string(), subscribed: z.boolean(), trialEndsAt: z.string(), overageEnabled: z.boolean(), creditsAvailable: z.boolean().optional(),
     currency: z.string().nullable().optional(), offerId: z.string().nullable().optional(),
     paymentMethodReady: z.boolean().optional(), overageAvailable: z.boolean().optional(),
     offers: z.array(z.object({ id: z.string(), name: z.string(), plan: PlanIdSchema, currencies: z.array(z.string()), overageAvailable: z.boolean() })),
   }),
-]);
+]));
 export type BillingStatus = z.infer<typeof BillingStatusSchema>;
-export const BillingUrlSchema = z.object({ url: HttpUrlSchema });
-export const BillingOveragePreferenceSchema = z.strictObject({ enabled: z.boolean() });
+export const BillingUrlSchema = deferredZodSchema(() => z.object({ url: HttpUrlSchema }));
+export const BillingOveragePreferenceSchema = deferredZodSchema(() => z.strictObject({ enabled: z.boolean() }));
 
-export const OverageCreditSchema = z.object({
+export const OverageCreditSchema = deferredZodSchema(() => z.object({
   id: z.string(), amountCents: z.number().int(), availableCents: z.number().int(),
   effectiveAt: z.string(), expiresAt: z.string().nullable(), voided: z.boolean(),
-});
-export const BillingCreditsSchema = z.object({
+}));
+export const BillingCreditsSchema = deferredZodSchema(() => z.object({
   enabled: z.boolean(), currency: z.literal('usd'), availableCents: z.number().int(),
   grants: z.array(OverageCreditSchema),
-});
+}));
 export type BillingCredits = z.infer<typeof BillingCreditsSchema>;
 export type OverageCredit = z.infer<typeof OverageCreditSchema>;
 export const GrantOverageCreditSchema = z.strictObject({
@@ -37,8 +38,8 @@ export const GrantTrialMonthsSchema = z.strictObject({
   reason: z.string().trim().min(1).max(500), // Stripe metadata value limit.
 });
 export type GrantTrialMonths = z.infer<typeof GrantTrialMonthsSchema>;
-export const TrialMonthsGrantSchema = z.object({
+export const TrialMonthsGrantSchema = deferredZodSchema(() => z.object({
   subscriptionId: z.string(), months: z.number().int().positive(),
   previousFeeCoveredUntil: z.string(), trialEndsAt: z.string(),
-});
+}));
 export type TrialMonthsGrant = z.infer<typeof TrialMonthsGrantSchema>;

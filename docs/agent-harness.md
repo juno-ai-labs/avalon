@@ -1125,7 +1125,7 @@ accepts the registry setting when present; an explicit task/run effort,
 including structured inference's `none`, overrides it. Model flags may carry
 `reasoningEffort` (`low`, `medium`, or `high`) for the entire route, taking
 precedence over the registry but below explicit task settings. `x-ai/grok-4.6`,
-`google/gemini-3.7-flash`, `google/gemini-3.8-flash` and `openai/gpt-6.1-sol`
+`google/gemini-3.7-flash` and `google/gemini-3.8-flash`
 currently default to `low` everywhere: routed conversation turns and direct
 structured or streaming OpenRouter calls all resolve the setting
 (`reasoningEffortFor`) after the actual primary or fallback model is selected.

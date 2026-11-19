@@ -8,6 +8,7 @@ import {
   type ConnectorProductId,
   type ConnectorScope,
 } from "./connector-catalog";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The products a card in a conversation can connect: those with a card scope
@@ -93,11 +94,11 @@ export type ConnectorConnectionCardInput = z.infer<typeof ConnectorConnectionCar
 
 // Read old transcript cards without advertising the retired id to the model.
 const LEGACY_GOOGLE_DRIVE_CARD_ID = "google-drive-workspace";
-const StoredConnectorConnectionCardInputSchema = z.union([
+const StoredConnectorConnectionCardInputSchema = deferredZodSchema(() => z.union([
   ConnectorConnectionCardInputSchema,
   ConnectorConnectionCardShape.extend({ connectorId: z.literal(LEGACY_GOOGLE_DRIVE_CARD_ID) })
     .transform((input): ConnectorConnectionCardInput => ({ connectorId: "google-drive", scope: input.scope })),
-]);
+]));
 
 /**
  * What the state check accepts: a connector, and nothing else.
@@ -108,17 +109,17 @@ const StoredConnectorConnectionCardInputSchema = z.union([
  * `not_connected`, and asked them to connect what they had. A scope it is sent
  * now fails as an unrecognized key, rather than being silently dropped.
  */
-export const ConnectorConnectionStateInputSchema = z.strictObject({
+export const ConnectorConnectionStateInputSchema = deferredZodSchema(() => z.strictObject({
   // Every product, not only those with a card: `list_connectors` returns all
   // of them, and a model checking one it listed must not be refused.
   connectorId: z.enum(ConnectorProductIds).describe(
     "Connector to check: any connectorId list_connectors returns. google-drive is Google Drive, Docs and Sheets. Every scope it offers is checked.",
   ),
-});
+}));
 export type ConnectorConnectionStateInput = z.infer<typeof ConnectorConnectionStateInputSchema>;
 
 /** `list_connectors` takes nothing: the whole catalog is a dozen rows. */
-export const ConnectorListInputSchema = z.strictObject({});
+export const ConnectorListInputSchema = deferredZodSchema(() => z.strictObject({}));
 
 /**
  * The canonical definition names, which are also the model-facing wire names:
