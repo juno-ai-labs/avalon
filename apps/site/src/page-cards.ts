@@ -33,7 +33,7 @@ export const pageCards: readonly PageCard[] = [
     path: '/',
     eyebrow: 'Start free · No credit card needed',
     title: 'Connect Gmail. Get a dashboard of your leads in five minutes.',
-    description: 'Rally turns your inbox into one page you can check at a glance: a dashboard, a board or a table. It stays up to date as new mail arrives.',
+    description: 'Rally turns your inbox into one page you can check at a glance: a dashboard, a board or a table. It updates itself as new mail arrives.',
     scene: 'canvas',
   },
   // Each audience page's card is its row in `audiences.ts`; a page not yet written has no headline.
