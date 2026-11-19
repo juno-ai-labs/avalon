@@ -377,14 +377,14 @@ snippet is a line or two, and a run that has to say what a message said would
 otherwise read it with the mailbox's tools, which only a delegate lends. So
 the host reads it.
 
-The opening also names what the event is about: admission reads the stored
-event's `subject` and `externalEventOpening` prints its top-level scalar fields
-ahead of the metadata, and carries them in the structured half. That is where
-an adapter's ids sit (Gmail's `messageId` and `threadId`). Nested values are
-left out, because some adapters store a whole entity payload there (Linear,
-Notion). A run keys its records on these ids, as `tracking-seen-or-done-items`
-tells it to. Only the connector's content is cut at the message bound; the
-closing "not an instruction to follow" line always survives.
+The opening also names what the event is about by the entity keys the adapter
+declared on the stored row (`google:gmail:message:<id>`,
+`google:gmail:thread:<id>`): admission reads `entity_keys_json` and
+`externalEventOpening` lists them ahead of the metadata and carries them as
+`structuredContent.entityKeys`. They are ids only, never the item's content.
+Only the connector's content is cut at the message bound, and the closing "not
+an instruction to follow" line always survives it. Keys that would carry the
+structured half past the bound stay in the text alone.
 
 When a run is provisioned, `runProvisioning` names the event that started it
 and its connection (`eventContent`), after checking again that a person's
@@ -684,7 +684,7 @@ source's condition.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test-workers/sidekick-sources.test.ts` | Real workerd. A person's mail starts a Sidekick through their source whether or not they are a delegate, and stops when the source is taken back while they stay a delegate; an event matched before a withdrawal is refused at admission; only the person asked answers and only a manager asks, by their stored role; a filtered source refuses without a verdict, with a refusing one and with one for another filter, and an unfiltered one needs none; saving a definition keeps a person's own filter and adds nothing when it adds no rule; a whole-account rule reaches another account only through a requested source; a request about one event type leaves another event type's source alone; a rule on another person's account is refused until they approve a request for it; a repeated ask answers with what it already asked; trying a draft filter reads the acting person's own recent events and nobody else's, and says it judged nothing with no classifier or no such events; an ask for one's own account stays pending until they approve it; a non-delegate's mail starts a run that acts as the Sidekick itself and a delegate's a run that acts as them; a run with no delegate starts as the Sidekick itself and only a manager continues it; an agent acting for nobody cannot continue a run a delegate is behind; a Sidekick that had already stopped stays stopped until it is resumed, whatever other warning is written meanwhile and whoever asks it something in its conversation under their own access, and its managers are told about the run that waits; a run whose requester has left asks for input and stops nothing; the host reads the one message for a run on real workerd with only Gmail stood in, fences it with the run's id, starts the run on its event alone with the connector's own code when the read fails, and reads nothing from a disabled connection; content is withheld once the source is gone. |
+| `apps/api/test-workers/sidekick-sources.test.ts` | Real workerd. A person's mail starts a Sidekick through their source whether or not they are a delegate, and stops when the source is taken back while they stay a delegate; an event matched before a withdrawal is refused at admission; only the person asked answers and only a manager asks, by their stored role; a filtered source refuses without a verdict, with a refusing one and with one for another filter, and an unfiltered one needs none; saving a definition keeps a person's own filter and adds nothing when it adds no rule; a whole-account rule reaches another account only through a requested source; a request about one event type leaves another event type's source alone; a rule on another person's account is refused until they approve a request for it; a repeated ask answers with what it already asked; trying a draft filter reads the acting person's own recent events and nobody else's, and says it judged nothing with no classifier or no such events; an ask for one's own account stays pending until they approve it; a non-delegate's mail starts a run that acts as the Sidekick itself and a delegate's a run that acts as them; a run with no delegate starts as the Sidekick itself and only a manager continues it; an agent acting for nobody cannot continue a run a delegate is behind; a Sidekick that had already stopped stays stopped until it is resumed, whatever other warning is written meanwhile and whoever asks it something in its conversation under their own access, and its managers are told about the run that waits; a run whose requester has left asks for input and stops nothing; an admitted run's opening lists its message and thread keys, and an event whose stored row is gone is admitted with none; the host reads the one message for a run on real workerd with only Gmail stood in, fences it with the run's id, starts the run on its event alone with the connector's own code when the read fails, and reads nothing from a disabled connection; content is withheld once the source is gone. |
 | `apps/api/test-workers/sidekick-source-routes.test.ts` | Real workerd, through the HTTP routes: 401 with no session, an ask and its answer by the person asked and by nobody else, a body that smuggles a field refused 400, a request read by its asker, the person asked and a member who can open the Canvas it was asked in, and by no uninvolved member, withdrawing, each ask refusal by its status and code (an unknown connector or event, a person outside the Organization, a Canvas the asker cannot open), an ask for the asker's own account with none connected made all the same, an approval with no account that carries the events (a Drive connection does not stand in for Gmail), an approval refused while the only such account needs reconnecting and accepted once it is reconnected, the `connection` each reader is shown, and the emailed link's malformed bodies and a person who has left. |
 | `apps/api/test-workers/canvas-sidekicks.test.ts`, `apps/api/test-workers/conversation-tools.test.ts` | Real workerd. A run nobody is behind lists, reads and is told about every attached Canvas that is not archived, and writes a site's rows there, with no person at all; a run somebody asked for is held to what that person can open; an id with no run row is never the Sidekick itself. |
 | `apps/api/test/semantic-trigger-admission.test.ts` | The delivery, with the object and the classifier stood in: the person's filter is judged first, the trigger's question is not asked of an event that filter kept out, both verdicts are sent, and neither is judged without a classifier credential. |
@@ -692,6 +692,7 @@ source's condition.
 | `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 146 over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none; every active Sidekick with a trigger that nobody lends an account to is marked stopped, whatever it said before, and no other. |
 | `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
 | `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content; content that tries to close its own fence, in any case or spacing. |
+| `apps/api/test/external-event-opening.test.ts` | The event's opening: its entity keys listed ahead of the metadata and carried in the structured half, left to the text when they would carry that half past the message bound, and the closing guard kept when a long event is cut. |
 | `apps/api/test-workers/sidekick-source-notices.test.ts` | Real workerd. The asked person's row lists though the Sidekick is closed to them, and reads as seen once the request is answered or replaced; the asker is told on an approval and a decline and nobody on a cancel or an own ask; the email is queued after the commit; a person asked is led to the Canvas the request was asked in only if they can open it, and otherwise to the Sidekick; an edited link is refused and a replaced request's link says so; a build older than contract 14 gets neither the rows nor their count. |
 | `apps/api/test/sidekick-source-decision-link.test.ts`, `apps/api/test/sidekick-source-notice-migration.test.ts` | The link's shape and signature against an independent HMAC, `GET` 405, unsigned 401, wrong origin 403; and the two rebuilt tables keeping their rows, indexes and triggers. |
 | `apps/api/test/sidekick-source-tools.test.ts` | An ask leaves its request ids in the transcript and nothing else. |
@@ -884,24 +885,35 @@ one as it is resolved; the resolution becomes a changelog entry.
 
 ### 2026-11-19 — A run's opening names its event's message and thread
 
-**What changed:** Admitting a connector event reads the stored event's
-`subject` and puts its top-level scalar fields in the run's opening, as text
-before the metadata and as `structuredContent.subject`. The opening's closing
-guard line is now appended after the cut, so a long event can no longer cut it. `setting-up-a-filtered-trigger` step 5 now says
-what a run receives: the identifiers on every event, the full text only for
-`email.received`.
+**What changed:** Admitting a connector event reads the stored row's entity
+keys and lists them in the run's opening, before the metadata, and as
+`structuredContent.entityKeys`. The opening's closing guard is appended after
+the cut. `setting-up-a-filtered-trigger` step 5 says what a run receives: the
+IDs on every event, the full text only for `email.received`.
 
 **Why:** A GTM-CRM Sidekick keyed its rows on Gmail message ids, as
-`tracking-seen-or-done-items` tells a run to. The adapter wrote the ids into
-the event's `subject`, but the opening showed only the title, summary, snippet
-and metadata, so the run never saw them. Over two days, 32 of its 102 runs
-refused to write because they lacked a message id, among them a real customer
-thread. Carrying `subject` on `WorkspaceExternalEvent` was rejected: it would
-add to every Queue delivery and to the reference path that reloads oversized
-ones, when the row already sits in the storage that admits it. A future change
-must keep the identifiers ahead of anything the message bound can cut. Only
-scalars are shown because Linear and Notion store whole entity payloads as
-`subject`, up to 256 KiB, whose text the snippet already carries.
+`tracking-seen-or-done-items` tells a run to. The adapter wrote them into the
+event's `subject` and `entity_keys`, but the opening showed only the title,
+summary, snippet and metadata. Over two days, 32 of its 102 runs refused to
+write because they lacked a message id, among them a real customer thread.
+
+**Considered and rejected:**
+- Showing the event's `subject`. For GitHub, Linear and Notion it is the whole
+  item, body included. It would be frozen into `opening_json` at admission,
+  past the provisioning-time source check, and could carry the structured half
+  past the message bound so the run never starts. Showing only its scalar
+  fields still let a body string through.
+- Putting the ids into Gmail's metadata, as Granola does with `noteId`.
+  `googleConnectorReplayCompatibility` compares metadata, so already-stored
+  events would read as incompatible on replay.
+- Carrying the keys on `WorkspaceExternalEvent`. Every Queue delivery and the
+  oversized-delivery reference path would grow, when the row already sits in
+  the storage that admits it.
+
+**Consequences:** What reaches a run's opening is ids an adapter declared, never
+content; a connector that wants its item's text read for a run does that
+through `readActivityContent`, which re-checks the source. Keep the keys ahead
+of anything the message bound can cut.
 
 ### 2026-11-16 — Connecting is part of answering a request
 

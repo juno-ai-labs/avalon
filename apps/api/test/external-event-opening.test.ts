@@ -33,7 +33,8 @@ describe("the event that woke a run, as its opening message", () => {
     });
   });
 
-  it("names what the event is about by the connector's own identifiers, ahead of its metadata", () => {
+  it("names what the event is about by the keys its connector declared, ahead of its metadata", () => {
+    const keys = ["google:gmail:thread:18c0ff00", "google:gmail:message:18c0ffee"];
     const opening = externalEventOpening({
       id: "00000000-0000-7000-8000-0000000000e3",
       eventType: "email.updated",
@@ -42,21 +43,20 @@ describe("the event that woke a run, as its opening message", () => {
       textSnippet: "",
       metadata: { changeType: "labelAdded" },
       occurredAt: 0,
-    }, { messageId: "18c0ffee", threadId: "18c0ff00", data: { description: "a whole entity payload" } });
+    }, keys);
 
-    expect(opening.textContent.split("\n\n")[2]).toBe([
-      "Subject (the connector's own fields naming what this event is about):",
-      "{",
-      "  \"messageId\": \"18c0ffee\",",
-      "  \"threadId\": \"18c0ff00\"",
-      "}",
+    const blocks = opening.textContent.split("\n\n");
+    expect(blocks.find((block) => block.startsWith("IDs ("))).toBe([
+      "IDs (stable keys for what this event is about):",
+      "- google:gmail:thread:18c0ff00",
+      "- google:gmail:message:18c0ffee",
     ].join("\n"));
-    expect(opening.textContent.indexOf("Subject (")).toBeLessThan(opening.textContent.indexOf("Metadata:"));
-    expect(opening.structuredContent.subject).toEqual({ messageId: "18c0ffee", threadId: "18c0ff00" });
-    expect(opening.textContent).not.toContain("a whole entity payload");
+    expect(blocks.findIndex((block) => block.startsWith("IDs ("))).toBeLessThan(blocks.findIndex((block) => block.startsWith("Metadata:")));
+    expect(opening.structuredContent.entityKeys).toEqual(keys);
   });
 
-  it("keeps the structured half within the message bound when a subject field is long, and still names the ids in the text", () => {
+  it("leaves the keys to the text when they would carry the structured half past the message bound", () => {
+    const keys = Array.from({ length: 2_000 }, (_, index) => `linear:issue:${"k".repeat(60)}-${index}`);
     const opening = externalEventOpening({
       id: "00000000-0000-7000-8000-0000000000e5",
       eventType: "issue.updated",
@@ -65,12 +65,11 @@ describe("the event that woke a run, as its opening message", () => {
       textSnippet: "",
       metadata: {},
       occurredAt: 0,
-    }, { id: "issue-42", identifier: "ENG-42", description: "d".repeat(110_000) });
+    }, keys);
 
     expect(JSON.stringify(opening.structuredContent).length).toBeLessThanOrEqual(100_000);
-    expect(opening.structuredContent).not.toHaveProperty("subject");
-    expect(opening.textContent).toContain("\"id\": \"issue-42\"");
-    expect(opening.textContent).toContain("\"identifier\": \"ENG-42\"");
+    expect(opening.structuredContent).not.toHaveProperty("entityKeys");
+    expect(opening.textContent).toContain(`- ${keys[0]}`);
   });
 
   it("keeps its closing guard when a long event is cut at the message bound", () => {
@@ -100,6 +99,8 @@ describe("the event that woke a run, as its opening message", () => {
     });
 
     expect(opening.textContent).not.toContain("Metadata:");
+    expect(opening.textContent).not.toContain("IDs (");
+    expect(opening.structuredContent).not.toHaveProperty("entityKeys");
     expect(opening.textContent.split("\n").filter((line) => line.trim() === "")).toHaveLength(1);
   });
 });

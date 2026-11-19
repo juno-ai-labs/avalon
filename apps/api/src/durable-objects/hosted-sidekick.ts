@@ -549,12 +549,10 @@ export function skillSource(
   });
 }
 
-/** A stored event's `subject`, or null when the row is gone or it is not an object. */
-function parseEventSubject(json: string | undefined): Record<string, unknown> | null {
-  if (json === undefined) return null;
-  let subject: unknown;
-  try { subject = JSON.parse(json); } catch { return null; }
-  return typeof subject === "object" && subject !== null && !Array.isArray(subject) ? subject as Record<string, unknown> : null;
+/** A stored event's entity keys: the adapter's ids for what it is about. None when the row is gone. */
+function storedEntityKeys(json: string | undefined): string[] {
+  const keys: unknown = json === undefined ? [] : JSON.parse(json);
+  return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === "string") : [];
 }
 
 export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
@@ -2057,15 +2055,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
       }
     }
-    const subject = parseEventSubject(first(this.sql.exec<{ subject_json: string }>(
-      "SELECT subject_json FROM workspace_connector_events WHERE event_id = ?", request.event.id))?.subject_json);
+    const entityKeys = storedEntityKeys(first(this.sql.exec<{ entity_keys_json: string }>(
+      "SELECT entity_keys_json FROM workspace_connector_events WHERE event_id = ?", request.event.id))?.entity_keys_json);
     const admitted = this.admitOccurrence(row.accepted_definition_revision, externalEventOccurrenceKey(request.event), {
       kind: "external_event",
       workspaceEventId: request.event.id,
       eventType: request.event.eventType,
       occurredAt: request.event.occurredAt,
       payloadHash: request.payloadHash,
-    }, externalEventOpening(request.event, subject), coordinator);
+    }, externalEventOpening(request.event, entityKeys), coordinator);
     return {
       admitted: true,
       outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",
@@ -3214,9 +3212,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       const eligible = await Promise.all(candidates.map((source) => this.sourceEligible(source)));
       if (!eligible.some(Boolean)) return null;
     }
-    const subject = parseEventSubject(event.subject_json);
-    if (!subject) return null;
-    return { connectionId: event.connection_id, connectorType: event.connector_type, eventType: event.event_type, subject };
+    let subject: unknown;
+    try { subject = JSON.parse(event.subject_json); } catch { return null; }
+    if (typeof subject !== "object" || subject === null || Array.isArray(subject)) return null;
+    return { connectionId: event.connection_id, connectorType: event.connector_type, eventType: event.event_type,
+      subject: subject as Record<string, unknown> };
   }
 
   /** The provisioning consumer started the run's loop: mark it running and settle its entry. */

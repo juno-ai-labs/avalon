@@ -1790,6 +1790,24 @@ surface that tells somebody about connector activity reads
 
 ## Changelog
 
+### 2026-11-19 — A run's opening lists its event's entity keys
+
+**What changed:** A Sidekick run started by a connector event gets the entity
+keys its adapter declared (`google:gmail:message:<id>`) in its opening.
+
+**Why:** A Gmail run had no message id to key its records on: the ids were in
+the subject and the entity keys, which never reached it, the gap Granola's
+`noteId` closed for one connector on 2026-09-17.
+
+**Considered and rejected:** Handing the run the subject, which the 2026-09-17
+entry already rejected and which is still rejected. Entity keys narrow that
+decision rather than reverse it: they are ids every adapter already declares,
+never the item's content, so what a run may read of an item stays a decision
+per connector.
+
+**Consequences:** An adapter's entity keys are now read by models. Keep them
+ids, in the `<provider>:<kind>:<id>` shape where the adapter has one.
+
 ### 2026-11-17 — A poll refused on its grant fails once, not four times
 
 **What changed:** The connector poll Workflow throws a failure any adapter
