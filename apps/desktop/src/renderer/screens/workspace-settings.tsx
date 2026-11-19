@@ -762,6 +762,7 @@ export function WorkspaceSettingsScreen({
     [userTimezone, workspaceTimezone],
   );
   const isAdmin = workspace.currentUser.role === 'owner' || workspace.currentUser.role === 'admin';
+  const viewerIsOwner = workspace.currentUser.role === 'owner';
   // `staleTime` rather than `refetchOnMount: 'always'`, and the difference is a
   // whole round trip: `App.tsx` holds this same key at `staleTime: Infinity` for
   // the shell's own use, so opening Settings always found data this observer had
@@ -1068,7 +1069,7 @@ export function WorkspaceSettingsScreen({
   // a `promote`/`demote` pair would be two pending states and two error slots
   // for one field with two values.
   const setMemberRole = useMutation({
-    mutationFn: (input: { userId: string; role: 'admin' | 'member' }) =>
+    mutationFn: (input: { userId: string; role: 'owner' | 'admin' | 'member' }) =>
       api!.setWorkspaceMemberRole(input.userId, input.role),
     onSuccess: () => Promise.all([
       queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
@@ -1827,11 +1828,11 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-member-list settings-list-card">
                   {sortedMembers.map((member) => {
                     const isGuest = member.accessClass === 'guest';
-                    // Every row draws the menu so they line up, but two are
-                    // disabled. The owner's role is not reassignable, and an
-                    // organization has one owner, so nobody here may remove
-                    // them. Someone still invited is not a member to act on yet.
-                    const menuDisabled = member.role === 'owner' || member.status === 'invited';
+                    // Every row draws the menu so they line up, but some are
+                    // disabled. Only an owner may act on an owner, and someone
+                    // still invited is not a member to act on yet.
+                    const isOwnerRow = member.role === 'owner';
+                    const menuDisabled = (isOwnerRow && !viewerIsOwner) || member.status === 'invited';
                     const canPromoteGuest = isGuest && Boolean(member.incarnation && member.revision);
                     const self = member.id === workspace.currentUser.id;
                     return (
@@ -1861,14 +1862,29 @@ export function WorkspaceSettingsScreen({
                                       onSelect={() => { promoteGuest.reset(); setPromotion({ id: member.id, name: member.name, incarnation: member.incarnation!, revision: member.revision! }); }}>
                                       Make member
                                     </DropdownMenu.Item>
-                                  ) : (
+                                  ) : isOwnerRow ? (
+                                    // Taking ownership away leaves an administrator:
+                                    // one step down, not two.
                                     <DropdownMenu.Item className="menu-item" disabled={setMemberRole.isPending}
-                                      onSelect={() => setMemberRole.mutate({
-                                        userId: member.id,
-                                        role: member.role === 'admin' ? 'member' : 'admin',
-                                      })}>
-                                      {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
+                                      onSelect={() => setMemberRole.mutate({ userId: member.id, role: 'admin' })}>
+                                      Remove owner
                                     </DropdownMenu.Item>
+                                  ) : (
+                                    <>
+                                      <DropdownMenu.Item className="menu-item" disabled={setMemberRole.isPending}
+                                        onSelect={() => setMemberRole.mutate({
+                                          userId: member.id,
+                                          role: member.role === 'admin' ? 'member' : 'admin',
+                                        })}>
+                                        {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
+                                      </DropdownMenu.Item>
+                                      {viewerIsOwner && (
+                                        <DropdownMenu.Item className="menu-item" disabled={setMemberRole.isPending}
+                                          onSelect={() => setMemberRole.mutate({ userId: member.id, role: 'owner' })}>
+                                          Make owner
+                                        </DropdownMenu.Item>
+                                      )}
+                                    </>
                                   )}
                                   {/* The server refuses removing yourself; leaving is its own control. */}
                                   {!self && (

@@ -5,7 +5,7 @@ membership carries exactly one role — `owner`, `admin`, or `member` — and ev
 admin-gated action in the product means the same thing by "administrator": the
 caller's role is `owner` **or** `admin`. This document owns that vocabulary, the
 one write that assigns a role, and the invariant that keeps a workspace from
-ending up with nobody who can administer it.
+ending up with nobody who can administer it or no owner.
 
 Read it before adding an admin-gated action, before changing how a role is
 assigned, and before assuming anywhere that a workspace has one administrator.
@@ -18,14 +18,14 @@ the read-side authorization primitive that composes resource access belongs to
 | Path | Responsibility |
 | --- | --- |
 | `packages/db/migrations/0001_initial.sql` | `workspace_members(workspace_id, user_id, role, status, …)` — one row per person per workspace, `role` constrained to `owner`/`admin`/`member`. Unchanged since the first migration. |
-| `packages/contracts/src/index.ts` | `MemberRoleSchema` (all three roles, as read) and `AssignableMemberRoleSchema` (`admin`/`member` — the roles an administrator may hand out). `WorkspaceInvitationRoleSchema` is the same schema, so an invitation and a promotion cannot drift. |
+| `packages/contracts/src/index.ts` | `MemberRoleSchema` (all three roles), which `UpdateWorkspaceMemberRoleRequestSchema` accepts, and `AssignableMemberRoleSchema` (`admin`/`member` — the roles any administrator may hand out). `WorkspaceInvitationRoleSchema` is that second schema, so an add or an invitation never creates an owner. |
 | `apps/api/src/middleware/auth.ts` | Resolves `auth.role` from `workspace_members` on **every** request, and `requireWorkspaceAdmin` — the route-level gate. |
 | `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `addMember` (the role someone added by address is a member with at once), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
 | `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`, `POST /workspace/members` (`addMember`), and the legacy `POST /workspace/invitations`, which adds a member for older builds and answers in the old invitation shape. |
 | `apps/api/src/services/member-by-address.ts` | `memberByAddress`: the account a verified address names and its place in this Organization, read by `addMember` and `offer_to_add_member`. |
 | `packages/contracts/src/member-card.ts` | `MemberCardInputSchema` and the member question's options, shared by the tool and the card. |
 | `apps/desktop/src/renderer/components/member-add-card.tsx` | `MemberAddCard`: the add button an agent's member question shows, live for owners and administrators. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the Add members role selector. A guest sees the same list, without the row controls. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (make or remove administrator, make or remove owner for an owner viewer, make member for a guest, and suspend), and the Add members role selector. A guest sees the same list, without the row controls. |
 | `apps/desktop/src/renderer/lib/session-workspace.ts` | Why the role the desktop holds is a *presentation* input and never an authorization one. |
 
 ## How it works
@@ -63,10 +63,12 @@ A membership acquires its role in one of three ways:
   way.
 - **Assignment.** `WorkspaceService.setMemberRole` sets the role on a membership
   that already exists. This is the only way a workspace grows a second
-  administrator after the fact, and it is what `PATCH
-  /workspace/members/:userId/role` calls.
+  administrator or a second owner after the fact, and it is what `PATCH
+  /workspace/members/:userId/role` calls. Any administrator may move someone
+  between `admin` and `member`; only an owner may grant `owner` or change an
+  owner's role. The desktop's "Remove owner" sets `admin`, one step down.
 
-`setMemberRole` reads the target membership, refuses the three cases the next
+`setMemberRole` reads the target membership, refuses the cases the next
 section names, and then writes with a conditional `UPDATE` that re-asserts every
 one of them in its own `WHERE`. The re-assertion is not belt-and-braces: the
 reads happen in an earlier round trip and D1 auto-commits in between, so two
@@ -119,11 +121,17 @@ stay on the conversation's own participants.
   none cannot be recovered from inside the product: no administrator means no
   adding, no promotion, and no way back. `setMemberRole` refuses a demotion
   that would empty the set, with `last_workspace_administrator`.
-- **`owner` is not assignable, and an owner is not a target.** The founding
-  membership is what `leaveWorkspace` and `removeMember` count when they refuse
-  to leave a workspace unowned; letting `setMemberRole` hand it around would put
-  a second module in charge of an invariant those two enforce. Transferring
-  ownership is a separate operation that does not exist yet.
+- **Only an owner touches ownership.** Granting `owner`, or changing the role
+  of somebody who holds it, needs an owner caller, checked first against
+  `auth.role` and again against the caller's row in the write's `WHERE`. An
+  admin who could make themselves an owner would hold every power the role
+  protects; `removeMember` refuses an admin who removes an owner for the same
+  reason.
+- **A workspace always has at least one active owner.** `setMemberRole`
+  refuses to demote the last one (`last_workspace_owner`), `leaveWorkspace`
+  refuses to let the last one leave (`sole_workspace_owner`), and
+  `removeMember` requires its owner caller to still be one. Several owners are
+  equal: none is the founder in any check.
 - **Only an active membership has a role to change.** Someone added by address
   is active at once, so their role changes like anyone's. An invitation sent
   before adding replaced invitations carries its role until accepted.
@@ -172,7 +180,8 @@ Durable Object path: roles live in regional D1 and only the Worker writes them.
 | --- | --- | --- |
 | `workspace_admin_required` | 403 | The caller is an ordinary member. |
 | `member_not_found` | 404 | Nobody by that id belongs to this workspace. |
-| `cannot_change_owner_role` | 403 | The target is the workspace owner. |
+| `workspace_owner_required` | 403 | An admin tried to grant `owner` or change an owner's role. |
+| `last_workspace_owner` | 409 | The change would leave the workspace with no active owner. |
 | `member_not_active` | 409 | The target is not active: suspended, or holding an invitation from before adding that is still waiting. |
 | `already_workspace_member` | 409 | `addMember`: the address already names an active member here. |
 | `member_address_unverified` | 409 | `addMember`: an account holds the address without having verified it, so adding it would add whoever typed that profile address. |
@@ -184,7 +193,7 @@ Durable Object path: roles live in regional D1 and only the Worker writes them.
 | `member_is_guest` | 409 | The target is a guest, who holds no role until `promoteGuest` moves their access class. |
 | `membership_changed` | 409 | The conditional write lost a race; nothing was written. |
 | — (logged only) | 200 | The role changed but `publishWorkspaceSync` failed. Logged as `workspace_member_role_sync_publish_failed` with the reason from `diagnosticErrorCode`; other windows keep a stale roster until something else invalidates it. |
-| `member_role_invalid:…` | 400 | The role is not one an administrator may assign. The code carries the failing path and Zod issue code, from `zodDiagnosticCode` — see [`naming-a-schema-failure.md`](naming-a-schema-failure.md). |
+| `member_role_invalid:…` | 400 | The role is not `owner`, `admin` or `member`. The code carries the failing path and Zod issue code, from `zodDiagnosticCode` — see [`naming-a-schema-failure.md`](naming-a-schema-failure.md). |
 
 Assigning the role somebody already holds is a no-op: it returns without a write
 and without a publish, so a double-click costs nothing and announces nothing.
@@ -197,7 +206,10 @@ asked for, and inventing a ceiling here would be
 
 - `apps/api/test/workspace-member-roles.test.ts` — the whole write against the
   checked-in migrations through `migratedSqliteDatabase()`, so the column's
-  `CHECK` and the conditional `WHERE` are the production ones. The sync publish
+  `CHECK` and the conditional `WHERE` are the production ones. It covers
+  ownership too: an owner making a second owner, an admin refused it, a caller
+  whose ownership went away between the read and the write, and the last-owner
+  guard. The sync publish
   is doubled, because it addresses a WorkspaceDO and the Node suite runs none —
   and it is *asserted on*, both for the two topics a committed change publishes
   and for the silence a no-op or a refusal owes. A double nobody asserts on lets
@@ -219,6 +231,31 @@ enforces. A test that seeds an owner can never reach the guard, and would have
 proved only that the owner was there.
 
 ## Changelog
+
+### 2026-11-19 — An Organization can have more than one owner
+
+**What changed:** `PATCH /workspace/members/:userId/role` accepts `owner`. An
+owner may make another member an owner and may change any owner's role,
+including their own. Admins still move people only between `admin` and
+`member`. Demoting the last active owner is refused as `last_workspace_owner`.
+The desktop offers "Make owner" and "Remove owner" to owners; the error code
+`cannot_change_owner_role` is gone.
+
+**Why:** Ownership could not be shared or handed on. Whoever created the
+Organization was its only owner forever, so a founder who left, or wanted a
+co-founder to hold the same standing, had no way to do it.
+
+**Considered and rejected:** A separate transfer operation that swaps two
+roles in one step. Granting and then stepping down covers it with the write
+that already exists, and lets an Organization keep several owners, which a
+swap would not. Also rejected: letting admins grant `owner`, since any admin
+could then make themselves one. Invitations and add-by-address still cannot
+carry `owner`: nobody asked for it, and it keeps the grant on someone already
+in the roster.
+
+**What a future change has to respect:** The owner guards live in the write's
+`WHERE`, beside the administrator guard, for the race reason above. Any new
+path that changes or removes an owner has to keep at least one active owner.
 
 ### 2026-11-16 — Adding someone makes them a member at once
 
@@ -310,6 +347,5 @@ rather than merely narrow. Anything new that gates on a role must accept
 `owner` or `admin`. The last-administrator guard is the only thing standing
 between a demotion and an unrecoverable workspace, and it lives in the `WHERE`
 of the write — a future refactor that moves the check ahead of the statement
-re-opens the race it was written to close. Ownership is still untransferable;
-whoever creates a workspace is its owner forever, and a product that needs that
-to change needs a separate operation with its own guards.
+re-opens the race it was written to close. Ownership was still untransferable
+at this point; whoever created a workspace was its owner forever.

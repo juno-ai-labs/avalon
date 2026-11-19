@@ -1081,8 +1081,8 @@ export class RallyApi {
     }));
   }
 
-  /** Make an existing member an administrator, or hand them back to member. */
-  async setWorkspaceMemberRole(userId: string, role: 'admin' | 'member'): Promise<void> {
+  /** Set an existing member's role. Only an owner may grant or take away `owner`. */
+  async setWorkspaceMemberRole(userId: string, role: 'owner' | 'admin' | 'member'): Promise<void> {
     await this.requestVoid(`/workspace/members/${encodeURIComponent(userId)}/role`, {
       method: 'PATCH',
       body: { role },
