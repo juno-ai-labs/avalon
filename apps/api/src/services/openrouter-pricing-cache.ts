@@ -108,13 +108,6 @@ export interface AzureImageModelPricing {
   sourceFingerprint: string;
 }
 
-export interface AzureTokenModelPricingRecord {
-  inputUsdPerM: string;
-  cachedInputUsdPerM: string;
-  outputUsdPerM: string;
-  sourceFingerprint: string;
-}
-
 interface PricingRefreshOptions {
   fetch?: typeof globalThis.fetch;
   now?: () => number;
@@ -170,21 +163,6 @@ export async function loadAzureImageModelPricing(
       endpointCount: cost.endpointCount,
       ...(cost.variant === undefined ? {} : { variant: cost.variant }),
     })),
-    sourceFingerprint: pricing.sourceFingerprint,
-  };
-}
-
-/** Read one token-priced Azure deployment directly from its shared model-id KV key. */
-export async function loadAzureTokenModelPricing(
-  env: Pick<Env, "INFERENCE_PRICING_CACHE">,
-  modelId: string,
-): Promise<AzureTokenModelPricingRecord> {
-  const pricing = parseCachedTokenModelPricing(await env.INFERENCE_PRICING_CACHE.get(modelId));
-  if (!pricing) throw new Error(`Azure token pricing cache is unavailable for ${modelId}`);
-  return {
-    inputUsdPerM: pricing.inputUsdPerM,
-    cachedInputUsdPerM: pricing.cachedInputUsdPerM,
-    outputUsdPerM: pricing.outputUsdPerM,
     sourceFingerprint: pricing.sourceFingerprint,
   };
 }

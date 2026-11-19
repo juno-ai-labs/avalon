@@ -279,7 +279,6 @@ describe("Azure GPT Image client", () => {
 describe("multimodal generation runtime", () => {
   it("creates one AI audio resource with the default voice and does not charge without pricing", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const infoLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const publish = vi.fn<MultimodalAudioResourceStore["publish"]>(async (_context, input) => ({
       ...publishedAudio(),
       metadata: { voice: input.voice, billing: input.billing },
@@ -295,7 +294,6 @@ describe("multimodal generation runtime", () => {
     const plugin = createAvalonMultimodalGenerationPlugin(runtimeEnv(), workflowInput, undefined, {
       audioResources,
       audioClient,
-      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
     });
     const tool = plugin?.tools.find((candidate) => candidate.definition.name === "generate_audio");
 
@@ -323,13 +321,6 @@ describe("multimodal generation runtime", () => {
       billing: { costUsd: null },
     });
     expect(result).not.toHaveProperty("contentParts");
-    // The speech price is never cached, so its absence is expected, not an error.
-    expect(infoLog).toHaveBeenCalledWith(expect.objectContaining({
-      level: "info",
-      event: "multimodal_generation_pricing_unavailable",
-      model: "gpt-4o-mini-tts",
-      pricing_model_id: "openai/gpt-4o-mini-tts",
-    }));
     expect(errorLog).not.toHaveBeenCalled();
   });
 
@@ -366,7 +357,6 @@ describe("multimodal generation runtime", () => {
     const plugin = createAvalonMultimodalGenerationPlugin({ ...runtimeEnv(), MAX_ATTACHMENT_BYTES: "60" }, workflowInput, undefined, {
       audioResources: { findPublished: vi.fn(async () => null), publish: vi.fn() },
       audioClient: { generate, streamPcm: vi.fn() },
-      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -396,7 +386,6 @@ describe("multimodal generation runtime", () => {
     const plugin = createAvalonMultimodalGenerationPlugin(runtimeEnv(), workflowInput, undefined, {
       audioResources: { findPublished: vi.fn(async () => null), publish },
       audioClient: { generate, streamPcm: vi.fn() },
-      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const tool = plugin!.tools.find((candidate) => candidate.definition.name === "generate_audio")!;
