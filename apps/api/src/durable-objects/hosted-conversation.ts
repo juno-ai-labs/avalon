@@ -49,13 +49,6 @@ export interface ReceivedChildEffects {
 const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
 /**
- * The Organization object's alarm kind for a sandbox lifecycle deadline, keyed
- * by the parent: `WorkspaceScheduleTargetKind`'s `"terminal"`, which the
- * schedule pass reconciles through `reconcileTerminalSandbox`.
- */
-export const TERMINAL_DEADLINE_ALARM_KIND = "terminal";
-
-/**
  * WorkspaceDO migration 153: only the children that name a Terminal deadline,
  * a few hundred rows in an Organization whose projections hold tens of
  * thousands and tens of megabytes of JSON. The schedule re-derives these on
@@ -270,8 +263,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
       items: this.sql.exec<{ substream_id: string; next_terminal_action_at: string }>(
         `SELECT substream_id, json_extract(effect_json, '$.nextTerminalActionAt') AS next_terminal_action_at
            FROM sidekick_child_projections
-          WHERE sidekick_id = ? AND json_extract(effect_json, '$.kind') = 'directory_common'
-            AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
+          WHERE sidekick_id = ? AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
           ORDER BY next_terminal_action_at, substream_id`,
         this.parentId,
       ).toArray().map((row) => ({ substreamId: row.substream_id, nextTerminalActionAt: row.next_terminal_action_at })),
@@ -420,13 +412,10 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
    */
   private syncTerminalDeadlineAlarm(now: number): void {
     const deadline = hostedTerminalDeadlines(this.sql, this.parentId)[0];
-    const dueAt = deadline ? Date.parse(deadline.dueAt) : Number.NaN;
-    if (!Number.isFinite(dueAt) || dueAt < 0) {
-      this.host.alarms.cancel(TERMINAL_DEADLINE_ALARM_KIND, this.parentId);
-      return;
-    }
-    this.host.alarms.schedule({ kind: TERMINAL_DEADLINE_ALARM_KIND, key: this.parentId, dueAt }, now);
+    if (deadline) this.host.alarms.schedule({ kind: "terminal", key: this.parentId, dueAt: Date.parse(deadline.dueAt) }, now);
+    else this.host.alarms.cancel("terminal", this.parentId);
   }
+
 
   /** Keep a child's newest common projection; `null` for one that is not newer. */
   private acceptChildProjection(substreamId: string, envelope: ConversationEffectEnvelope, now: number): { prior: PriorChildProjection | null } | null {

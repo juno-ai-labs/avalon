@@ -509,7 +509,6 @@ import { HOSTED_PARENT_SCHEMA_STATEMENTS } from "./hosted-parent-schema";
 import { ReceiveChildEffectsRequestSchema, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
 import {
   hostedTerminalDeadlines,
-  TERMINAL_DEADLINE_ALARM_KIND,
   TERMINAL_DEADLINE_INDEX_STATEMENT,
   type HostedConversation,
 } from "./hosted-conversation";
@@ -7713,28 +7712,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { alarmAt: alarmAt === null ? null : new Date(alarmAt).toISOString() };
   }
 
-  /**
-   * Re-derive the Terminal deadlines alone.
-   *
-   * Only this kind: the other three read tables a directory effect never
-   * touches, and a full refresh on the hottest write path this object has
-   * would put ten queries behind every directory publish. The source is the
-   * same method the full reconcile reads, so there is still one derivation of
-   * when a sandbox is due.
-   */
-  private async refreshTerminalSchedule(): Promise<void> {
-    const workspaceId = this.workspaceId();
-    if (!workspaceId) return;
-    const targets = await this.workstreamScheduleTargets({ workspaceId });
-    await this.reconcileScheduledAlarms(
-      "terminal",
-      targets.items
-        .filter((target) => target.kind === "terminal")
-        .map((target) => ({ key: target.workstreamId, dueAt: Date.parse(target.dueAt) }))
-        .filter((target) => Number.isFinite(target.dueAt)),
-    );
-  }
-
   private scheduleContext(workspaceId: string): WorkspaceScheduleContext {
     return {
       env: this.env,
@@ -7742,9 +7719,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       directory: this,
       notificationIntents: this,
-      // The directory row carries one deadline per parent; which
-      // conversation it belongs to is the hosted parent's knowledge, read
-      // from its rows in this object. A retired Thread has none.
+      // The schedule carries one deadline per parent; which conversation it
+      // belongs to is the hosted parent's knowledge, read from its rows in
+      // this object. A retired Thread has none.
       dueTerminalSubstreams: async (workstreamId, through) => {
         const parent = await this.hostedConversationParent(workstreamId, workspaceId);
         if (!parent) return [];
@@ -11310,7 +11287,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Rally, and each conversation kept observing Daytona every minute.
     return WorkspaceDirectoryScheduleTargetsResultSchema.parse({
       items: hostedTerminalDeadlines(this.state.storage.sql).map((deadline) => ({
-        kind: TERMINAL_DEADLINE_ALARM_KIND, workstreamId: deadline.parentId, dueAt: deadline.dueAt,
+        kind: "terminal" as const, workstreamId: deadline.parentId, dueAt: deadline.dueAt,
       })),
     });
   }

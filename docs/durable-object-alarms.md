@@ -256,13 +256,13 @@ post-drain refresh reconcile all four kinds:
 | `schedule` | schedule id | `schedules`, enabled with a `next_run_at` |
 | `watch` | watch id | `resource_watches`, enabled with a `next_poll_at` |
 | `maintenance` | task name | the oldest row of whichever tables that task still owes work on |
-| `terminal` | conversation id | `channels.next_terminal_action_at` |
+| `terminal` | Canvas or Sidekick id | the earliest `nextTerminalActionAt` across its conversations' `sidekick_child_projections` |
 
 Runtime writes map `schedules` to `schedule`, `resource_watches` to `watch`,
 and `resources` to both `maintenance` and `watch` (deletion cascades).
 Resource versions and cleanup, note, and Slack outboxes map to
-`maintenance`. Digest RPCs select `schedule`; directory effects repair
-`terminal` on first application and replay. The source map next to schedule
+`maintenance`. Digest RPCs select `schedule`; accepting a newer child
+projection moves that parent's `terminal` entry in the same transaction. The source map next to schedule
 derivation is the registry for compatibility-port writes.
 
 A fifth kind, `product`, is scheduled directly rather than reconciled: the
