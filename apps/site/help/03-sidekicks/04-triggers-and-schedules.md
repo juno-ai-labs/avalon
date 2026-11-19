@@ -82,6 +82,9 @@ For example:
 Each tool's own page in [Connecting your other tools](../05-connecting-your-tools/index.md)
 says what it can announce. If the tool you name cannot announce events, the
 drafting assistant falls back to checking it on a timer instead, and says so.
+For a tool Rally has no connector for, connect it as a
+[custom MCP server](../05-connecting-your-tools/14-custom-mcp-server.md) and
+have the Sidekick check it on a schedule.
 
 Event triggers have a few rules of their own.
 
