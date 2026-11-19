@@ -81,9 +81,14 @@ export function sidekickSourceRegistrations(input: {
     model_plugin_id: string | null; granted_scopes_json: string; config_json: string | null;
   }>(`SELECT id,connector_type,scope,owner_user_id,model_plugin_id,granted_scopes_json,config_json
         FROM connector_connections WHERE workspace_id=? AND status<>'disabled' ORDER BY id`, workspaceId).toArray();
+  // Aliases are reused only on a live connection, so only those rows are read.
+  // A disabled connection's rows include retired connectors' (Canva, the
+  // generic webhook), whose `connectorType` the evaluator schema no longer
+  // admits: parsing them would refuse every reconciliation of that Sidekick.
   const existing = storage.sql.exec<{ registration_id: string; evaluator_json: string }>(
     `SELECT registration_id,evaluator_json FROM workspace_external_event_registrations
-      WHERE automation_id=? ORDER BY state='active' DESC,updated_at DESC,registration_id`, sidekickId,
+      WHERE automation_id=? AND connection_id IN (SELECT id FROM connector_connections WHERE status<>'disabled')
+      ORDER BY state='active' DESC,updated_at DESC,registration_id`, sidekickId,
   ).toArray().map((row) => ({ id: row.registration_id, evaluator: ExternalEventEvaluatorV1Schema.parse(JSON.parse(row.evaluator_json)) }));
   const registeredTypes = new Set(registry.list().map((manifest) => manifest.type));
   const letsIn = (connection: { id: string; owner_user_id: string | null }, eventType: string, requested = false) =>

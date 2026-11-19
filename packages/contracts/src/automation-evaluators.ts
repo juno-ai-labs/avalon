@@ -26,7 +26,6 @@ const PersonIdSchema = IdSchema.brand<"PersonId">();
  */
 export const ConnectorTypeSchema = z.enum([
   "google",
-  "generic_webhook",
   "github",
   "ashby",
   "fireflies",
@@ -461,10 +460,11 @@ export const ConnectorActivityTriggerDescriptorV2Schema = z.strictObject({
   })),
   digestible: z.boolean(),
   /**
-   * The payload's own keys are the filter fields. A generic webhook carries
-   * whatever its caller posts, so no list can be declared ahead of it; a rule
-   * may then name any metadata key with any operator, and the event's
-   * flattened metadata is what the leaf is read against.
+   * The payload's own keys are the filter fields: a connector whose events
+   * carry whatever their caller posts declares no list ahead of them, so a rule
+   * may name any metadata key with any operator, and the event's flattened
+   * metadata is what the leaf is read against. No connector Rally ships sets it
+   * since the generic webhook was removed (docs/connectors.md#2026-11-19).
    */
   openFilterFields: z.boolean().optional(),
 });

@@ -28,7 +28,7 @@ So the moment of choice is when you connect. Connect the tools you are comfortab
 
 The first page is a tour of **Settings → Connections**, the one screen every connection shares: how to add one, how to tell if it is healthy, and how to fix or remove it. Read that one whatever you use.
 
-After that, every connector gets its own page, one for each card in Settings, in this order: Google Mail and Calendar, Google Drive, GitHub, Linear, Notion, Slack, Granola, Fireflies, Ashby and X, and then two pages for tools with no ready-made connector, an inbound webhook and a custom MCP server. Those last two lean a little technical, and are for the person on your team who enjoys words like "endpoint".
+After that, every connector gets its own page, one for each card in Settings, in this order: Google Mail and Calendar, Google Drive, GitHub, Linear, Notion, Slack, Granola, Fireflies, Ashby and X, and then one page for tools with no ready-made connector: a custom MCP server. That last one leans a little technical, and is for the person on your team who enjoys words like "endpoint".
 
 You need the overview and the pages for the tools you use. Skip the rest.
 

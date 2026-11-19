@@ -107,22 +107,22 @@ async function execution() {
   return SidekickExecutionDelegationSchema.parse(await stub().sidekickReadExecutionDelegation(address));
 }
 
-async function webhook(evaluatorKeys = ["deployed"]) {
+async function hiringEvent(evaluatorKeys = ["hired"]) {
   await create();
   await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO connector_connections
     (id,workspace_id,connector_type,scope,display_name,model_plugin_id,granted_scopes_json,status,config_json,created_at,updated_at)
-    VALUES (?,?,'generic_webhook','workspace','Deploy hook','plugin_webhook','[]','healthy','{"eventTypes":["deploy.finished"]}',?,?)`, connectionId, workspaceId, now, now));
-  await activate({ ...definition, triggers: [{ type: "connector_activity", connectorType: "generic_webhook", sourceBindingKey: "deploy_hook",
-    suggestedSourcePluginId: "plugin_webhook", eventTypes: ["deploy.finished"], deterministicFilters: {} }] },
+    VALUES (?,?,'ashby','workspace','Ashby workspace events','plugin_ashby','[]','healthy','{"selectedEvents":["candidateHire"]}',?,?)`, connectionId, workspaceId, now, now));
+  await activate({ ...definition, triggers: [{ type: "connector_activity", connectorType: "ashby", sourceBindingKey: "hiring",
+    suggestedSourcePluginId: "plugin_ashby", eventTypes: ["candidateHire"], deterministicFilters: {} }] },
   AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: evaluatorKeys.map((evaluatorKey) => ({ evaluatorKey, source: {
-    sourceBindingKey: "deploy_hook", suggestedSourcePluginId: "plugin_webhook", event: { kind: "event_type", eventType: "deploy.finished" },
+    sourceBindingKey: "hiring", suggestedSourcePluginId: "plugin_ashby", event: { kind: "event_type", eventType: "candidateHire" },
   }, when: { kind: "always" } })) }));
   const registration = await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ registration_id: string }>(
     "SELECT registration_id FROM workspace_external_event_registrations WHERE automation_id=? AND state='active'", automationId,
   ).toArray()[0]!);
   return { ...address, registrationId: registration.registration_id, payloadHash: "hash", event: {
-    id: crypto.randomUUID(), eventSequence: 1, eventType: "deploy.finished", title: "Private deploy", summary: "A deploy finished",
-    textSnippet: "Private deploy details", metadata: {}, occurredAt: Date.now(), audienceKind: "restricted" as const, audienceUserIds: [other],
+    id: crypto.randomUUID(), eventSequence: 1, eventType: "candidateHire", title: "Private hire", summary: "A candidate was hired",
+    textSnippet: "Private hire details", metadata: {}, occurredAt: Date.now(), audienceKind: "restricted" as const, audienceUserIds: [other],
   } };
 }
 
@@ -155,7 +155,7 @@ describe("shared Sidekick delegation admission", () => {
   });
 
   it("checks only the delegate it picks to coordinate, for a manual run and for an admitted event", async () => {
-    const request = await webhook();
+    const request = await hiringEvent();
     await consent(other, true);
     await runDurableObjectAlarm(stub());
     await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
@@ -231,7 +231,7 @@ describe("shared Sidekick delegation admission", () => {
   });
 
   it.each([false, true])("refuses delayed delivery after a disabled connection's registration is removed (legacy: %s)", async (legacy) => {
-    const request = await webhook();
+    const request = await hiringEvent();
     if (legacy) await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
       "UPDATE sidekick_revisions SET definition_json=json_remove(definition_json,'$.definitionVersion') WHERE sidekick_id=?", automationId,
     ));
@@ -299,7 +299,7 @@ describe("shared Sidekick delegation admission", () => {
   });
 
   it("coalesces source changes without losing a wake behind an older handler", async () => {
-    await webhook();
+    await hiringEvent();
     const observed = await runInDurableObject(stub(), (_instance, state) => {
       const alarms = new ScheduledAlarmStore(state.storage.sql);
       const kind = "sidekick_delegation_sources", key = `${automationId}:sources`;
@@ -619,7 +619,7 @@ describe("shared Sidekick delegation admission", () => {
   });
 
   it("requires the source of somebody inside a workspace event's restricted audience, including old queued payloads", async () => {
-    const request = await webhook();
+    const request = await hiringEvent();
     // The creator's own source on the Organization's connection does not reach an event only `other` can see.
     expect(await sourceOwners()).toEqual([creator]);
     expect(await stub().sidekickAdmitExternalEvent(request)).toEqual({ admitted: false, outcomeCode: "sidekick_source_not_permitted" });
@@ -628,16 +628,16 @@ describe("shared Sidekick delegation admission", () => {
     await consent(other, true);
     expect(await stub().sidekickAdmitExternalEvent(request)).toEqual({ admitted: false, outcomeCode: "sidekick_source_not_permitted" });
     expect(await runs()).toEqual([]);
-    await letIn(other, "generic_webhook", "deploy.finished");
+    await letIn(other, "ashby", "candidateHire");
     expect(await stub().sidekickAdmitExternalEvent(request)).toMatchObject({ admitted: true });
     // Of the two delegates the run acts as the one whose event it is: the only one in its audience.
     expect(await runs()).toEqual([{ run_id: expect.any(String), coordinator_user_id: other, state: "pending",
-      summary: null, opening_json: expect.stringContaining("Private deploy details") }]);
+      summary: null, opening_json: expect.stringContaining("Private hire details") }]);
   });
 
   it("rechecks the source at delivery after a matching view has observed it", async () => {
-    const request = await webhook();
-    await letIn(other, "generic_webhook", "deploy.finished");
+    const request = await hiringEvent();
+    await letIn(other, "ashby", "candidateHire");
     // The delivery was prepared while this person's source stood; it arrives later.
     expect(await sourceOwners()).toContain(other);
     expect(await withdrawSource(other)).toEqual({ withdrawn: true });

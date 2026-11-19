@@ -459,8 +459,6 @@ paths for:
   subscription both terminate at a Global ingress that verifies each delivery and
   hands it, and the OAuth authorization code, to the owning region — see
   [`notion-ingress.md`](notion-ingress.md).
-- Signed generic webhooks with HMAC, timestamp, replay, schema, and deduplication
-  checks.
 
 Google ingestion uses provider cursors rather than push delivery: Gmail history
 IDs, Calendar sync/completion cursors, and Drive change page tokens. Drive changes

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   ConnectorRegistry,
-  createGenericWebhookConnector,
   createGitHubConnector,
   createGoogleConnector,
   createLinearConnector,
@@ -56,19 +55,18 @@ describe("connector agent plugins", () => {
   });
 
   it("rejects provider metadata or tool mappings that diverge from the manifest", () => {
-    const adapter = createGenericWebhookConnector();
+    const adapter = configuredAdapters()[0]!;
     const mismatchedProvider: ConnectorAdapter = {
       ...adapter,
       agentPlugin: { ...adapter.agentPlugin, providerType: "other" },
     };
     expect(() => new ConnectorRegistry([mismatchedProvider])).toThrow(/provider type must match/u);
 
-    const webhook = createGenericWebhookConnector();
     const mismatchedTools: ConnectorAdapter = {
-      ...webhook,
+      ...adapter,
       agentPlugin: {
-        ...webhook.agentPlugin,
-        tools: [{
+        ...adapter.agentPlugin,
+        tools: [...adapter.agentPlugin.tools, {
           name: "unexpected",
           description: "Unexpected test tool",
           capability: "test.read",
@@ -84,7 +82,6 @@ describe("connector agent plugins", () => {
 
 function configuredAdapters(): ConnectorAdapter[] {
   return [
-    createGenericWebhookConnector(),
     createGoogleConnector({
       clientId: REMOTE_MARKERS[0],
       clientSecret: REMOTE_MARKERS[1],

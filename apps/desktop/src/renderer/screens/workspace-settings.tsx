@@ -5,7 +5,6 @@ import { startConnectorAuthorization } from '../lib/start-connector-authorizatio
 import { useDocumentTitle } from '../lib/document-title';
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
-import { CopyField } from '../components/copy-button';
 import { SupportAccessSetting } from '../components/support-access-setting';
 import { CanvasSharingDefaultsSetting } from '../components/canvas-sharing-defaults-setting';
 import { ConnectedAppsSetting } from '../components/connected-apps-setting';
@@ -42,7 +41,6 @@ import {
   UserRound,
   Users,
   UsersRound,
-  Webhook,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -141,7 +139,6 @@ const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType'
 const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   ...reconnectableConnectorTypes,
   'custom_mcp',
-  'generic_webhook',
   'x',
 ]);
 
@@ -416,11 +413,6 @@ interface SettingsNavItem {
   disabled?: boolean;
 }
 
-/** The icon a connection's page wears when its company has no mark to draw. */
-function fallbackConnectionIcon(connection: WorkstreamConnection): LucideIcon {
-  if (connection.connectorType === 'generic_webhook') return Webhook;
-  return Plug;
-}
 
 const GUEST_SECTION_DISABLED_REASON = 'Only members of this organization can open this.';
 
@@ -473,7 +465,6 @@ function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
       ...(admin && reconnectableConnectorTypes.has(connection.connectorType)
         && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
       ...(connection.scope === 'you' || admin ? ['Delete', 'Disconnect'] : []),
-      ...(admin && connection.connectorType === 'generic_webhook' ? ['Refresh', 'Webhook signing secret'] : []),
     ],
   });
 }
@@ -511,9 +502,9 @@ const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
  *
  * A row reaches the mark from the connector type it already carries, which is
  * the same route the provider card above it takes — so the card somebody
- * connected from and the row it produced always show the same company. An
- * inbound webhook is not a company and draws no mark; the status dot and the
- * name carry the row on their own.
+ * connected from and the row it produced always show the same company. A
+ * connection that is not a company's (a custom MCP server) draws no mark; the
+ * status dot and the name carry the row on their own.
  */
 function InstalledConnectionMark({ connection }: { connection: WorkstreamConnection }): React.JSX.Element | null {
   const mark = connectorBrandMark(connection.connectorType, connection.displayName);
@@ -666,7 +657,6 @@ export function WorkspaceSettingsScreen({
   const queryClient = useQueryClient();
   const bridge = useMemo(() => desktopBridge(), []);
   const contentRef = useRef<HTMLElement | null>(null);
-  const webhookRefreshCancelRef = useRef<HTMLButtonElement | null>(null);
   const reconnectCancelRef = useRef<HTMLButtonElement | null>(null);
   const disconnectCancelRef = useRef<HTMLButtonElement | null>(null);
   const [startupPage, setStartupPage] = useState(() => readDevicePreferences().startupPage ?? 'canvas-homepage');
@@ -726,16 +716,6 @@ export function WorkspaceSettingsScreen({
   const [installationTarget, setInstallationTarget] = useState<string | null>(null);
   const [granolaSetupKey, setGranolaSetupKey] = useState(() => crypto.randomUUID());
   const [granolaWorkspaceApiKey, setGranolaWorkspaceApiKey] = useState('');
-  const [webhookModalScope, setWebhookModalScope] = useState<'you' | 'workspace' | null>(null);
-  const [webhookDisplayName, setWebhookDisplayName] = useState('Inbound webhook');
-  const [webhookEventTypes, setWebhookEventTypes] = useState('');
-  const [webhookIdempotencyKey, setWebhookIdempotencyKey] = useState(() => crypto.randomUUID());
-  const [webhookSecretResult, setWebhookSecretResult] = useState<{
-    endpoint: string;
-    signingSecret: string;
-    signatureFormat: string;
-  } | null>(null);
-  const [webhookRotationTarget, setWebhookRotationTarget] = useState<WorkstreamConnection | null>(null);
   const [customMcpModalScope, setCustomMcpModalScope] = useState<'you' | 'workspace' | null>(null);
   const [customMcpName, setCustomMcpName] = useState('');
   const [customMcpServerUrl, setCustomMcpServerUrl] = useState('');
@@ -969,18 +949,6 @@ export function WorkspaceSettingsScreen({
     },
     onError: () => granolaRecovery.mutate(),
   });
-  const createWebhookConnection = useMutation({
-    mutationFn: () => api!.createWebhookConnection(
-      webhookDisplayName.trim(),
-      webhookModalScope ?? 'you',
-      [...new Set(webhookEventTypes.split(/[\s,]+/u).map((value) => value.trim()).filter(Boolean))],
-      webhookIdempotencyKey,
-    ),
-    onSuccess: (result) => {
-      setWebhookSecretResult(result);
-      void queryClient.invalidateQueries({ queryKey: ['connections'] });
-    },
-  });
   const customMcpRequestHeaders = (): Record<string, string> => Object.fromEntries(
     customMcpHeaders
       .map((header) => [header.name.trim(), header.value.trim()] as const)
@@ -1021,10 +989,6 @@ export function WorkspaceSettingsScreen({
         workspaceId: workspace.id,
       });
     },
-  });
-  const rotateWebhookSecret = useMutation({
-    mutationFn: (connection: WorkstreamConnection) => api!.rotateWebhookSecret(connection.id),
-    onSuccess: (result) => setWebhookSecretResult(result),
   });
   const reconnectConnection = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
@@ -1172,7 +1136,8 @@ export function WorkspaceSettingsScreen({
     id: 'connection' as const,
     connectionId: connection.id,
     label: connection.displayName,
-    icon: fallbackConnectionIcon(connection),
+    // The icon a connection's page wears when its company has no mark to draw.
+    icon: Plug,
     mark: connectorBrandMark(connection.connectorType, connection.displayName),
     child: true,
   })), [installedConnections]);
@@ -1430,21 +1395,6 @@ export function WorkspaceSettingsScreen({
           label={`Refresh ${connection.displayName}`}
           onClick={() => setReconnectTarget(connection)}
           tooltip="Refresh authorization with the provider."
-        />
-      )}
-      {isAdmin && connection.connectorType === 'generic_webhook' && (
-        <ConnectionIconAction
-          disabled={rotateWebhookSecret.isPending}
-          icon={<RefreshCcw aria-hidden="true" size={14} />}
-          label={`Refresh ${connection.displayName}`}
-          onClick={() => {
-            setWebhookModalScope(connection.scope);
-            setWebhookDisplayName(connection.displayName);
-            setWebhookEventTypes('');
-            setWebhookSecretResult(null);
-            setWebhookRotationTarget(connection);
-          }}
-          tooltip="Refresh this webhook by replacing its signing secret."
         />
       )}
       {(connection.scope === 'you' || isAdmin) && (
@@ -2165,15 +2115,11 @@ export function WorkspaceSettingsScreen({
                   <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; an Organization’s Sidekicks use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
                     {visibleProviders.map((provider) => {
-                      const mark = 'mark' in provider ? provider.mark : null;
-                      const Icon = 'icon' in provider ? provider.icon : null;
                       const connected = providerHasConnection(provider, connections.data ?? []);
                       const providerAvailable = connectorCatalog.data?.includes(provider.provider) ?? false;
                       const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
-                      const hasActivePersonalConnection = provider.provider !== 'generic_webhook'
-                        && providerHasActivePersonalConnection(provider, connections.data ?? []);
-                      const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
-                        && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
+                      const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
+                      const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
                       const personalConnectionStateUnavailable = hasInstallationFacet(provider.provider) && (connections.isLoading || connections.isError);
                       // Ashby's personal sign-in has a prerequisite the OAuth redirect cannot
                       // report: an org that has not opted into Ashby MCP fails provider-side with
@@ -2206,9 +2152,7 @@ export function WorkspaceSettingsScreen({
                         <article className="provider-card" key={provider.id}>
                           <div className="provider-card-heading">
                             <div className="provider-icon">
-                              {mark
-                                ? <ConnectorMark mark={mark} />
-                                : Icon && <Icon aria-hidden="true" size={18} />}
+                              <ConnectorMark mark={provider.mark} />
                             </div>
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
@@ -2226,15 +2170,6 @@ export function WorkspaceSettingsScreen({
                                   onClick={() => {
                                     if (provider.provider === 'custom_mcp') {
                                       openCustomMcpModal('you');
-                                      return;
-                                    }
-                                    if (provider.provider === 'generic_webhook') {
-                                      setWebhookModalScope('you');
-                                      setWebhookDisplayName('Inbound webhook');
-                                      setWebhookEventTypes('');
-                                      setWebhookIdempotencyKey(crypto.randomUUID());
-                                      setWebhookSecretResult(null);
-                                      setWebhookRotationTarget(null);
                                       return;
                                     }
                                     connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
@@ -2257,15 +2192,6 @@ export function WorkspaceSettingsScreen({
                                   }
                                   if (provider.provider === 'granola') {
                                     setGranolaWorkspaceModalOpen(true);
-                                    return;
-                                  }
-                                  if (provider.provider === 'generic_webhook') {
-                                    setWebhookModalScope('workspace');
-                                    setWebhookDisplayName('Organization inbound webhook');
-                                    setWebhookEventTypes('');
-                                    setWebhookIdempotencyKey(crypto.randomUUID());
-                                    setWebhookSecretResult(null);
-                                    setWebhookRotationTarget(null);
                                     return;
                                   }
                                   connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') });
@@ -2675,100 +2601,6 @@ export function WorkspaceSettingsScreen({
             )}
           </div>
         </main>
-        <Modal
-          description={webhookRotationTarget
-            ? 'Continue to replace the endpoint signing secret. The previous secret stops working immediately.'
-            : `Create a ${webhookModalScope === 'workspace' ? 'workspace' : 'personal'} signed activity endpoint.`}
-          footer={webhookSecretResult ? (
-            <Button className="button-primary" onClick={() => setWebhookModalScope(null)}>Done</Button>
-          ) : (
-            <>
-              <Button
-                disabled={createWebhookConnection.isPending || rotateWebhookSecret.isPending}
-                ref={webhookRefreshCancelRef}
-                onClick={() => setWebhookModalScope(null)}
-              >
-                Cancel
-              </Button>
-              {webhookRotationTarget ? (
-                <Button
-                  className="button-primary"
-                  disabled={rotateWebhookSecret.isPending}
-                  onClick={() => rotateWebhookSecret.mutate(webhookRotationTarget)}
-                >
-                  {rotateWebhookSecret.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-                  Continue
-                </Button>
-              ) : (
-                <Button
-                  className="button-primary"
-                  disabled={!webhookDisplayName.trim() || createWebhookConnection.isPending}
-                  onClick={() => createWebhookConnection.mutate()}
-                >
-                  {createWebhookConnection.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-                  Create webhook
-                </Button>
-              )}
-            </>
-          )}
-          initialFocusRef={webhookRotationTarget ? webhookRefreshCancelRef : undefined}
-          onOpenChange={(open) => {
-            if (open || createWebhookConnection.isPending || rotateWebhookSecret.isPending) return;
-            setWebhookModalScope(null);
-            setWebhookRotationTarget(null);
-            setWebhookSecretResult(null);
-          }}
-          open={webhookModalScope !== null}
-          title={webhookRotationTarget ? `Refresh ${webhookDisplayName}?` : 'Create inbound webhook'}
-        >
-          {webhookSecretResult ? (
-            <div className="settings-list-card webhook-secret-result">
-              <p>Copy the endpoint and secret now. Rally will not show this secret again.</p>
-              <CopyField
-                copyLabel="Copy endpoint"
-                inputLabel="Webhook endpoint"
-                label={<SettingLabel setting={settings.webhookEndpoint} />}
-                value={webhookSecretResult.endpoint}
-              />
-              <CopyField
-                copyLabel="Copy secret"
-                inputLabel="Webhook signing secret"
-                label={<SettingLabel setting={settings.webhookSecret} />}
-                secret
-                value={webhookSecretResult.signingSecret}
-              />
-              <small>Sign the exact UTF-8 JSON bytes using: <code>{webhookSecretResult.signatureFormat}</code></small>
-            </div>
-          ) : webhookRotationTarget ? (
-            <p>Update the sender as soon as you rotate. Deliveries signed with the current secret will be rejected.</p>
-          ) : (
-            <>
-              <label className="form-field" htmlFor="webhook-display-name">
-                <span><SettingLabel setting={settings.webhookName} /></span>
-                <input
-                  autoFocus
-                  id="webhook-display-name"
-                  maxLength={180}
-                  onChange={(event) => setWebhookDisplayName(event.currentTarget.value)}
-                  value={webhookDisplayName}
-                />
-              </label>
-              <label className="form-field" htmlFor="webhook-event-types">
-                <span><SettingLabel setting={settings.webhookEvents} /> <small>(optional)</small></span>
-                <input
-                  id="webhook-event-types"
-                  onChange={(event) => setWebhookEventTypes(event.currentTarget.value)}
-                  placeholder="ticket.updated, incident.created"
-                  value={webhookEventTypes}
-                />
-                <small>Separate names with commas or spaces. Leave empty to accept any valid event type.</small>
-              </label>
-            </>
-          )}
-          {(createWebhookConnection.error || rotateWebhookSecret.error) && (
-            <ErrorNotice occurrence={createWebhookConnection.error}>{createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message}</ErrorNotice>
-          )}
-        </Modal>
         <Modal
           description={customMcpModalScope === 'workspace'
             ? 'Everyone in this organization will be able to use this server’s tools, acting through the one authorization set up here.'

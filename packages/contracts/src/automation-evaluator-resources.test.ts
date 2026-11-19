@@ -11,8 +11,8 @@ const triggers = {
   plugin_notion: [
     { eventType: "notion.page.created", eventFamilies: ["pages"], resourceRelationships: [{ relationship: "page", resourceType: "notion_page" }] },
   ],
-  plugin_webhook: [
-    { eventType: "deploy.finished", eventFamilies: [], resourceRelationships: [] },
+  plugin_ashby: [
+    { eventType: "candidateHire", eventFamilies: [], resourceRelationships: [] },
   ],
   plugin_malformed: [
     { eventType: "thing.happened", eventFamilies: [], resourceRelationships: [{ relationship: "page" }] },
@@ -75,7 +75,7 @@ describe("dropping a resource id a rule cannot use", () => {
 
   it("drops a real-looking id on a trigger with no resource relationship", () => {
     const stripped = withoutUnusableAutomationResourceIds(
-      rule("plugin_webhook", { kind: "event_type", eventType: "deploy.finished" }, "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f"),
+      rule("plugin_ashby", { kind: "event_type", eventType: "candidateHire" }, "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f"),
       lookup,
     );
     expect(sourceOf(stripped)).not.toHaveProperty("resourceId");

@@ -25,18 +25,13 @@ export function storedConnectionScope(scope: string): Scope {
 }
 
 /**
- * The activity triggers one connection can start an automation with.
+ * The event types a connection's stored config selects (`selectedEvents`).
  *
  * Most connectors declare their triggers once, in the manifest, because the
- * provider defines the events. A generic webhook is the other way around: the
- * connection's own `eventTypes` allowlist is the vocabulary its deliveries
- * carry (the adapter reads `event_type` from the body and the ingress refuses
- * any type outside the list), so its triggers are one per configured type,
- * with the payload's own keys as the filter fields. Declaring only
- * `webhook.received` made every webhook rule unmatchable: a delivery carried
- * its caller's type, and the matcher selects registrations by exact type.
+ * provider defines the events. Ashby's connection selects a subset of its
+ * manifest's events, and only those can start an automation.
  */
-function configuredEventTypes(configJson: string | null | undefined, field: "eventTypes" | "selectedEvents" = "eventTypes"): string[] {
+function selectedEventTypes(configJson: string | null | undefined): string[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(configJson ?? "{}");
@@ -44,7 +39,7 @@ function configuredEventTypes(configJson: string | null | undefined, field: "eve
     return [];
   }
   const configured = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)[field]
+    ? (parsed as Record<string, unknown>).selectedEvents
     : undefined;
   return Array.isArray(configured)
     ? [...new Set(configured.filter((value): value is string => typeof value === "string" && value.trim() !== ""))]
@@ -69,19 +64,8 @@ export function connectorActivityTriggerDescriptors(
     return adapter.manifest.activityTriggers.filter((descriptor) => grantedScopes.includes(googleActivityCapability(descriptor.eventType)));
   }
   if (adapter.manifest.type === "ashby") {
-    const selected = new Set(configuredEventTypes(connectionConfigJson, "selectedEvents"));
+    const selected = new Set(selectedEventTypes(connectionConfigJson));
     return adapter.manifest.activityTriggers.filter((descriptor) => selected.has(descriptor.eventType));
   }
-  if (adapter.manifest.type !== "generic_webhook") return [...adapter.manifest.activityTriggers];
-  const eventTypes = configuredEventTypes(connectionConfigJson);
-  return (eventTypes.length > 0 ? eventTypes : ["webhook.received"]).map((eventType) => ({
-    eventType,
-    label: eventType,
-    description: `A delivery of ${eventType} on this webhook. Any key the caller posts under metadata may be filtered on, with the operators of its type; name the key bare, without a metadata. prefix.`,
-    eventFamilies: [],
-    filterFields: [],
-    resourceRelationships: [],
-    digestible: false,
-    openFilterFields: true,
-  }));
+  return [...adapter.manifest.activityTriggers];
 }

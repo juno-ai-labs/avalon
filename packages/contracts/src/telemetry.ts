@@ -27,7 +27,6 @@ export type TelemetryPropertyClassification = "operational" | "product" | "diagn
 export const TELEMETRY_CONNECTOR_TYPES = [
   "custom_mcp",
   "google",
-  "generic_webhook",
   "github",
   "apollo",
   "ashby",
@@ -241,13 +240,13 @@ export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number]
 const menuBarAction = z.enum(TELEMETRY_MENU_BAR_ACTIONS);
 
 const automationTriggerType = z.enum([
-  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "invocation",
+  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "invocation",
 ]);
 const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
 /** Where a digest goes: an automation destination, or the person's own Personal Channel. */
 const digestDeliveryTargetType = z.enum(["email", "slack_agent_dm", "personal_channel"]);
 const connectorScope = z.enum(["personal", "workspace"]);
-const connectorSetupMethod = z.enum(["oauth", "api_key", "direct", "webhook"]);
+const connectorSetupMethod = z.enum(["oauth", "api_key", "direct"]);
 const connectorHealth = z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]);
 export const TELEMETRY_REALTIME_SOCKETS = [
   "workspace",
@@ -1935,7 +1934,7 @@ export const TELEMETRY_EVENTS = {
       connectorId: resourceId,
       connector: connectorType,
       scope: connectorScope,
-      action: z.enum(["test", "reconnect", "disconnect", "secret_rotate"]),
+      action: z.enum(["test", "reconnect", "disconnect"]),
       previousHealth: connectorHealth,
       appliedHealth: connectorHealth,
       result: resultClass,

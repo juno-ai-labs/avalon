@@ -18,7 +18,7 @@ import {
 
 const everyProvider = new Set([
   "google", "github", "apollo", "ashby", "fireflies", "granola", "linear", "slack", "notion", "x",
-  "custom_mcp", "generic_webhook",
+  "custom_mcp",
 ]);
 
 function record(overrides: Partial<ConnectorConnectionRecord>): ConnectorConnectionRecord {

@@ -2391,9 +2391,9 @@ async function loadAutomationCreatorPluginCatalog(
           && connectorCapabilitySupportsScope(adapter, definition.capability, scope)
         ));
     // A connection earns its catalog entry by what an automation can do with
-    // it: call its tools, or be started by its events. A generic webhook has
-    // no tools by design and exists only to be a trigger, so a filter on
-    // tools alone made every webhook automation impossible to draft.
+    // it: call its tools, or be started by its events. A connector with no
+    // tools that exists only to be a trigger (Ashby's Organization events)
+    // would be impossible to draft from with a filter on tools alone.
     const eventCapable = adapter.manifest.activityTriggers.length > 0 || Boolean(adapter.webhookActivity);
     if (!dynamicCapability && !staticDefinitions.length && !eventCapable) continue;
     // The scope this connector's events need, named only when this connection
@@ -6715,7 +6715,6 @@ function connectorAutomationPluginIcon(connectorType: string, displayName: strin
     case "github": return "brand-github";
     case "linear": return "linear";
     case "notion": return "brand-notion";
-    case "generic_webhook": return "webhook";
     case "google": return displayName.includes("Drive") ? "brand-google-drive" : "brand-google";
     case "slack": return "brand-slack";
     // `granola` and `x` have adapters but no brand glyph in the icon enum, so

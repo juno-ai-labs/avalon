@@ -32,8 +32,6 @@ const api = vi.hoisted(() => ({
   getAvailableConnectorTypes: vi.fn(),
   createGranolaWorkspaceConnection: vi.fn(),
   connectorInstallation: vi.fn(),
-  createWebhookConnection: vi.fn(),
-  rotateWebhookSecret: vi.fn(),
   createXConnection: vi.fn(),
   createCustomMcpConnection: vi.fn(),
   startCustomMcpConnection: vi.fn(),
@@ -382,7 +380,7 @@ describe('Organization settings', () => {
       ],
     }));
     api.getAvailableConnectorTypes.mockResolvedValue([
-      'custom_mcp', 'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
+      'custom_mcp', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
     ]);
     api.createGranolaWorkspaceConnection.mockResolvedValue({
       id: '00000000-0000-7000-8000-000000000018',
@@ -391,24 +389,6 @@ describe('Organization settings', () => {
       displayName: 'Granola organization',
       capabilities: ['granola.workspace.read'],
       status: 'healthy',
-    });
-    api.createWebhookConnection.mockResolvedValue({
-      connection: {
-        id: '00000000-0000-7000-8000-000000000019',
-        connectorType: 'generic_webhook',
-        scope: 'you',
-        displayName: 'Inbound webhook',
-        capabilities: [],
-        status: 'healthy',
-      },
-      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
-      signingSecret: 'whsec_one-time-secret',
-      signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
-    });
-    api.rotateWebhookSecret.mockResolvedValue({
-      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
-      signingSecret: 'whsec_rotated-secret',
-      signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
     api.disconnectConnection.mockResolvedValue(undefined);
     api.startProviderConnection.mockResolvedValue({
@@ -849,7 +829,6 @@ describe('Organization settings', () => {
     expect(api.addWorkspaceMember).not.toHaveBeenCalled();
     expect(api.startProviderConnection).not.toHaveBeenCalled();
     expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
-    expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
   });
 
   it('keeps the network policy on its own top-level Security page', async () => {
@@ -1038,22 +1017,6 @@ describe('Organization settings', () => {
     // applies and does not. Both surfaces size through `.connector-mark` now.
     expect([...(rowMark?.classList ?? [])]).toEqual(['connector-mark']);
     expect([...(cardMark?.classList ?? [])]).toEqual(['connector-mark']);
-  });
-
-  it('leaves an inbound webhook unmarked, having no company behind it', async () => {
-    api.getConnections.mockResolvedValue([{
-      id: '00000000-0000-7000-8000-000000000022',
-      connectorType: 'generic_webhook',
-      scope: 'workspace',
-      displayName: 'Deploy notifications',
-      capabilities: [],
-      status: 'healthy',
-    }]);
-    renderSettings();
-    openSettingsSection('Connections');
-
-    const row = (await within(screen.getByRole('main')).findByText('Deploy notifications')).closest('tr');
-    expect(row?.querySelector('.connector-mark')).toBeNull();
   });
 
   it('adds a custom MCP server through headers without leaving for a browser', async () => {
@@ -1562,7 +1525,7 @@ describe('Organization settings', () => {
 
   it('gives every connector card one paragraph, and Ashby its opt-in prerequisite on the button', async () => {
     api.getAvailableConnectorTypes.mockResolvedValue([
-      'ashby', 'custom_mcp', 'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
+      'ashby', 'custom_mcp', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
     ]);
     renderSettings();
     openSettingsSection('Connections');
@@ -2031,38 +1994,9 @@ describe('Organization settings', () => {
     expect(api.startProviderConnection).not.toHaveBeenCalledWith('x', expect.anything(), expect.anything());
   });
 
-  it('creates a signed generic webhook and exposes its endpoint and secret once', async () => {
-    renderSettings();
-    openSettingsSection('Connections');
-
-    const webhookCard = (await screen.findByText('Inbound webhook')).closest('article');
-    expect(webhookCard).not.toBeNull();
-    fireEvent.click(await enabledConnectAction(webhookCard!, 'Connect for me'));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Create inbound webhook' });
-    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Support intake' } });
-    fireEvent.change(within(dialog).getByLabelText(/Allowed event types/u), {
-      target: { value: 'ticket.created, ticket.updated' },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create webhook' }));
-
-    await waitFor(() => expect(api.createWebhookConnection).toHaveBeenCalledWith(
-      'Support intake',
-      'you',
-      ['ticket.created', 'ticket.updated'],
-      expect.stringMatching(/^[0-9a-f-]{36}$/u),
-    ));
-    expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
-      'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
-    );
-    expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveAttribute('type', 'password');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy secret' }));
-    expect(copyText).toHaveBeenLastCalledWith('whsec_one-time-secret');
-  });
-
   it('marks X unavailable when the regional backend has no TwitterAPI.io credential', async () => {
     api.getAvailableConnectorTypes.mockResolvedValue([
-      'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack',
+      'github', 'google', 'granola', 'linear', 'notion', 'slack',
     ]);
     renderSettings();
     openSettingsSection('Connections');
@@ -2397,59 +2331,6 @@ describe('Organization settings', () => {
     fireEvent.click(await screen.findByRole('radio', { name: 'Connected' }));
     await waitFor(() => expect(screen.getByText('Google Mail + Calendar')).toBeVisible());
     expect(screen.queryByText('Google Drive + Docs + Sheets')).not.toBeInTheDocument();
-  });
-
-  it('renders generic webhooks in the installed list', async () => {
-    let resolveRotation!: (value: {
-      endpoint: string;
-      signingSecret: string;
-      signatureFormat: string;
-    }) => void;
-    api.getConnections.mockResolvedValue([{
-      id: '00000000-0000-7000-8000-000000000099',
-      connectorType: 'generic_webhook',
-      scope: 'workspace',
-      displayName: 'Inbound webhook',
-      capabilities: [],
-      status: 'healthy',
-    }]);
-    api.rotateWebhookSecret.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveRotation = resolve;
-    }));
-    renderSettings();
-    openSettingsSection('Connections');
-    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
-
-    expect(await screen.findByRole('table', { name: 'Organization connections' })).toBeVisible();
-    expect(within(screen.getByRole('main')).getAllByText('Inbound webhook')).toHaveLength(2);
-    await openConnection('Inbound webhook');
-    const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
-    expect(rotateButton).toBeVisible();
-    fireEvent.focus(rotateButton);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      'Refresh this webhook by replacing its signing secret.',
-    );
-    fireEvent.click(rotateButton);
-    const dialog = await screen.findByRole('dialog', { name: 'Refresh Inbound webhook?' });
-    expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
-    const cancelButton = within(dialog).getByRole('button', { name: 'Cancel' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
-    await waitFor(() => expect(api.rotateWebhookSecret).toHaveBeenCalledWith(
-      '00000000-0000-7000-8000-000000000099',
-    ));
-    expect(cancelButton).toBeDisabled();
-    fireEvent.click(cancelButton);
-    expect(dialog).toBeVisible();
-
-    await act(async () => resolveRotation({
-      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
-      signingSecret: 'whsec_rotated-secret',
-      signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
-    }));
-    expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
-      'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
-    );
-    expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveValue('whsec_rotated-secret');
   });
 
   it('allows members to refresh their personal connections while hiding organization controls', async () => {

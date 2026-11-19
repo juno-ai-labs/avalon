@@ -779,7 +779,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["apollo", "ashby", "custom_mcp", "fireflies", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["apollo", "ashby", "custom_mcp", "fireflies", "google", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -1176,13 +1176,7 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
     deterministicPrefilter: z.record(z.string(), z.unknown()),
     condition: z.string().min(1)
   }),
-  z.object({ type: z.literal("resource_watch"), resourceId: IdSchema }),
-  z.object({
-    type: z.literal("webhook"),
-    sourceBindingKey: ActivitySourceBindingKeySchema.optional(),
-    suggestedSourcePluginId: ModelPluginIdSchema.optional(),
-    eventTypes: z.array(z.string()).min(1)
-  })
+  z.object({ type: z.literal("resource_watch"), resourceId: IdSchema })
 ]);
 
 /**
@@ -1206,14 +1200,13 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
  */
 export type ExternalEventTrigger = Extract<
   z.infer<typeof TriggerDefinitionSchema>,
-  { type: "connector_activity" | "semantic_activity" | "webhook" }
+  { type: "connector_activity" | "semantic_activity" }
 >;
 export function isExternalEventTrigger(
   trigger: z.infer<typeof TriggerDefinitionSchema>,
 ): trigger is ExternalEventTrigger {
   return trigger.type === "connector_activity"
-    || trigger.type === "semantic_activity"
-    || trigger.type === "webhook";
+    || trigger.type === "semantic_activity";
 }
 
 /**
@@ -1414,8 +1407,8 @@ export const AutomationDraftSchema = z.object({
   });
   const sourceBindings = new Map<string, { connectorType: string; pluginId: string }>();
   draft.triggers.forEach((trigger, index) => {
-    if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") return;
-    const connectorType = trigger.type === "webhook" ? "generic_webhook" : trigger.connectorType;
+    if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity") return;
+    const connectorType = trigger.connectorType;
     if (!draft.ready) return;
     if (!trigger.sourceBindingKey) {
       context.addIssue({
@@ -2035,13 +2028,6 @@ export const AnswerElicitationRequestSchema = z.union([
     skipped: z.literal(true)
   })
 ]);
-export const CreateWebhookConnectionRequestSchema = z.object({
-  displayName: z.string().min(1).max(180),
-  scope: ScopeSchema,
-  eventTypes: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
-  idempotencyKey: z.string().trim().min(1).max(120).optional()
-});
-
 // --- Custom MCP servers ----------------------------------------------------
 
 /** How a connection to a person-configured MCP server authenticates. */

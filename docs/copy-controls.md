@@ -51,8 +51,9 @@ before it has something to say.
 
 `CopyField` is the composition for a value shown to be copied rather than read:
 a `<label>` over a read-only `<input>`, the control in the same grid row, and
-`secret` to mask the value. The inbound-webhook result renders two of them, an
-endpoint and a secret.
+`secret` to mask the value. No screen renders one since the inbound-webhook
+result, which showed an endpoint and a secret, was removed with the generic
+webhook connector; it stays for the next value shown once.
 
 ## Invariants
 
@@ -130,7 +131,7 @@ files clears the outcome and discards feedback from a write that finishes later.
 Attachment action tiles share the artifact menu's wrapping labels, including
 the longer failed-copy retry label.
 
-The surfaces' own tests — the inbound-webhook dialog, the
+The surfaces' own tests — the
 inspector rail, the run-failure notice, the site detail, the code block —
 assert on the control by its accessible name.
 

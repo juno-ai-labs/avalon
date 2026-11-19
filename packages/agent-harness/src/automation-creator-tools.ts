@@ -504,7 +504,7 @@ function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): Har
           if (blocker === "sidekick_evaluator_rules_required") {
             throw new Error(
               "Call set_evaluator_rules with at least one rule before submitting a ready draft "
-              + "that has a connector_activity, semantic_activity or webhook trigger",
+              + "that has a connector_activity or semantic_activity trigger",
             );
           }
           if (blocker === "sidekick_activity_source_unbound") {
@@ -517,8 +517,8 @@ function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): Har
             // into an edit.
             const { declared, unbound } = unboundEvaluatorRules(draft.triggers, draftState.evaluatorRules ?? null);
             throw new Error(
-              "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity, "
-              + "semantic_activity or webhook trigger in this draft. "
+              "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity "
+              + "or semantic_activity trigger in this draft. "
               + `This draft's triggers declare ${describeSourceBindings(declared)}. `
               + `${describeUnboundRules(unbound)}. `
               + "Call set_evaluator_rules again with rules that name the triggers' bindings, "

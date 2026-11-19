@@ -225,7 +225,7 @@ describe("resource watch scheduling modes", () => {
   });
 
   it("rejects connectors whose manifest does not support watches", async () => {
-    const database = new WatchDatabase("generic_webhook");
+    const database = new WatchDatabase("ashby");
 
     await expect(new ResourceService(environment(database), auth).watch(resourceId, workstreamId))
       .rejects.toMatchObject({ status: 422, code: "watch_not_supported" });

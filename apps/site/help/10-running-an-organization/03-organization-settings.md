@@ -179,10 +179,6 @@ owners and administrators can:
 - Issue and replace API keys for connectors that use one for the whole
   Organization, such as [Ashby](../05-connecting-your-tools/10-ashby.md) and
   [Granola](../05-connecting-your-tools/08-granola.md).
-- Create and refresh Organization webhooks, as described in
-  [Inbound webhook](../05-connecting-your-tools/13-inbound-webhook.md).
-  Refreshing replaces the signing secret, and the old one stops working at
-  once.
 - Choose which GitHub repositories Rally may use, and whether it may change
   them, under the GitHub settings described in [GitHub](../05-connecting-your-tools/04-github.md).
 - Choose which tools of a shared [custom MCP server](../05-connecting-your-tools/14-custom-mcp-server.md)

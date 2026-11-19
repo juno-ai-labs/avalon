@@ -611,7 +611,7 @@ describe("telemetry registry", () => {
       connector: "granola", scope: "workspace", method: "api_key", capabilityCount: "two_to_five",
     }],
     ["connector_setup_completed_v2", "api", "workspace-user", {
-      connector: "generic_webhook", scope: "workspace", method: "webhook", result: "success",
+      connector: "linear", scope: "workspace", method: "oauth", result: "success",
       duration: "1s_5s", capabilityCount: "two_to_five", reconnect: false,
     }],
     ["connector_action_completed", "api", "workspace-user", {

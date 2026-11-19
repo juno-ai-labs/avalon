@@ -113,6 +113,7 @@ import {
 import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
 import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
 import { CANVA_RETIREMENT_MIGRATION } from "./canva-retirement";
+import { GENERIC_WEBHOOK_RETIREMENT_MIGRATION } from "./generic-webhook-retirement";
 import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
@@ -4522,7 +4523,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
        CHECK (item_id IS NULL OR length(item_id) BETWEEN 1 AND 2000)
        CHECK ((item_id IS NULL) = (item_type IS NULL))`,
   ],
-}];
+}, GENERIC_WEBHOOK_RETIREMENT_MIGRATION];
 
 function conversationToolEntry(conversation: {
   conversationId: string; parentId: string; substreamId: string; kind: ConversationToolEntry["kind"];
@@ -9006,8 +9007,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       .filter((person) => person.role === "author" || person.role === "actor")
       .map((person) => person.userId))];
     // The occurrence key is the adapter's, never the provider payload's: a
-    // same-named key in the activity's metadata is dropped here — the generic
-    // webhook copies a caller's metadata whole — and the one the contract
+    // same-named key in the activity's metadata is dropped here — metadata
+    // can carry whatever a provider put there — and the one the contract
     // carries is written under the host's name for the matcher to lift.
     const providerMetadata = Object.fromEntries(
       Object.entries(activity.metadata).filter(([key]) => key !== "occurrenceKey"),

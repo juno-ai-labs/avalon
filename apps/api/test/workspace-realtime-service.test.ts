@@ -23,7 +23,6 @@ describe('workspaceSyncPublicationsForMutation', () => {
     ['PUT', '/connections/connection-1/github/repository-access', connectionTopics,
       { kind: 'connection', connectionId: 'connection-1' }],
     ['POST', '/connections/custom-mcp', connectionTopics, { kind: 'connection', connectionId: null }],
-    ['POST', '/connections/webhook', connectionTopics, { kind: 'connection', connectionId: null }],
     ['POST', '/connections/x', connectionTopics, organization],
     ['POST', '/connections/granola/workspace', connectionTopics, organization],
     ['POST', '/connections/ashby/workspace', connectionTopics, organization],

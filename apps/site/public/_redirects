@@ -42,8 +42,10 @@
 /support/connectors/notion  /help/connecting-your-tools/notion/  301
 /support/connectors/slack/  /help/connecting-your-tools/slack/  301
 /support/connectors/slack  /help/connecting-your-tools/slack/  301
-/support/connectors/inbound-webhook/  /help/connecting-your-tools/inbound-webhook/  301
-/support/connectors/inbound-webhook  /help/connecting-your-tools/inbound-webhook/  301
+/support/connectors/inbound-webhook/  /help/connecting-your-tools/  301
+/support/connectors/inbound-webhook  /help/connecting-your-tools/  301
+/help/connecting-your-tools/inbound-webhook/  /help/connecting-your-tools/  301
+/help/connecting-your-tools/inbound-webhook  /help/connecting-your-tools/  301
 /support/connectors/x/  /help/connecting-your-tools/x/  301
 /support/connectors/x  /help/connecting-your-tools/x/  301
 /support/connectors/custom-mcp/  /help/connecting-your-tools/custom-mcp-server/  301

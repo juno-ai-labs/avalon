@@ -10,13 +10,10 @@ import { ConnectorProductCatalog, ConnectorProductIds, connectorConnectionServes
 import { paginatedResult } from "./tool-pagination";
 import { isPortableGoogleActivityResource } from "./google-operation-identity";
 import { ConnectorTextCursorSchema, readConnectorTextPage } from "./text-pages";
-import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
-  ExternalPersonSchema,
   deduplicateExternalPeople,
   IdSchema,
-  NormalizedActivitySchema,
   type ConnectorActivityFilterField,
   type ConnectorManifest,
   type ConnectorSurface,
@@ -108,7 +105,6 @@ import { createLinearConnector, type LinearConnectorConfig } from "./linear";
 import { createNotionConnector, type NotionConnectorConfig } from "./notion";
 import { createSlackConnector, type SlackConnectorConfig } from "./slack";
 import { createXConnector, type XConnectorConfig } from "./x";
-import { GENERIC_WEBHOOK_SYSTEM_MESSAGE } from "@rally/prompts/connectors/generic-webhook";
 import { GOOGLE_SYSTEM_MESSAGE } from "@rally/prompts/connectors/google";
 
 export {
@@ -5397,187 +5393,6 @@ function normalizeGoogleToken(value: unknown): Record<string, unknown> {
   };
 }
 
-export interface VerifiedWebhook {
-  timestamp: number;
-  event: Record<string, unknown>;
-  signatureHash: string;
-}
-
-const GenericWebhookEventSchema = z.looseObject({
-  provider_event_id: z.string().trim().min(1).max(500).optional(),
-  id: z.string().trim().min(1).max(500).optional(),
-  event_type: z.string().trim().min(1).max(500).optional(),
-  resource_type: z.string().trim().min(1).max(200).nullable().optional(),
-  provider_resource_id: z.string().trim().min(1).max(500).nullable().optional(),
-  actor: z.record(z.string(), z.unknown()).optional(),
-  subject: z.record(z.string(), z.unknown()).optional(),
-  occurred_at: z.string().datetime({ offset: true }).optional(),
-  title: z.string().trim().min(1).max(500).optional(),
-  summary: z.string().max(4_000).optional(),
-  text: z.string().max(50_000).optional(),
-  text_snippet: z.string().max(4_000).optional(),
-  entity_keys: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
-  dedupe_key: z.string().trim().min(1).max(500).optional(),
-  target_user_ids: z.array(z.string().uuid()).max(100).optional(),
-  external_people: z.array(z.unknown()).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
-
-export async function verifyGenericWebhook(input: {
-  secret: string;
-  signatureHeader: string | null;
-  body: string | Uint8Array;
-  now?: number;
-  replayWindowSeconds?: number;
-}): Promise<VerifiedWebhook> {
-  const components = Object.fromEntries(
-    (input.signatureHeader ?? "")
-      .split(",")
-      .map((part) => part.trim().split("=", 2))
-      .filter((entry): entry is [string, string] => entry.length === 2)
-  );
-  const timestamp = Number(components.t);
-  const signature = components.v1?.toLowerCase();
-  if (!Number.isFinite(timestamp) || !signature || !/^[0-9a-f]{64}$/u.test(signature)) {
-    throw new ConnectorError("invalid_signature", "Missing webhook timestamp or signature");
-  }
-  const now = input.now ?? Math.floor(Date.now() / 1000);
-  if (Math.abs(now - timestamp) > (input.replayWindowSeconds ?? 300)) {
-    throw new ConnectorError("invalid_signature", "Webhook timestamp is outside the replay window");
-  }
-  const bodyBytes = typeof input.body === "string" ? new TextEncoder().encode(input.body) : input.body;
-  const prefix = new TextEncoder().encode(`${timestamp}.`);
-  const signedBytes = new Uint8Array(prefix.byteLength + bodyBytes.byteLength);
-  signedBytes.set(prefix);
-  signedBytes.set(bodyBytes, prefix.byteLength);
-  const expected = await hmacHex(input.secret, signedBytes);
-  if (!constantTimeEqual(expected, signature)) {
-    throw new ConnectorError("invalid_signature", "Webhook signature does not match");
-  }
-  let event: unknown;
-  try {
-    const text = typeof input.body === "string"
-      ? input.body
-      : new TextDecoder("utf-8", { fatal: true }).decode(input.body);
-    event = JSON.parse(text) as unknown;
-  } catch (error) {
-    throw new ConnectorError("invalid_payload", "Webhook body is not valid UTF-8 JSON", error);
-  }
-  const parsed = GenericWebhookEventSchema.safeParse(event);
-  if (!parsed.success) {
-    throw new ConnectorError("invalid_payload", "Webhook body does not match the generic activity schema", {
-      issues: parsed.error.issues.slice(0, 20).map((issue) => ({ path: issue.path.join("."), message: issue.message })),
-    });
-  }
-  return {
-    timestamp,
-    event: parsed.data,
-    signatureHash: await sha256(signature)
-  };
-}
-
-export function createWebhookSecret(): string {
-  return `whsec_${bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)))}`;
-}
-
-export const GenericWebhookAgentPluginDescriptor = defineConnectorAgentPlugin({
-  providerType: "generic_webhook",
-  wireNamePrefix: "webhook",
-  description: "Receive authenticated webhook activity; this connector exposes no outbound model tools.",
-  systemMessage: GENERIC_WEBHOOK_SYSTEM_MESSAGE,
-  tools: [],
-});
-
-export function createGenericWebhookConnector(): ConnectorAdapter {
-  return {
-    agentPlugin: GenericWebhookAgentPluginDescriptor,
-    webhookActivity: {
-      async verify(input) {
-        if (!input.verificationSecret) {
-          throw new ConnectorError("invalid_configuration", "Generic webhook verification is not configured");
-        }
-        const rawBody = input.rawBodyBytes ?? new TextEncoder().encode(input.rawBody);
-        if (rawBody.byteLength > input.maxBytes) {
-          throw new ConnectorError("payload_too_large", "Generic webhook payload exceeds the configured limit");
-        }
-        const verified = await verifyGenericWebhook({
-          secret: input.verificationSecret,
-          signatureHeader: readRallyHeader(input.headers, RALLY_HEADERS.SIGNATURE) ?? null,
-          body: rawBody,
-          now: Math.floor(input.now / 1_000),
-          replayWindowSeconds: Math.floor((input.replayWindowMs ?? 300_000) / 1_000),
-        });
-        return {
-          deliveryId: readString(verified.event, "provider_event_id")
-            ?? readString(verified.event, "id")
-            ?? verified.signatureHash,
-          eventType: readString(verified.event, "event_type") ?? "webhook.received",
-          providerAccountId: null,
-          bodyHash: await sha256(rawBody),
-          receiptKey: verified.signatureHash,
-          event: verified.event,
-        };
-      },
-      normalize(connection, delivery, payloadRef) {
-        const event = GenericWebhookEventSchema.parse(delivery.event);
-        const providerResourceId = readString(event, "provider_resource_id");
-        const now = new Date().toISOString();
-        const activityScope = googleActivityScope(connection);
-        const requestedTargets = event.target_user_ids ?? [];
-        return NormalizedActivitySchema.omit({ id: true }).parse({
-          ...activityScope,
-          targetUserIds: connection.scope === "workspace"
-            ? requestedTargets
-            : activityScope.targetUserIds,
-          provider: "generic_webhook",
-          providerEventId: delivery.deliveryId,
-          eventType: delivery.eventType,
-          resourceType: readString(event, "resource_type"),
-          providerResourceId,
-          actor: readRecord(event, "actor") ?? {},
-          subject: readRecord(event, "subject") ?? {},
-          occurredAt: timestampFromValue(readString(event, "occurred_at")) ?? now,
-          receivedAt: now,
-          title: readString(event, "title") ?? "Webhook event received",
-          summary: readString(event, "summary") ?? "",
-          textSnippet: truncateText(readString(event, "text") ?? readString(event, "text_snippet") ?? "", 4_000),
-          payloadRef,
-          entityKeys: readStringArray(event, "entity_keys"),
-          dedupeKey: readString(event, "dedupe_key") ?? delivery.deliveryId,
-          rawContentHash: delivery.bodyHash,
-          externalPeople: normalizeGenericWebhookExternalPeople(event.external_people),
-          metadata: readRecord(event, "metadata") ?? {},
-        });
-      },
-    },
-    manifest: {
-      type: "generic_webhook",
-      displayName: "Generic webhook",
-      supportedScopes: ["personal", "workspace"],
-      oauthRequired: false,
-      // Avalon cannot know what a caller will post here, and an unreadable
-      // payload rendered into somebody's morning email is worse than a missing
-      // line. A generic webhook earns a digest through an automation that
-      // understands it, not by default.
-      activityTriggers: defineConnectorActivityTriggers("Generic webhook", {
-        digestible: [],
-        operational: ["webhook.received"],
-      }),
-      resourceTypes: ["webhook_resource"],
-      tools: [],
-      supportsWatches: false,
-      supportsPolling: false,
-      supportsWebhooks: true
-    },
-    async executeTool(name) {
-      throw new ConnectorError("unsupported_capability", `Generic webhooks expose no outbound tool named ${name}`);
-    },
-    async healthCheck() {
-      return { ok: true, message: "Webhook verification is available" };
-    }
-  };
-}
-
 /**
  * Where the product catalog (`ConnectorProductCatalog` in `@rally/contracts`)
  * disagrees with the adapter that authorizes its products, or null. The
@@ -5845,7 +5660,7 @@ export function createConnectorRegistry(input: {
    */
   documents?: ConnectorDocumentReader;
 } = {}): ConnectorRegistry {
-  const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
+  const adapters: ConnectorAdapter[] = [];
   if (input.customMcp) adapters.push(createCustomMcpConnector({
     ...input.customMcp,
     fetch: instrumentConnectorFetch(
@@ -6172,22 +5987,6 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-async function hmacHex(secret: string, message: string | Uint8Array): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    toArrayBuffer(typeof message === "string" ? new TextEncoder().encode(message) : message),
-  );
-  return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function sha256(value: string | Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -6196,56 +5995,10 @@ async function sha256(value: string | Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function constantTimeEqual(left: string, right: string): boolean {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  }
-  return difference === 0;
-}
-
 function readString(value: unknown, key: string): string | null {
   if (!value || typeof value !== "object") return null;
   const nested = (value as Record<string, unknown>)[key];
   return typeof nested === "string" ? nested : null;
-}
-
-function normalizeGenericWebhookExternalPeople(
-  value: unknown,
-): NonNullable<NormalizedActivity["externalPeople"]> {
-  if (!Array.isArray(value)) return [];
-  const schema = ExternalPersonSchema;
-  const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
-  for (const candidate of value) {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
-    const record = candidate as Record<string, unknown>;
-    const required = (key: string, maximum: number): string | null => {
-      const raw = readString(record, key)?.trim();
-      return raw ? raw.slice(0, maximum) : null;
-    };
-    const nullable = (key: string, maximum: number): string | null => {
-      const raw = readString(record, key)?.trim();
-      return raw ? raw.slice(0, maximum) : null;
-    };
-    const emailCandidate = nullable("email", 254)?.toLowerCase() ?? null;
-    const email = emailCandidate && z.string().email().safeParse(emailCandidate).success
-      ? emailCandidate
-      : null;
-    const normalized = {
-      provider: required("provider", 80),
-      providerTenantId: nullable("providerTenantId", 200),
-      providerUserId: nullable("providerUserId", 200),
-      handle: nullable("handle", 200),
-      email,
-      displayName: nullable("displayName", 180),
-      role: required("role", 80),
-      sourceText: required("sourceText", 1_000),
-    };
-    const parsed = schema.safeParse(normalized);
-    if (parsed.success) people.push(parsed.data);
-  }
-  return people;
 }
 
 function readNestedString(value: unknown, parent: string, key: string): string | null {
@@ -6264,9 +6017,7 @@ function escapeDriveQuery(value: string): string {
 }
 
 export const __testing = {
-  constantTimeEqual,
   extractReadableText,
-  hmacHex,
   serializeEmail
 };
 

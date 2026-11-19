@@ -9,7 +9,7 @@ import { writeSidekickRegistrations } from "./helpers/sidekick";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /**
- * Synthetic events from five connectors against rules of every shape the
+ * Synthetic events from four connectors against rules of every shape the
  * evaluator vocabulary allows, through the workspace's real ledger and
  * matcher. Nothing here runs an automation: what is proved is which
  * destination hears which event, which is the whole of routing.
@@ -26,7 +26,6 @@ const CONNECTIONS = {
   linear: { id: "00000000-0000-7000-8000-0000000009e2", plugin: "plugin_linear" },
   notion: { id: "00000000-0000-7000-8000-0000000009e3", plugin: "plugin_notion" },
   slack: { id: "00000000-0000-7000-8000-0000000009e4", plugin: "plugin_slack" },
-  generic_webhook: { id: "00000000-0000-7000-8000-0000000009e5", plugin: "plugin_webhook" },
 } as const;
 type Connector = keyof typeof CONNECTIONS;
 
@@ -194,9 +193,9 @@ describe("external event rules across connectors", () => {
 
   it("hands the run the event it matched on: snippet and metadata ride the delivery", async () => {
     await register(AUTOMATIONS.slowDeploys, [
-      rule(AUTOMATIONS.slowDeploys, 1, "generic_webhook", "deploy.finished", { kind: "always" }),
+      rule(AUTOMATIONS.slowDeploys, 1, "github", "github.workflow_run.completed", { kind: "always" }),
     ]);
-    const eventId = await ingest("generic_webhook", "deploy.finished", {
+    const eventId = await ingest("github", "github.workflow_run.completed", {
       textSnippet: "checkout deployed in 7 minutes",
       metadata: { service: "checkout", durationMs: 420_000 },
     });
@@ -300,7 +299,7 @@ describe("external event rules across connectors", () => {
 
   it("delivers one event to every destination whose rule holds, across event types of one connector", async () => {
     await register(AUTOMATIONS.slowDeploys, [
-      rule(AUTOMATIONS.slowDeploys, 1, "generic_webhook", "deploy.finished", {
+      rule(AUTOMATIONS.slowDeploys, 1, "github", "github.workflow_run.completed", {
         kind: "all",
         allOf: [
           { kind: "string", attribute: "service", operator: "equals", value: "checkout" },
@@ -309,15 +308,15 @@ describe("external event rules across connectors", () => {
       }),
       // A second rule on another event type of the same connection: OR across
       // event types is two rules, which is the only OR the contract has.
-      rule(AUTOMATIONS.slowDeploys, 2, "generic_webhook", "deploy.failed", { kind: "always" }),
+      rule(AUTOMATIONS.slowDeploys, 2, "github", "github.release.published", { kind: "always" }),
     ]);
     await register(AUTOMATIONS.workspaceWide, [
-      rule(AUTOMATIONS.workspaceWide, 1, "generic_webhook", "deploy.finished", { kind: "always" }),
+      rule(AUTOMATIONS.workspaceWide, 1, "github", "github.workflow_run.completed", { kind: "always" }),
     ]);
 
-    const slow = await ingest("generic_webhook", "deploy.finished", { metadata: { service: "checkout", durationMs: 420_000 } });
-    const fast = await ingest("generic_webhook", "deploy.finished", { metadata: { service: "checkout", durationMs: 12_000 } });
-    const failed = await ingest("generic_webhook", "deploy.failed", { metadata: { service: "search" } });
+    const slow = await ingest("github", "github.workflow_run.completed", { metadata: { service: "checkout", durationMs: 420_000 } });
+    const fast = await ingest("github", "github.workflow_run.completed", { metadata: { service: "checkout", durationMs: 12_000 } });
+    const failed = await ingest("github", "github.release.published", { metadata: { service: "search" } });
 
     expect(await destinationsFor(slow)).toEqual([AUTOMATIONS.slowDeploys, AUTOMATIONS.workspaceWide].sort());
     expect(await destinationsFor(fast)).toEqual([AUTOMATIONS.workspaceWide]);

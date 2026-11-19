@@ -843,7 +843,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   ([`slack-integration.md`](slack-integration.md)).
 
 - `WorkspaceDO.webhook_receipts` stores connection-scoped signed-delivery replay
-  receipts for generic, Granola and Ashby webhooks. `provider_webhook_receipts` remains
+  receipts for Granola, Ashby and Fireflies webhooks. `provider_webhook_receipts` remains
   in D1 only for a provider-global delivery that may precede/fan out across the
   workspace routes it matches.
 
@@ -1133,6 +1133,40 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-19 — WorkspaceDO 154 purges the retired generic webhook connector
+
+**What changed:** Migration 154 (`generic-webhook-retirement.ts`) disables
+every `generic_webhook` connection and nulls its credentials (the HMAC signing
+secret lived there), marks its event registrations removed, deletes its
+`webhook_receipts` rows, and filters every `webhook`-type trigger, and every
+evaluator, trigger, recommended plugin and binding naming a generic webhook
+connection (by `connectorType` or `model_plugin_id`), out of
+`automation_directory` and every `sidekick_revisions` row. Triggers then abort a
+`generic_webhook` `connector_connections` insert, a generic webhook
+connection's move off `disabled`, and a generic webhook event registration. The
+JSON-array filters are shared with migration 152 through
+`connector-retirement-sql.ts`, whose output for 152 is unchanged.
+
+**Why:** the owner asked for the generic webhook connector to be removed from
+the product, and with it the `webhook` trigger type; a stored `webhook` trigger
+no longer parses as a Sidekick definition, so the revisions are rewritten
+rather than left unreadable. A revision's `definition_hash` is written and
+never verified, so the rewrite leaves it as it was.
+
+**Alternatives rejected:** narrowing the `generic_webhook` CHECK constraints,
+which would rebuild `connector_connections` and its dependents for a value the
+triggers already refuse; and deleting the removed registrations, which
+`workspace_external_event_deliveries` references with no `ON DELETE` action.
+There are no schedules or resource watches to retire: the connector neither
+polled nor supported watches.
+
+**Consequences:** `generic_webhook` stays in the stored CHECK vocabularies and
+the disabled rows and removed registrations stay; code no longer accepts the
+value anywhere, and source reconciliation reads earlier registrations only on
+live connections. A populated version-153 workerd test covers the purge, the
+untouched Linear control, the triggers, and that reconciliation still reads
+past a removed registration.
 
 ### 2026-11-17 — WorkspaceDO 152 purges the retired Canva connector
 

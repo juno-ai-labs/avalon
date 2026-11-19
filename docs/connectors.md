@@ -206,7 +206,7 @@ serve, or, for a connection serving several (a Google grant of mail and Drive
 together), the provider's name, which for Google is Google Workspace. Names
 written before a product's name changed keep the old first half;
 the account half is all that is read back. A product whose connections a person
-names (a custom MCP server, an inbound webhook) reads the whole name.
+names (a custom MCP server) reads the whole name.
 
 `foldConnectorProductStates` is pure: given product ids, the rows a caller may
 see and the providers this deployment registers, it returns each product's
@@ -1099,33 +1099,6 @@ Its health check verifies reachability and authentication and deliberately reads
 
 The loadable `rally:web` plugin exposes `web_search` and `web_fetch` through Firecrawl. Search returns bounded ranked links; fetch accepts only safe public HTTP(S) URLs and returns bounded clean Markdown. The plugin is omitted entirely when the regional `FIRECRAWL_API_KEY` secret is absent.
 
-### Generic webhook
-
-Each connection receives a unique secret and URL. Send compact JSON with a Unix timestamp and signature header:
-
-```text
-X-Rally-Signature: t=<seconds>,v1=<hex HMAC-SHA256 of "<seconds>.<raw body>">
-```
-
-Rally validates time, signature, replay receipt, body schema, scope, and dedupe key before normalizing an activity. Transcript providers can use this connector, but the product must not label it a native Granola integration.
-
-Settings exposes personal and administrator-only workspace webhook creation. Creation accepts an idempotency key so a retried response returns the same endpoint and still-current one-time secret. The regional API lets the owner of a personal webhook rotate its secret and requires an administrator for a workspace webhook; desktop Settings deliberately narrows every visible Refresh action to workspace administrators. Rotation keeps the endpoint stable and invalidates the old secret immediately, so Settings cannot let its confirmation dialog close while the replacement secret is still being requested.
-
-The request body must be a JSON object no larger than the regional provider-webhook limit. The supported fields are:
-
-- `provider_event_id` or `id`: stable source delivery identity, up to 500 characters. If both are absent, Rally derives an identity from the normalized signature.
-- `event_type`: source event name, up to 500 characters. Omission becomes `webhook.received`; a connection configured with allowed event types rejects names outside that allowlist.
-- `resource_type` and `provider_resource_id`: optional stable source resource identity.
-- `occurred_at`: optional ISO 8601 timestamp with an explicit offset.
-- `title`, `summary`, and `text` or `text_snippet`: bounded human-readable evidence. Only the compact normalized snippet enters activity metadata; the exact signed body remains in regional payload storage.
-- `actor` and `subject`: optional JSON objects describing the source actor and object.
-- `entity_keys`: up to 100 stable correlation keys; `dedupe_key`: an optional stable idempotency key.
-- `target_user_ids`: for workspace connections only, up to 100 active members of that same Rally workspace. Personal connections always target their owner and ignore supplied targets.
-- `external_people`: up to 10,000 distinct external-person references after deduplication. Generic-webhook claims remain unverified source evidence and can never create a reusable verified identity mapping.
-- `metadata`: optional provider-specific JSON metadata.
-
-Rally verifies the HMAC over the exact received bytes before UTF-8 decoding or JSON parsing. Invalid signatures return `401`, malformed or schema-invalid bodies return `400`, disallowed events or non-member targets return `422`, identity/dedupe collisions return `409`, oversized bodies return `413`, and new deliveries return `202` (`200` when the same delivery is already known). Senders should retry network failures and `5xx` responses with exponential backoff using the same identity and exact body; they must not reuse an identity or dedupe key with changed content.
-
 ### Unsigned webhook subscription handshakes
 
 Use Notion's setup flow as the reference pattern when a provider sends an
@@ -1134,8 +1107,7 @@ verification**, especially when the provider's dashboard requires an operator to
 paste that plaintext back. This is narrower than ordinary webhook verification:
 GitHub and Linear start with developer-configured signing secrets, Slack starts
 with its app signing secret, Granola returns a Standard Webhooks signing secret
-while Rally creates the endpoint, and generic webhooks are created by Rally.
-Those connectors do not need this handshake.
+while Rally creates the endpoint. Those connectors do not need this handshake.
 
 For a provider that does match the pattern:
 
@@ -1201,7 +1173,7 @@ change, not a last-seen heartbeat. Real workerd coverage lives in `resource-upda
 
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
 
-- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, GitHub, Granola, Linear, Notion, and generic webhook use this facet.
+- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, Fireflies, GitHub, Granola, Linear, Notion, and Slack use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
 
 **A connector that will no longer take a *credential* in one of its scopes says
@@ -1440,8 +1412,8 @@ adapter's own, stored at ingest.
 
 Connector setup intent records only connector, personal/workspace scope, setup
 method, and bounded capability count. The regional service owns terminal OAuth
-outcomes and successful direct connection creation. Test, reconnect, disconnect,
-and webhook-secret rotation report previous/applied health and result; a distinct
+outcomes and successful direct connection creation. Test, reconnect and
+disconnect report previous/applied health and result; a distinct
 health transition is emitted only when health actually changes. Activity ingest
 reports canonical connector/activity type, bounded item count, and
 accepted/duplicate/filtered/failed result after admission. Connection IDs are
@@ -1627,12 +1599,6 @@ now guards it.
   defensively at every read and write site, a new connector should keep its own
   truncation at or under 300/2,000 characters so a conversation never depends
   solely on a downstream guard to stay openable.
-- **Generic-webhook responses are specified**: `401` invalid signature, `400`
-  malformed or schema-invalid, `422` disallowed event or non-member target, `409`
-  identity or dedupe collision, `413` oversized, `202` new delivery, `200` a
-  delivery already known. Senders retry network failures and `5xx` with exponential
-  backoff using the same identity and exact body, and must not reuse an identity or
-  dedupe key with changed content.
 - **A GitHub delivery that fails in the consumer is not redelivered by GitHub.**
   The receiver already answered `202`, so the Queue's retries — backed off by
   attempt, or by a rate limit's Retry-After — are the only ones, and after them
@@ -1797,6 +1763,57 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-19 — The generic webhook connector and the `webhook` trigger are removed
+
+**What changed:** The generic webhook connector is gone: its adapter
+(`createGenericWebhookConnector`, `verifyGenericWebhook`, the
+`X-Rally-Signature` scheme), its prompt, its `generic-webhook` catalog entry,
+its onboarding id, the `POST /connections/webhook` and
+`/connections/:id/webhook-secret/rotate` routes, the `/ingest/webhook/:id`
+ingress, its Settings card, dialog and Refresh action, and its help page. The
+Sidekick `webhook` trigger type, which existed only for it, is gone from
+`TriggerDefinitionSchema`, the drafting tool and the trigger skills;
+`generic_webhook` leaves `ConnectionSchema`, `ConnectorTypeSchema` and the
+telemetry connector list, and the `webhook` setup method and `secret_rotate`
+connector action leave telemetry. WorkspaceDO migration 154
+(`generic-webhook-retirement.ts`) disables every generic webhook connection and
+clears its credentials — where its signing secret lived — removes its event
+registrations, deletes its `webhook_receipts`, and strips every `webhook`
+trigger and every evaluator, trigger and plugin binding naming a generic
+webhook from each Sidekick's projection and stored revisions; triggers refuse a
+new generic webhook connection, a revival or a registration. The two
+retirements share `connector-retirement-sql.ts`. Source reconciliation now
+reads a Sidekick's earlier registrations only on live connections, so a
+removed Canva or generic webhook registration, whose connector type the
+evaluator schema no longer admits, cannot refuse it.
+
+**Why:** The owner asked for the generic webhook connector to be removed from
+the product.
+
+**Considered and rejected:**
+- Keeping the `webhook` trigger type for read compatibility, as
+  `AutomationRunTriggerV1Schema` keeps `inbound_email`. A trigger is active
+  configuration rather than run history: kept, it would still be offered to
+  the drafting model by the type it parses as. The migration rewrites the
+  stored revisions instead.
+- Narrowing the `connector_type` CHECK vocabularies, as for Canva: it would
+  rebuild `connector_connections` and every dependent for a value the triggers
+  already refuse.
+- Deleting the removed registrations instead of reading around them:
+  `workspace_external_event_deliveries` references them with no `ON DELETE`
+  action, so the delete would abort on any registration that ever delivered.
+
+**Consequences:** `openFilterFields` stays in the trigger-descriptor contract
+and the evaluator, but no shipped connector sets it now; a connector whose
+events carry caller-chosen keys would be its next user. The `webhook` icon
+stays in `AutomationPluginIconSchema` and the run-row glyphs, as a generic
+mark. Regional D1 `connector_ingress_routes` rows for generic webhook
+connections keep `status = 'active'` with nothing left that reads them for
+that connector type. A stored draft whose only trigger was a `webhook` and
+which declares custom tools no longer satisfies the ready-draft refinement
+after the purge; nothing rewrote it to another trigger, because which one is
+the owner's choice.
 
 ### 2026-11-19 — An event names the item it is about
 

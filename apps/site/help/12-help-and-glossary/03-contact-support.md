@@ -55,7 +55,6 @@ into your accounts.
 - Passwords, for Rally or any other service.
 - Sign-in codes, sign-in links or invitation links.
 - API keys, access tokens, or the codes a tool shows you while you connect it.
-- An inbound webhook's signing secret.
 - Header values you entered for a custom MCP server, which often contain keys.
 - Private messages, whole customer documents, or anyone else's personal
   information.

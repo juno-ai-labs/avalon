@@ -1372,7 +1372,7 @@ loaded into someone else's conversation, not a read of its own.
   definition's triggers in the run trigger vocabulary
   (`AutomationRunSchema.triggerType`), each kind once in the order first
   named (`AUTOMATION_TRIGGER_KINDS_SQL`): calendar and interval are
-  `schedule`, connector, semantic, resource-watch and webhook triggers are
+  `schedule`, connector, semantic and resource-watch triggers are
   `external_event`. It reads the accepted definition, or a draft's newest
   submitted one, so the Sidekicks home can say "On alert", "On email" or "On
   request" where a schedule says when (design §3).
@@ -2218,7 +2218,7 @@ instruction body.
 | `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, the submission pre-check, and the sentence a scope-blocked connection carries into the catalog and into a refused rule. |
 | `packages/contracts/src/automation-evaluator-resources.test.ts` | `pnpm --filter @rally/contracts test` | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse. |
 | `apps/api/test-workers/sidekick-resource-registration.test.ts` | `pnpm --filter @rally/api test:workers` | Provider-verified registration, canonical identity reuse, event binding and incoming-event resource resolution, inaccessible files, personal ownership, frozen grants, and connection revocation against real WorkspaceDO storage. |
-| `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, the triggers a personal connection is not offered and the workspace one still is, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
+| `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the triggers a personal connection is not offered and the workspace one still is, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
 
 Traps worth knowing before writing one here. The `test-workers` D1 starts with
 no schema, so a test that exercises membership or sessions declares those tables

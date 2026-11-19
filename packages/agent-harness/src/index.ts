@@ -2689,8 +2689,8 @@ const automationDraftSubmissionJsonSchema = {
         properties: {
           type: {
             type: "string",
-            enum: ["manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "invocation"],
-            description: "What starts a run: `invocation` when a bound app submits a task, `manual` when a person asks, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `webhook` on an inbound HTTP call. Legacy `resource_watch` does not start Sidekick runs; use declared events or polling instead."
+            enum: ["manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "invocation"],
+            description: "What starts a run: `invocation` when a bound app submits a task, `manual` when a person asks, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, or `semantic_activity` on a connector event that also passes a written condition. Legacy `resource_watch` does not start Sidekick runs; use declared events or polling instead."
           },
           artifactId: { type: ["string", "null"], description: "For invocation, the published app artifact UUID (artifactId from publish_resource), not its resource ID. One app per Sidekick. Null for other types." },
           bindingName: { type: ["string", "null"], description: "For invocation, the unique JavaScript identifier this app calls as env.SIDEKICKS.<bindingName>.send({operationId,input}). One invocation trigger per Sidekick; an app can bind many Sidekicks under different names. Null for other types." },
@@ -2702,9 +2702,9 @@ const automationDraftSubmissionJsonSchema = {
           summary: { type: ["string", "null"], description: "One line saying when this trigger fires, in the person's own terms, for example \"Every Monday at 9am\". Null when the type makes it obvious." },
           intervalSeconds: { type: ["integer", "null"], minimum: 60, description: "For an `interval` trigger, how many seconds between runs, at least 60 — 3600 is hourly. Null for every other type." },
           connectorType: { type: ["string", "null"], description: "For a `connector_activity` or `semantic_activity` trigger, which connector the events come from, for example `slack`. Null for every other type." },
-          sourceBindingKey: { type: ["string", "null"], description: "For a `connector_activity`, `semantic_activity`, or `webhook` trigger, a short lowercase label you compose for what this trigger watches, for example `fireflies_meetings`. Choose it yourself: it is not a provider identifier and no tool returns one, so there is nothing to look up. Its only job is to join this trigger to the evaluator rules that filter it — write the identical label in each of those rules' `sourceBindingKey`, and reuse one label rather than inventing a second for the same trigger. The one exception: where resources_search returned `sourceBindingKeys` for a resource a rule names, use one of those instead. Narrowing a rule to a particular channel, folder, or repository is `resourceId`'s job and not this field's. A draft submitted with `ready: true` is refused without it on all three of those types, so it cannot be left null even for a watch covering a whole connector. Null for every other type." },
-          suggestedSourcePluginId: { type: ["string", "null"], description: "For a `connector_activity`, `semantic_activity`, or `webhook` trigger, the plugin whose events these are, as a `pluginId` from plugins_list or plugins_search. A draft submitted with `ready: true` is refused without it on all three. Null for every other type." },
-          eventTypes: { type: ["array", "null"], items: { type: "string" }, description: "For a `connector_activity` or `webhook` trigger, which event types to listen for, at least one, spelled exactly as plugin_inspect reports them, for example [\"slack.message.posted\"]. They are namespaced by connector, so copy them from plugin_inspect rather than shortening them: an event type the plugin does not declare is not reported as wrong, it simply never fires, and the Sidekick is silently inert. Null for every other type." },
+          sourceBindingKey: { type: ["string", "null"], description: "For a `connector_activity` or `semantic_activity` trigger, a short lowercase label you compose for what this trigger watches, for example `fireflies_meetings`. Choose it yourself: it is not a provider identifier and no tool returns one, so there is nothing to look up. Its only job is to join this trigger to the evaluator rules that filter it — write the identical label in each of those rules' `sourceBindingKey`, and reuse one label rather than inventing a second for the same trigger. The one exception: where resources_search returned `sourceBindingKeys` for a resource a rule names, use one of those instead. Narrowing a rule to a particular channel, folder, or repository is `resourceId`'s job and not this field's. A draft submitted with `ready: true` is refused without it on both of those types, so it cannot be left null even for a watch covering a whole connector. Null for every other type." },
+          suggestedSourcePluginId: { type: ["string", "null"], description: "For a `connector_activity` or `semantic_activity` trigger, the plugin whose events these are, as a `pluginId` from plugins_list or plugins_search. A draft submitted with `ready: true` is refused without it on both. Null for every other type." },
+          eventTypes: { type: ["array", "null"], items: { type: "string" }, description: "For a `connector_activity` trigger, which event types to listen for, at least one, spelled exactly as plugin_inspect reports them, for example [\"slack.message.posted\"]. They are namespaced by connector, so copy them from plugin_inspect rather than shortening them: an event type the plugin does not declare is not reported as wrong, it simply never fires, and the Sidekick is silently inert. Null for every other type." },
           deterministicFilters: {
             type: ["string", "null"],
             description: "A JSON-encoded object of deterministic connector filters."
@@ -3178,13 +3178,6 @@ function normalizeAutomationTrigger(value: unknown): unknown {
       };
     case "resource_watch":
       return { type: "resource_watch", resourceId: trigger.resourceId };
-    case "webhook":
-      return {
-        type: "webhook",
-        sourceBindingKey: trigger.sourceBindingKey,
-        suggestedSourcePluginId: trigger.suggestedSourcePluginId,
-        eventTypes: trigger.eventTypes,
-      };
     default:
       return value;
   }
@@ -3835,7 +3828,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "submit_draft",
-    description: "Save the full Sidekick draft. If required information is missing, set ready=false and ask the requester for it. If an agent requested the work, send that agent your question. Before saving ready=true with a connector_activity, semantic_activity, or webhook trigger, add at least one evaluator rule.",
+    description: "Save the full Sidekick draft. If required information is missing, set ready=false and ask the requester for it. If an agent requested the work, send that agent your question. Before saving ready=true with a connector_activity or semantic_activity trigger, add at least one evaluator rule.",
     capability: "rally.sidekick.submit",
     mode: "write",
     idempotency: "record_before_execute",

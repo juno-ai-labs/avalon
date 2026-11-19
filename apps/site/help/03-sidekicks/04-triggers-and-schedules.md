@@ -1,6 +1,6 @@
 ---
 title: Triggers and schedules
-description: "Decide what starts a Sidekick: a time, an interval, an event in another tool, a webhook or an email."
+description: "Decide what starts a Sidekick: a time, an interval, an event in another tool or an email."
 ---
 
 A trigger is the "when" of a Sidekick. Give a Sidekick a trigger and it
@@ -24,7 +24,6 @@ The triggers it chose then appear in plain words in the details column under
 | An interval | "Check my inbox every hour" | Scheduled |
 | An event in a connected tool | "Whenever a new Granola note lands" | Event |
 | An event that meets a condition | "When a customer emails about pricing, flag it" | Event |
-| An inbound webhook | "When our order system sends a new order" | Event |
 | An email to the Sidekick | "Let me forward emails to you" | Email |
 
 A Sidekick can have more than one trigger. A weekly report that you also
@@ -109,14 +108,6 @@ Events that do not match are skipped.
 If the check cannot decide, or cannot run at that moment, the event is
 skipped rather than run. A Sidekick with a condition will occasionally miss
 a borderline case; it will not suddenly act on everything.
-
-## Inbound webhooks
-
-If a system you use has no ready-made connector, it can still start a
-Sidekick by sending an inbound webhook: a small message from that system to
-an address Rally gives you. Setting one up is covered in
-[Inbound webhook](../05-connecting-your-tools/13-inbound-webhook.md). Once the
-webhook exists, tell the drafting assistant to run when it delivers something.
 
 ## Email a Sidekick
 

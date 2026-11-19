@@ -47,9 +47,7 @@ describe('connectorBrandMark', () => {
     expect(connectorBrandMark('custom_mcp', 'Model Context Protocol')).toBe('model-context-protocol');
   });
 
-  it('leaves a webhook and an unknown connector without one', () => {
-    // A webhook is not a company; there is no mark to be missing.
-    expect(connectorBrandMark('generic_webhook')).toBeNull();
+  it('leaves an unknown connector without one', () => {
     expect(connectorBrandMark('some_future_service')).toBeNull();
   });
 });

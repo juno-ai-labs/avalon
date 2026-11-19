@@ -773,10 +773,6 @@ before committing, so a racing settlement cannot overwrite a newer API key.
 
 ### Webhooks
 
-Generic webhooks use an endpoint-specific secret, a timestamped HMAC-SHA256
-signature, a bounded replay window, a stored receipt, schema validation, size
-limits, and provider dedupe keys.
-
 Fireflies signs the body and nothing else: no timestamp header, no delivery id.
 Rally verifies HMAC-SHA256 over the exact raw bytes against a single
 `X-Hub-Signature` header — after the size cap and before any decode — then
