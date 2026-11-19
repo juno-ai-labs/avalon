@@ -783,7 +783,7 @@ export const ConnectionSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["apollo", "ashby", "custom_mcp", "fireflies", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["apollo", "ashby", "custom_mcp", "fireflies", "google", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -889,7 +889,6 @@ export const AutomationPluginIconSchema = deferredZodSchema(() => z.enum([
   "brand-slack",
   "linear",
   "plug",
-  "webhook",
   "world-search",
 ]));
 export type AutomationPluginIcon = z.infer<typeof AutomationPluginIconSchema>;
@@ -1180,13 +1179,7 @@ export const TriggerDefinitionSchema = deferredZodSchema(() => z.discriminatedUn
     deterministicPrefilter: z.record(z.string(), z.unknown()),
     condition: z.string().min(1)
   }),
-  z.object({ type: z.literal("resource_watch"), resourceId: IdSchema }),
-  z.object({
-    type: z.literal("webhook"),
-    sourceBindingKey: ActivitySourceBindingKeySchema.optional(),
-    suggestedSourcePluginId: ModelPluginIdSchema.optional(),
-    eventTypes: z.array(z.string()).min(1)
-  })
+  z.object({ type: z.literal("resource_watch"), resourceId: IdSchema })
 ]));
 
 /**
@@ -1210,14 +1203,13 @@ export const TriggerDefinitionSchema = deferredZodSchema(() => z.discriminatedUn
  */
 export type ExternalEventTrigger = Extract<
   z.infer<typeof TriggerDefinitionSchema>,
-  { type: "connector_activity" | "semantic_activity" | "webhook" }
+  { type: "connector_activity" | "semantic_activity" }
 >;
 export function isExternalEventTrigger(
   trigger: z.infer<typeof TriggerDefinitionSchema>,
 ): trigger is ExternalEventTrigger {
   return trigger.type === "connector_activity"
-    || trigger.type === "semantic_activity"
-    || trigger.type === "webhook";
+    || trigger.type === "semantic_activity";
 }
 
 /**
@@ -1418,8 +1410,8 @@ export const AutomationDraftSchema = deferredZodSchema(() => z.object({
   });
   const sourceBindings = new Map<string, { connectorType: string; pluginId: string }>();
   draft.triggers.forEach((trigger, index) => {
-    if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") return;
-    const connectorType = trigger.type === "webhook" ? "generic_webhook" : trigger.connectorType;
+    if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity") return;
+    const connectorType = trigger.connectorType;
     if (!draft.ready) return;
     if (!trigger.sourceBindingKey) {
       context.addIssue({
@@ -2039,13 +2031,6 @@ export const AnswerElicitationRequestSchema = deferredZodSchema(() => z.union([
     skipped: z.literal(true)
   })
 ]));
-export const CreateWebhookConnectionRequestSchema = deferredZodSchema(() => z.object({
-  displayName: z.string().min(1).max(180),
-  scope: ScopeSchema,
-  eventTypes: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
-  idempotencyKey: z.string().trim().min(1).max(120).optional()
-}));
-
 // --- Custom MCP servers ----------------------------------------------------
 
 /** How a connection to a person-configured MCP server authenticates. */
@@ -2832,6 +2817,17 @@ export const NormalizedActivitySchema = z.object({
   eventType: z.string().min(1),
   resourceType: z.string().nullable(),
   providerResourceId: z.string().nullable(),
+  /**
+   * The provider's own item this activity is about, when that is not the
+   * resource itself: a Gmail message in its thread (`gmail_message`), a
+   * comment on an issue (`github_issue_comment`). Absent, the resource is the
+   * item. Ids only, never content: it is what a run is told the event is
+   * about, and a run keys its records on it. Adapter code derives it from the
+   * same payload the activity already carries, so it is not part of the
+   * event's payload hash. Its length is bounded where it is stored (the
+   * WorkspaceDO columns' CHECKs), as `occurrenceKey`'s is, not here.
+   */
+  item: z.strictObject({ type: z.string().min(1), id: z.string().min(1) }).optional(),
   actor: z.record(z.string(), z.unknown()),
   subject: z.record(z.string(), z.unknown()),
   occurredAt: TimestampSchema,
@@ -3327,8 +3323,6 @@ export const ConnectorActivityTriggerDescriptorSchema = deferredZodSchema(() => 
   /** Authoring-only families. Accepted rules expand these to exact event types. */
   eventFamilies: z.array(z.string().min(1).max(200)).default([]),
   filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
-  /** The payload's own keys are the filter fields; a rule may name any of them. */
-  openFilterFields: z.boolean().optional(),
   resourceRelationships: z.array(z.strictObject({
     // Duplicated from `ConnectorResourceRelationshipSchema` in
     // `automation-evaluators.ts` rather than imported, and the two must be

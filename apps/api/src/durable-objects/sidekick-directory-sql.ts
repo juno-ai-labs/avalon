@@ -188,7 +188,7 @@ export const AUTOMATION_RUN_STATE_JOINS = `LEFT JOIN sidekick_runs latest_run
  * aliased `directory`: what wakes the Sidekick, as a JSON array in the run
  * trigger vocabulary (`AutomationRunSchema.triggerType`), each kind once, in
  * the order the definition first names it. A calendar or interval trigger is
- * `schedule`; a connector, semantic, resource-watch or webhook trigger is
+ * `schedule`; a connector, semantic or resource-watch trigger is
  * `external_event`, the run kind each of them starts. Read from the accepted
  * definition, or for a draft the newest one submitted, so the Sidekicks home
  * can say "On alert" or "On request" where a schedule would say
@@ -199,7 +199,7 @@ export const AUTOMATION_TRIGGER_KINDS_SQL = `(SELECT json_group_array(kind ORDER
               WHEN 'manual' THEN 'manual' WHEN 'invocation' THEN 'invocation'
               WHEN 'calendar' THEN 'schedule' WHEN 'interval' THEN 'schedule'
               WHEN 'connector_activity' THEN 'external_event' WHEN 'semantic_activity' THEN 'external_event'
-              WHEN 'resource_watch' THEN 'external_event' WHEN 'webhook' THEN 'external_event'
+              WHEN 'resource_watch' THEN 'external_event'
             END AS kind, MIN(CAST(named.key AS INTEGER)) AS first_named
        FROM sidekick_revisions revision, json_each(revision.definition_json, '$.triggers') named
       WHERE revision.sidekick_id = directory.automation_id

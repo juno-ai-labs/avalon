@@ -17,7 +17,6 @@ import {
   IconMailAi,
   IconPlug,
   IconStackBackward,
-  IconWebhook,
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
@@ -2359,7 +2358,6 @@ const unbrandedIconByKey: Record<Exclude<PluginGroupIcon, PluginBrandMark | 'ral
   'image-generation': IconImageGeneration,
   plug: IconPlug,
   web: IconWorldSearch,
-  webhook: IconWebhook,
 };
 
 /**

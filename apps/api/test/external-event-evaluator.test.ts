@@ -41,9 +41,9 @@ describe("external event evaluator", () => {
     expect(ExternalEventEvaluatorV1Schema.parse({
       evaluatorId: "22222222-2222-4222-8222-222222222222",
       source: {
-        connectorType: "generic_webhook",
+        connectorType: "github",
         connectionId: "33333333-3333-4333-8333-333333333333",
-        eventType: "deploy.finished",
+        eventType: "github.workflow_run.completed",
       },
       when: stored,
     }).when).toMatchObject({ kind: "all" });

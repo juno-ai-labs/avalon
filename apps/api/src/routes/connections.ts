@@ -12,7 +12,6 @@ import {
   ConnectorOAuthStartSchema,
   ConnectorResourceAuthorizationStartSchema,
   CreateCustomMcpConnectionRequestSchema,
-  CreateWebhookConnectionRequestSchema,
   CustomMcpConnectionSettingsSchema,
   StartCustomMcpConnectionRequestSchema,
   UpdateCustomMcpToolPolicyRequestSchema,
@@ -153,18 +152,12 @@ const googleCallback = z.object({
 const slackLink = z.object({ token: z.string().min(20).max(500) });
 /**
  * Response contracts for this route's envelopes. The connector entities come
- * from `@rally/contracts`; the wrappers, the webhook credentials and the
- * provider acknowledgements are shaped here.
+ * from `@rally/contracts`; the wrappers and the provider acknowledgements are
+ * shaped here.
  */
 const ConnectionPageSchema = z.object({ items: z.array(ConnectionSchema) });
 const ConnectorCatalogSchema = z.object({ availableConnectorTypes: z.array(z.string().min(1)) });
 const CreatedConnectionSchema = z.object({ connection: ConnectionSchema });
-const WebhookCredentialsSchema = z.object({
-  endpoint: z.string().min(1),
-  signingSecret: z.string().min(1),
-  signatureFormat: z.string().min(1),
-});
-const WebhookConnectionSchema = WebhookCredentialsSchema.extend({ connection: ConnectionSchema });
 const SlackLinkPreviewSchema = z.object({
   teamId: z.string().min(1),
   slackUserId: z.string().min(1),
@@ -428,15 +421,6 @@ connectionRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ConnectionService(c.env, getAuth(c)).disable(c.req.valid("param").id);
   return c.body(null, 204);
 });
-connectionRoutes.post("/webhook", zValidator("json", CreateWebhookConnectionRequestSchema), async (c) => {
-  const created = await new ConnectionService(c.env, getAuth(c)).createWebhook(c.req.valid("json"));
-  noteChangedConnection(c, created.connection.id);
-  return c.json(WebhookConnectionSchema.parse(created), 201);
-});
-connectionRoutes.post("/:id/webhook-secret/rotate", zValidator("param", idParam), async (c) =>
-  c.json(WebhookCredentialsSchema.parse(
-    await new ConnectionService(c.env, getAuth(c)).rotateWebhookSecret(c.req.valid("param").id))),
-);
 
 export const connectionCallbackRoutes = new Hono<HonoAppEnv>();
 
@@ -683,14 +667,6 @@ webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async 
       webhookTimestamp: c.req.header("webhook-timestamp") ?? null,
       webhookSignature: c.req.header("webhook-signature") ?? null,
     },
-  );
-  return c.json(ConnectorWebhookIngestionSchema.parse(result), result.duplicate ? 200 : 202);
-});
-webhookIngestionRoutes.post("/webhook/:id", zValidator("param", idParam), async (c) => {
-  const result = await new ConnectionService(c.env).ingestWebhook(
-    c.req.valid("param").id,
-    new Uint8Array(await c.req.arrayBuffer()),
-    readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.SIGNATURE) ?? null,
   );
   return c.json(ConnectorWebhookIngestionSchema.parse(result), result.duplicate ? 200 : 202);
 });

@@ -16,12 +16,12 @@ const CONNECTION_ID = "00000000-0000-7000-8000-0000000000f2";
 function eventBody(providerEventId: string, title = "Deploy finished") {
   return {
     workspaceId: WORKSPACE_ID,
-    connectorType: "generic_webhook",
+    connectorType: "github",
     activity: {
       connectionId: CONNECTION_ID,
-      provider: "generic_webhook",
+      provider: "github",
       providerEventId,
-      eventType: "deploy.finished",
+      eventType: "github.workflow_run.completed",
       title,
       occurredAt: "2026-09-04T00:00:00.000Z",
       metadata: { environment: "production" },

@@ -319,8 +319,8 @@ describe("external event routing", () => {
   });
 
   it("delivers the occurrence a connector named and drops one planted in provider metadata", async () => {
-    // A provider payload cannot pick the key an automation dedupes on. The
-    // generic webhook copies a caller's metadata whole, so the workspace
+    // A provider payload cannot pick the key an automation dedupes on.
+    // Metadata can carry whatever a provider put there, so the workspace
     // store drops a same-named key from metadata at ingest and lifts only the
     // activity's own field, which adapter code alone sets, onto the delivery.
     await activateAutomation();

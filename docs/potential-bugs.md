@@ -38,8 +38,8 @@ it — not tracing a table to a query and stopping.
 (`packages/contracts/src/index.ts:1159`). But `HostedSidekick`'s accept path
 builds it nothing. The schedule loop handles `interval` and skips anything that
 is not `calendar` (`apps/api/src/durable-objects/hosted-sidekick.ts:2885-2905`),
-and `isExternalEventTrigger` covers only `connector_activity`,
-`semantic_activity` and `webhook` (`contracts/src/index.ts:1191`), so no
+and `isExternalEventTrigger` covers only `connector_activity` and
+`semantic_activity` (`contracts/src/index.ts`), so no
 evaluator is built either. The tool's own schema description now calls it
 legacy and says it "does not start Sidekick runs".
 

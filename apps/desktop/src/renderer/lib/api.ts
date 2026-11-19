@@ -486,7 +486,6 @@ function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): strin
     case 'connector_activity': return `When there is matching activity in ${trigger.connectorType.replaceAll('_', ' ')}`;
     case 'semantic_activity': return trigger.condition;
     case 'resource_watch': return 'When the attached resource changes';
-    case 'webhook': return 'When an external service sends an update';
   }
 }
 
@@ -2226,54 +2225,6 @@ export class RallyApi {
       schema: z.object({ connection: WireConnectionSchema }),
     });
     return mapConnection(response.connection);
-  }
-
-  async createWebhookConnection(
-    displayName: string,
-    scope: 'you' | 'workspace',
-    eventTypes: string[],
-    idempotencyKey: string,
-  ): Promise<{
-    connection: WorkstreamConnection;
-    endpoint: string;
-    signingSecret: string;
-    signatureFormat: string;
-  }> {
-    reportTelemetryProductIntent({
-      kind: 'connector_setup_requested_v2', connector: 'generic_webhook',
-      scope: scope === 'you' ? 'personal' : 'workspace', method: 'webhook', capabilityCount: telemetryCountBucket(0),
-    });
-    const response = await this.request('/connections/webhook', {
-      method: 'POST',
-      body: {
-        displayName,
-        scope: scope === 'you' ? 'personal' : 'workspace',
-        eventTypes,
-        idempotencyKey,
-      },
-      schema: z.object({
-        connection: WireConnectionSchema,
-        endpoint: HttpUrlSchema,
-        signingSecret: z.string().min(1),
-        signatureFormat: z.string().min(1),
-      }),
-    });
-    return { ...response, connection: mapConnection(response.connection) };
-  }
-
-  async rotateWebhookSecret(id: string): Promise<{
-    endpoint: string;
-    signingSecret: string;
-    signatureFormat: string;
-  }> {
-    return this.request(`/connections/${encodeURIComponent(id)}/webhook-secret/rotate`, {
-      method: 'POST',
-      schema: z.object({
-        endpoint: HttpUrlSchema,
-        signingSecret: z.string().min(1),
-        signatureFormat: z.string().min(1),
-      }),
-    });
   }
 
   async reconnectConnection(

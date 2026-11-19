@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { IconAlertCircle, IconCheck, IconCopy } from '@tabler/icons-react';
-import { forwardRef, useId, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { useCopy, type CopyState, type UseCopyOptions } from '../lib/use-copy';
 import { Toast } from '@rally/ui/components/toast';
 import { ErrorNotice, IconButton } from './primitives';
@@ -88,42 +88,4 @@ export function CopyStatus({ failure = stateStatus.failed, occurrence, state, vi
     <Toast icon={<IconCheck aria-hidden="true" size={16} stroke={1.9} />} open={state === 'copied'}>{stateStatus.copied}</Toast>
     {state === 'failed' && <ErrorNotice occurrence={occurrence}>{failure}</ErrorNotice>}
   </>;
-}
-
-/**
- * A value shown to be copied rather than read: a caption, the value in a
- * read-only field, and the copy control beside it.
- *
- * The field exists because a connection URL is longer than the box and a
- * secret is deliberately the one thing nobody should retype — the control is
- * how the value leaves the screen. A secret is masked: it cannot be read back
- * off the screen, so the control is its only way out, and a failed copy is
- * shown in the control for that reason.
- */
-export function CopyField({ copyLabel, inputLabel, label, secret = false, value }: {
-  /** The copy control's name, e.g. `Copy endpoint`. */
-  copyLabel: string;
-  /** The field's accessible name where the caption alone is ambiguous, e.g. `Fireflies endpoint URL`. */
-  inputLabel?: string;
-  /** The caption over the field. */
-  label: ReactNode;
-  /** Masks the value. */
-  secret?: boolean;
-  value: string;
-}): React.JSX.Element {
-  const id = useId();
-  return (
-    <div className="form-field copy-field">
-      <label htmlFor={id}>{label}</label>
-      <input
-        aria-label={inputLabel}
-        id={id}
-        readOnly
-        spellCheck={false}
-        type={secret ? 'password' : undefined}
-        value={value}
-      />
-      <CopyButton label={copyLabel} value={value} />
-    </div>
-  );
 }

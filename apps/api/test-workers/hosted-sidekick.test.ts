@@ -92,19 +92,19 @@ const RUN_SETTLE_TIMEOUT_MS = 15_000;
 let automationOrdinal = 0;
 let AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000000ad");
 
-const WEBHOOK_CONNECTION_ID = "00000000-0000-7000-8000-00000000ad70";
+const ASHBY_CONNECTION_ID = "00000000-0000-7000-8000-00000000ad70";
 
-const WEBHOOK_DEFINITION: AutomationDraft = {
-  name: "Deploy watcher",
-  description: "Reports checkout deploys",
-  overview: "Watches deploy events on a webhook",
-  instructions: "Say which service deployed.",
+const ASHBY_DEFINITION: AutomationDraft = {
+  name: "Hiring watcher",
+  description: "Reports hires",
+  overview: "Watches hiring events in Ashby",
+  instructions: "Say who was hired, and for which job.",
   triggers: [{
     type: "connector_activity",
-    connectorType: "generic_webhook",
-    sourceBindingKey: "deploy_hook",
-    suggestedSourcePluginId: "plugin_webhook",
-    eventTypes: ["deploy.finished", "deploy.failed"],
+    connectorType: "ashby",
+    sourceBindingKey: "hiring",
+    suggestedSourcePluginId: "plugin_ashby",
+    eventTypes: ["candidateHire", "applicationSubmit"],
     deterministicFilters: {},
   }],
   requiredCapabilities: [],
@@ -251,19 +251,19 @@ async function seedSlackConnection(): Promise<void> {
   });
 }
 
-/** A generic webhook connection whose configured event types are its triggers. */
-async function seedWebhookConnection(): Promise<void> {
+/** An Organization's Ashby events connection: its selected events are its triggers, none about a resource. */
+async function seedAshbyConnection(): Promise<void> {
   await runInDurableObject(workspaceStub(), (_instance, state) => {
     state.storage.sql.exec(
       `INSERT OR REPLACE INTO connector_connections
          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
           display_name, granted_scopes_json, status, cursor_json, config_json,
           created_at, updated_at, model_plugin_id)
-       VALUES (?, ?, 'generic_webhook', 'workspace', NULL, 'deploy-hook', 'Deploy hook', '[]', 'healthy',
-               '{}', ?, ?, ?, 'plugin_webhook')`,
-      WEBHOOK_CONNECTION_ID,
+       VALUES (?, ?, 'ashby', 'workspace', NULL, 'ashby-org', 'Ashby workspace events', '[]', 'healthy',
+               '{}', ?, ?, ?, 'plugin_ashby')`,
+      ASHBY_CONNECTION_ID,
       WORKSPACE_ID,
-      JSON.stringify({ eventTypes: ["deploy.finished", "deploy.failed"] }),
+      JSON.stringify({ selectedEvents: ["candidateHire", "applicationSubmit"] }),
       NOW,
       NOW,
     );
@@ -772,36 +772,33 @@ describe("a hosted Sidekick", () => {
     ).one())).toEqual({ lifecycle: "active", title: "Manual helper" });
   });
 
-  it("applies a webhook rule whatever the model put in resourceId, since a delivery is about no resource", async () => {
-    await seedWebhookConnection();
+  it("applies a rule whatever the model put in resourceId when its event is about no resource", async () => {
+    await seedAshbyConnection();
     await createDraft();
     // What the drafting model sends: an optional id filled with a placeholder
-    // reshaped to satisfy the pattern, and once a real-looking one. A webhook
-    // trigger declares no resource relationship, so neither can mean anything,
+    // reshaped to satisfy the pattern, and once a real-looking one. Ashby's
+    // triggers declare no resource relationship, so neither can mean anything,
     // and a revision that carries them is read as if it did not.
     const rules = {
       schemaVersion: 1 as const,
       evaluators: [
         {
-          evaluatorKey: "checkout_deploys",
+          evaluatorKey: "hires",
           source: {
-            sourceBindingKey: "deploy_hook",
-            suggestedSourcePluginId: "plugin_webhook",
+            sourceBindingKey: "hiring",
+            suggestedSourcePluginId: "plugin_ashby",
             resourceId: "00000000-0000-4000-8000-000000000000",
-            event: { kind: "event_type" as const, eventType: "deploy.finished" },
+            event: { kind: "event_type" as const, eventType: "candidateHire" },
           },
-          when: {
-            kind: "matching" as const,
-            allOf: [{ kind: "string" as const, attribute: "service", operator: "equals" as const, value: "checkout" }],
-          },
+          when: { kind: "always" as const },
         },
         {
-          evaluatorKey: "any_failure",
+          evaluatorKey: "applications",
           source: {
-            sourceBindingKey: "deploy_hook",
-            suggestedSourcePluginId: "plugin_webhook",
+            sourceBindingKey: "hiring",
+            suggestedSourcePluginId: "plugin_ashby",
             resourceId: "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f",
-            event: { kind: "event_type" as const, eventType: "deploy.failed" },
+            event: { kind: "event_type" as const, eventType: "applicationSubmit" },
           },
           when: { kind: "always" as const },
         },
@@ -809,7 +806,7 @@ describe("a hosted Sidekick", () => {
     };
     const submitted = await workspaceStub().sidekickSubmitDefinition({
       ...addressed(),
-      draft: WEBHOOK_DEFINITION,
+      draft: ASHBY_DEFINITION,
       // Parsed the way the drafting tool parses it, so this exercises the
       // boundary rather than hand-writing its output: the rules are authored in
       // the model's spelling and reach the object in the stored one.
@@ -823,7 +820,7 @@ describe("a hosted Sidekick", () => {
     expect(detail).toMatchObject({
       lifecycle: "active",
       acceptedDefinitionRevision: 1,
-      connectorBindings: { plugin_webhook: WEBHOOK_CONNECTION_ID },
+      connectorBindings: { plugin_ashby: ASHBY_CONNECTION_ID },
     });
     expect(await activeRegistrations()).toBe(2);
 
@@ -835,16 +832,16 @@ describe("a hosted Sidekick", () => {
     // model.
     expect(await workspaceStub().sidekickAdmitExternalEvent({
       ...addressed(),
-      registrationId: await registrationFor("deploy.finished"),
+      registrationId: await registrationFor("candidateHire"),
       payloadHash: `sha256:${"d".repeat(64)}`,
       event: {
         id: "00000000-0000-7000-8000-00000000ad72",
         eventSequence: 1,
-        eventType: "deploy.finished",
-        title: "checkout deployed",
-        summary: "Deploy of checkout finished.",
+        eventType: "candidateHire",
+        title: "Ada Lovelace was hired",
+        summary: "Ada Lovelace was hired as Staff engineer.",
         textSnippet: "",
-        metadata: { service: "checkout", durationSeconds: 240 },
+        metadata: { jobTitle: "Staff engineer", stage: "Hired" },
         occurredAt: Date.parse(NOW),
         audienceUserIds: [],
         audienceKind: "workspace",
@@ -856,8 +853,8 @@ describe("a hosted Sidekick", () => {
     const eventInput = provider.calls.flatMap((call) => call.messages)
       .map((message) => promptText(message.content))
       .find((text) => text.includes("EVENT THAT STARTED THIS RUN"));
-    expect(eventInput).toContain("checkout deployed");
-    expect(eventInput).toContain("\"service\": \"checkout\"");
+    expect(eventInput).toContain("Ada Lovelace was hired");
+    expect(eventInput).toContain("\"jobTitle\": \"Staff engineer\"");
   });
 
   it("refuses to apply a revision naming a plugin the workspace has no connection for", async () => {
@@ -1658,7 +1655,7 @@ describe("a hosted Sidekick", () => {
     await createDraft();
     await submit({ ...DEFINITION, ready: false, triggers: [ { type: "manual" },
       { type: "interval", intervalSeconds: 3_600, summary: "Every hour" },
-      WEBHOOK_DEFINITION.triggers[0]!, { type: "manual" },
+      ASHBY_DEFINITION.triggers[0]!, { type: "manual" },
     ] });
     const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
       .items.find((candidate) => candidate.id === AUTOMATION_ID);

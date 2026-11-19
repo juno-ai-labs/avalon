@@ -8,7 +8,8 @@ import { WorkspaceConnectorEventSchema, WorkspaceConnectorEventClaimResultSchema
 import { workspaceDOName } from "../src/durable-objects/names";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { readConnectorEventPeople, writeConnectorEventPeople } from "../src/durable-objects/connector-event-people";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { connectorEventFromRow } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-schema-migrations";
 import { enqueueWorkspaceConnectorEvent, workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
 import { ConnectorDeliveryReferenceSchema, readConnectorDeliveryReference, sendConnectorEventDelivery } from "../src/services/connector-queue-payload";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -192,13 +193,44 @@ it("opens populated v121 events without rewriting them and reads legacy people i
   });
 });
 
+it("gives an email event stored before WorkspaceDO 153 its message as the item, and every other event none", async () => {
+  const probe = env.MIGRATION_PROBE_DO!.getByName("connector-event-items-populated-v152");
+  await probe.ping();
+  const EMAIL = "00000000-0000-7000-8000-00000000f9ea";
+  const MEETING = "00000000-0000-7000-8000-00000000f9eb";
+  await runInDurableObject(probe, (_instance, state) => {
+    applyDurableObjectSqliteMigrations({ storage: state.storage,
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 152),
+      component: "workspace_do", workerVersionId: "before-items", now: 1 });
+    const insert = (id: string, eventType: string, resourceType: string, resourceId: string, subject: unknown) =>
+      state.storage.sql.exec(`INSERT INTO workspace_connector_events
+        (event_id, payload_hash, connection_id, connection_scope, connector_type, provider, provider_event_id, event_type,
+         resource_type, provider_resource_id, actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
+         visibility_json, target_user_ids_json, entity_keys_json, dedupe_key, metadata_json, external_people_json, processing_status, created_at, updated_at)
+        VALUES (?, ?, ?, 'workspace', 'google', 'google', ?, ?, ?, ?, '{}', ?, 1, 1, 'Stored', '', '', '{"scope":"workspace"}', '[]', '[]', ?, '{}', '[]', 'pending', 1, 1)`,
+        id, `sha256:${"a".repeat(64)}`, CONNECTION, id, eventType, resourceType, resourceId, JSON.stringify(subject), id);
+    insert(EMAIL, "email.received", "gmail_thread", "thread-1", { messageId: "message-1", threadId: "thread-1", subject: "Hi" });
+    insert(MEETING, "calendar.event_changed", "calendar_event", "event-1", {});
+  });
+  await runInDurableObject(probe, (_instance, state) => {
+    applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      component: "workspace_do", workerVersionId: "with-items", now: 2 });
+    const read = (id: string) => connectorEventFromRow(state.storage.sql,
+      state.storage.sql.exec<Parameters<typeof connectorEventFromRow>[1]>("SELECT * FROM workspace_connector_events WHERE event_id = ?", id).one(),
+      WORKSPACE, "global").activity;
+    expect(read(EMAIL).item).toEqual({ type: "gmail_message", id: "message-1" });
+    expect(read(MEETING)).not.toHaveProperty("item");
+  });
+});
+
 it("restores every person when a late event makes a previously dropped repeat relevant", async () => {
   await workspace().initializeWorkspace(WORKSPACE, "wnam");
   const first = "00000000-0000-7000-8000-00000000f9e6";
   const repeat = "00000000-0000-7000-8000-00000000f9e7";
   const late = "00000000-0000-7000-8000-00000000f9e8";
   const ingest = async (id: string, occurredAt: string, title: string) => {
-    const source = { ...activity(151), id, providerEventId: id, dedupeKey: id, occurredAt, title };
+    const source = { ...activity(151), id, providerEventId: id, dedupeKey: id, occurredAt, title,
+      item: { type: "calendar_attendee_response", id: "response-1" } };
     const message = await workspaceConnectorEventQueueMessage({ connectorType: "google", activity: source });
     return workspace().ingestConnectorEvent(message.request);
   };
@@ -210,4 +242,6 @@ it("restores every person when a late event makes a previously dropped repeat re
   const restored = WorkspaceConnectorEventSchema.parse(await workspace().connectorEvent({ workspaceId: WORKSPACE, eventId: repeat }));
   expect(restored.activity.externalPeople).toHaveLength(151);
   expect(restored.activity.externalPeople?.at(-1)?.email).toBe("guest150@example.com");
+  // The restored row is copied from the stored one, item columns included.
+  expect(restored.activity.item).toEqual({ type: "calendar_attendee_response", id: "response-1" });
 });

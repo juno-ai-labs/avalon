@@ -25,10 +25,8 @@ const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https:
  * `Required<Omit<…, "observer" | "documents">>` is the guarantee: a connector added to
  * `createConnectorRegistry`'s input fails to compile here until this object
  * supplies it, so it cannot go missing from the walks below by being silently
- * unbuilt. `generic_webhook` is absent because it takes no config and is added
- * unconditionally, so it is never at risk of being skipped. `observer` and
- * `documents` are omitted because they are capabilities handed to adapters,
- * not connectors.
+ * unbuilt. `observer` and `documents` are omitted because they are
+ * capabilities handed to adapters, not connectors.
  *
  * The runtime check in `unconfiguredConnectorTypes` stays, but it is the weaker
  * of the two and catches a different miss — a connector on the telemetry list

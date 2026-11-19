@@ -986,7 +986,7 @@ describe("the activity Queue consumer's connector ingress", () => {
   /** A synthetic event, shaped as the dev ingress and every adapter enqueue it. */
   async function ingressMessage() {
     return workspaceConnectorEventQueueMessage({
-      connectorType: "generic_webhook",
+      connectorType: "github",
       activity: {
         id: "00000000-0000-7000-8000-0000000000e1",
         workspaceId: WORKSPACE_ID,
@@ -994,9 +994,9 @@ describe("the activity Queue consumer's connector ingress", () => {
         connectionId: "00000000-0000-7000-8000-0000000000e2",
         connectionScope: "workspace",
         connectionOwnerUserId: null,
-        provider: "generic_webhook",
+        provider: "github",
         providerEventId: "evt-1",
-        eventType: "deploy.finished",
+        eventType: "github.workflow_run.completed",
         resourceType: null,
         providerResourceId: null,
         actor: {},
@@ -1010,7 +1010,7 @@ describe("the activity Queue consumer's connector ingress", () => {
         visibility: { kind: "workspace" },
         targetUserIds: [],
         entityKeys: [],
-        dedupeKey: "generic_webhook:evt-1",
+        dedupeKey: "github:evt-1",
         rawContentHash: null,
         metadata: {},
         externalPeople: [],

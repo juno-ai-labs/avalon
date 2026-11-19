@@ -27,7 +27,6 @@ export type TelemetryPropertyClassification = "operational" | "product" | "diagn
 export const TELEMETRY_CONNECTOR_TYPES = [
   "custom_mcp",
   "google",
-  "generic_webhook",
   "github",
   "apollo",
   "ashby",
@@ -241,13 +240,13 @@ export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number]
 const menuBarAction = deferredZodSchema(() => z.enum(TELEMETRY_MENU_BAR_ACTIONS));
 
 const automationTriggerType = deferredZodSchema(() => z.enum([
-  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "invocation",
+  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "invocation",
 ]));
 const automationDeliveryTargetType = deferredZodSchema(() => z.enum(["email", "slack_agent_dm"]));
 /** Where a digest goes: an automation destination, or the person's own Personal Channel. */
 const digestDeliveryTargetType = deferredZodSchema(() => z.enum(["email", "slack_agent_dm", "personal_channel"]));
 const connectorScope = deferredZodSchema(() => z.enum(["personal", "workspace"]));
-const connectorSetupMethod = deferredZodSchema(() => z.enum(["oauth", "api_key", "direct", "webhook"]));
+const connectorSetupMethod = deferredZodSchema(() => z.enum(["oauth", "api_key", "direct"]));
 const connectorHealth = deferredZodSchema(() => z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]));
 export const TELEMETRY_REALTIME_SOCKETS = [
   "workspace",
@@ -1926,7 +1925,7 @@ export const TELEMETRY_EVENTS = {
   }),
   connector_action_completed: productEvent({
     name: "connector_action_completed",
-    definition: "The regional API completed a connector test, reconnect, disconnect, or secret-rotation action.",
+    definition: "The regional API completed a connector test, reconnect, or disconnect action.",
     productQuestion: "Which connector maintenance actions succeed and what health transition follows?",
     sources: ["api"],
     authoritativeSource: "api",
@@ -1935,7 +1934,7 @@ export const TELEMETRY_EVENTS = {
       connectorId: resourceId,
       connector: connectorType,
       scope: connectorScope,
-      action: z.enum(["test", "reconnect", "disconnect", "secret_rotate"]),
+      action: z.enum(["test", "reconnect", "disconnect"]),
       previousHealth: connectorHealth,
       appliedHealth: connectorHealth,
       result: resultClass,

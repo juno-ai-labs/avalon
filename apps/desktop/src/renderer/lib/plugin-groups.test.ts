@@ -144,7 +144,6 @@ describe('pluginGroup', () => {
     ['Slack', 'slack'],
     ['Granola', 'granola'],
     ['X', 'x'],
-    ['Generic webhook', 'webhook'],
   ])('draws %s with its own mark', (displayName, icon) => {
     expect(pluginGroup('connection:one', displayName)?.icon).toBe(icon);
   });

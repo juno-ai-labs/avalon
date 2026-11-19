@@ -8,14 +8,53 @@ import {
   connectorDiagnosticCode,
   connectorObservationErrorCode,
   createConnectorRegistry,
-  createGenericWebhookConnector,
   instrumentConnectorAdapter,
   instrumentConnectorFetch,
   withProviderReauthorization,
+  type ConnectorAdapter,
   type ConnectorObserver,
 } from "./index";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000201");
+
+/** A tool-less adapter with a webhook source and no `derive`, for the wrapper to instrument. */
+function inboundAdapter(): ConnectorAdapter {
+  return {
+    agentPlugin: {
+      providerType: "inbound_test",
+      wireNamePrefix: "inbound_test",
+      description: "Test-only inbound connector.",
+      systemMessage: "This test connector exposes no tools.",
+      tools: [],
+    },
+    webhookActivity: {
+      async verify() {
+        return { deliveryId: "delivery", eventType: "test.received", providerAccountId: null, bodyHash: "hash", event: {} };
+      },
+      normalize() {
+        return null;
+      },
+    },
+    manifest: {
+      type: "inbound_test",
+      displayName: "Inbound test",
+      supportedScopes: ["personal", "workspace"],
+      oauthRequired: false,
+      activityTriggers: [],
+      resourceTypes: [],
+      tools: [],
+      supportsWatches: false,
+      supportsPolling: false,
+      supportsWebhooks: true,
+    },
+    async executeTool(name) {
+      throw new ConnectorError("unsupported_capability", `No tool named ${name}`);
+    },
+    async healthCheck() {
+      return { ok: true, message: "Configured" };
+    },
+  };
+}
 
 function activityShape(): Omit<NormalizedActivity, "id"> {
   return {
@@ -84,7 +123,7 @@ describe("connector observability", () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
     const adapter = instrumentConnectorAdapter({
-      ...createGenericWebhookConnector(),
+      ...inboundAdapter(),
       healthCheck: () => Promise.resolve({
         ok: false,
         // What `x.ts` does: return a caught provider error's own text, which is
@@ -189,7 +228,7 @@ describe("connector observability", () => {
   it("logs adapter starts, successes, expected failures, IDs, and provider operation IDs", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
-    const base = createGenericWebhookConnector();
+    const base = inboundAdapter();
     const adapter = instrumentConnectorAdapter({
       ...base,
       manifest: { ...base.manifest, type: "slack" },
@@ -252,7 +291,7 @@ describe("connector observability", () => {
     // could reach it.
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
-    const base = createGenericWebhookConnector();
+    const base = inboundAdapter();
     const derived = { ...activityShape(), eventType: "note.generated" };
     const adapter = instrumentConnectorAdapter({
       ...base,
@@ -293,7 +332,7 @@ describe("connector observability", () => {
   it("retains identifiers from real Google and Linear tool shapes without adjacent content", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const adapter = instrumentConnectorAdapter({
-      ...createGenericWebhookConnector(),
+      ...inboundAdapter(),
       async executeTool() {
         return { output: {}, summary: "done" };
       },
@@ -362,7 +401,7 @@ describe("connector observability", () => {
   it("logs healthy, degraded, and unhealthy health-check terminal conditions", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
-    const base = createGenericWebhookConnector();
+    const base = inboundAdapter();
     const healthy = instrumentConnectorAdapter(base, observer);
     const degraded = instrumentConnectorAdapter({
       ...base,
@@ -417,7 +456,7 @@ describe("connector observability", () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
     const adapter = instrumentConnectorAdapter({
-      ...createGenericWebhookConnector(),
+      ...inboundAdapter(),
       async poll() {
         return {
           activities: [],
@@ -451,7 +490,7 @@ describe("connector observability", () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
     const adapter = instrumentConnectorAdapter({
-      ...createGenericWebhookConnector(),
+      ...inboundAdapter(),
       validateToolInput(_name, args) {
         const result = z.strictObject({ filters: z.array(z.strictObject({ status: z.enum(["open", "closed"]) })) }).safeParse(args);
         return result.success ? null : result.error;
@@ -479,7 +518,7 @@ describe("connector observability", () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
     const adapter = instrumentConnectorAdapter({
-      ...createGenericWebhookConnector(),
+      ...inboundAdapter(),
       validateToolInput(_name, args) {
         const result = z.strictObject({ title: z.string() }).safeParse(args);
         return result.success ? null : result.error;
@@ -499,7 +538,7 @@ describe("connector observability", () => {
   it("keeps connector behavior independent from observer failures", async () => {
     const throws: ConnectorObserver = () => { throw new Error("logging unavailable"); };
     const fetcher = instrumentConnectorFetch("x", async () => new Response("ok"), throws);
-    const adapter = instrumentConnectorAdapter(createGenericWebhookConnector(), throws);
+    const adapter = instrumentConnectorAdapter(inboundAdapter(), throws);
 
     await expect(fetcher("https://api.twitterapi.io/test")).resolves.toMatchObject({ status: 200 });
     await expect(adapter.healthCheck()).resolves.toMatchObject({ ok: true });
@@ -508,7 +547,7 @@ describe("connector observability", () => {
   it("adds shared credential refresh and retry decisions beneath adapter logs", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
-    const base = createGenericWebhookConnector();
+    const base = inboundAdapter();
     let attempts = 0;
     const adapter = instrumentConnectorAdapter({
       ...base,

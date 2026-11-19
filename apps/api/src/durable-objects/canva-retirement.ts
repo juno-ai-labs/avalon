@@ -1,3 +1,4 @@
+import { filteredArray, holdsRejected } from "./connector-retirement-sql";
 import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
 
 /**
@@ -10,20 +11,6 @@ import type { DurableObjectSqliteMigration } from "./sqlite-migrations";
  */
 const CANVA_PLUGIN_IDS = `(SELECT model_plugin_id FROM connector_connections WHERE connector_type = 'canva')`;
 const CANVA_CONNECTION_IDS = `(SELECT id FROM connector_connections WHERE connector_type = 'canva')`;
-
-/** An array column without the entries `keep` rejects, or the column unchanged when none match. */
-function filteredArray(column: string, path: string, keep: string): string {
-  // `json()` re-parses an object or array entry; a string or number is
-  // already its own value, and passing it to `json()` would fail as malformed.
-  return `json_set(${column}, '${path}', (SELECT json_group_array(
-      CASE WHEN entry.type IN ('object', 'array') THEN json(entry.value) ELSE entry.value END)
-    FROM json_each(${column}, '${path}') AS entry WHERE ${keep}))`;
-}
-
-/** True when the array at `path` holds an entry `keep` rejects. */
-function holdsRejected(column: string, path: string, keep: string): string {
-  return `EXISTS (SELECT 1 FROM json_each(${column}, '${path}') AS entry WHERE NOT (${keep}))`;
-}
 
 const KEEP_EVALUATOR = `COALESCE(json_extract(entry.value, '$.source.connectorType'), '') <> 'canva'
   AND COALESCE(json_extract(entry.value, '$.source.suggestedSourcePluginId'), '') NOT IN ${CANVA_PLUGIN_IDS}`;

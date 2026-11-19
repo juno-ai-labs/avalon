@@ -185,10 +185,8 @@ references: two cards on Settings would duplicate them, which is why Google's
 `default` art is refused. Look at it at 14px, 15px, and 16px in a real window
 before it ships; a passing DOM test does not catch a half-width glyph.
 
-Not every glyph is a company. The two virtual groups, the public web, and an
-inbound webhook are shapes no brand owns and keep their Tabler line icons; an
-inbound webhook deliberately draws nothing in a Settings row rather than a
-placeholder.
+Not every glyph is a company. The two virtual groups, the public web, and a
+webhook are shapes no brand owns and keep their Tabler line icons.
 
 ## Not markup
 

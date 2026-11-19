@@ -135,9 +135,11 @@ async function mail(connectionId: string, owner: string, subject: string) {
   await stub().ingestConnectorEvent({ workspaceId, ingressEventId: id, payloadHash: `sha256:${"c".repeat(64)}`, event: {
     connectorType: "google", activity: { id, workspaceId, region: "global", connectionId, connectionScope: "personal",
       connectionOwnerUserId: owner, provider: "google", providerEventId: id, eventType, resourceType: "gmail_thread",
-      providerResourceId: `thread-${id}`, actor: { from: "founder@example.com" }, subject: { messageId: `message-${id}`, threadId: `thread-${id}` },
+      providerResourceId: `thread-${id}`, item: { type: "gmail_message", id: `message-${id}` }, actor: { from: "founder@example.com" },
+      subject: { messageId: `message-${id}`, threadId: `thread-${id}`, subject },
       occurredAt: now, receivedAt: now, title: `New email: ${subject}`, summary: "From founder@example.com", textSnippet: subject,
-      payloadRef: null, visibility: { kind: "personal" }, targetUserIds: [], entityKeys: [], dedupeKey: id, rawContentHash: null,
+      payloadRef: null, visibility: { kind: "personal" }, targetUserIds: [],
+      entityKeys: [`google:gmail:thread:thread-${id}`, `google:gmail:message:message-${id}`], dedupeKey: id, rawContentHash: null,
       metadata: { changeType: "added" }, externalPeople: [],
     },
   } });
@@ -192,6 +194,30 @@ describe("Sidekick sources", () => {
     await stub().sidekickWithdrawSource({ ...address, userId: creator, connectionId: creatorMail });
     expect(await admit(queued[0]!)).toMatchObject({ admitted: false, outcomeCode: "sidekick_source_not_permitted" });
     expect(await runs()).toEqual([]);
+  });
+
+  it("names the admitted message and its thread in the run's opening, so the run can key its records on them", async () => {
+    await watchingMail();
+    const delivery = (await mail(creatorMail, creator, "Term sheet"))[0]!;
+    expect(await admit(delivery)).toMatchObject({ admitted: true });
+    const opening = JSON.parse((await runs())[0]!.opening_json!) as { textContent: string; structuredContent: Record<string, unknown> };
+    expect(opening.structuredContent).toMatchObject({
+      about: { type: "gmail_message", id: `message-${delivery.event.id}` },
+      in: { type: "gmail_thread", id: `thread-${delivery.event.id}` },
+    });
+    expect(opening.textContent).toContain(`About: gmail_message message-${delivery.event.id}`);
+  });
+
+  it("admits an event whose stored row is gone, with an opening that names nothing it is about", async () => {
+    await watchingMail();
+    const delivery = (await mail(creatorMail, creator, "Term sheet"))[0]!;
+    await runInDurableObject(stub(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM workspace_connector_events WHERE event_id = ?", delivery.event.id);
+    });
+    expect(await admit(delivery)).toMatchObject({ admitted: true });
+    const opening = JSON.parse((await runs())[0]!.opening_json!) as { textContent: string; structuredContent: Record<string, unknown> };
+    expect(opening.structuredContent).not.toHaveProperty("about");
+    expect(opening.textContent).not.toContain("About: ");
   });
 
   it("lets only the person asked answer a request", async () => {

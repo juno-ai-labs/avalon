@@ -2894,6 +2894,7 @@ export function normalizeGitHubWebhook(
     eventType: normalized.eventType,
     resourceType: normalized.resourceType,
     providerResourceId: normalized.providerResourceId,
+    ...(normalized.item ? { item: normalized.item } : {}),
     actor,
     subject: boundRecord(subject),
     occurredAt,
@@ -3382,6 +3383,8 @@ interface GitHubWebhookSubject {
   eventType: string;
   resourceType: string | null;
   providerResourceId: string | null;
+  /** The comment or review in that issue or pull request, named as its resource hint names it. */
+  item?: { type: string; id: string };
   subject: Record<string, unknown>;
   titleVerb: string;
   summaryVerb: string;
@@ -3448,10 +3451,15 @@ function webhookSubject(
     const issue = recordValue(payload, "issue") ?? {};
     const number = integerValue(issue, "number");
     const isPullRequest = issueIsPullRequest(issue);
+    const commentId = recordIdentity(subject);
     return {
       eventType: `github.${isPullRequest ? "pull_request_comment" : "issue_comment"}.${action}`,
       resourceType: isPullRequest ? "github_pull_request" : "github_issue",
       providerResourceId: number == null ? null : `${repositoryName}#${number}`,
+      ...(number != null && commentId ? { item: {
+        type: isPullRequest ? "github_pull_request_comment" : "github_issue_comment",
+        id: `${repositoryName}#${number}/comments/${commentId}`,
+      } } : {}),
       subject,
       titleVerb: `${isPullRequest ? "pull request" : "issue"} comment ${action}`,
       summaryVerb: `${action} a ${isPullRequest ? "pull request" : "issue"} comment`,
@@ -3467,13 +3475,17 @@ function webhookSubject(
     const subject = recordValue(payload, "review") ?? {};
     const pullRequest = recordValue(payload, "pull_request") ?? {};
     const number = integerValue(pullRequest, "number");
-    return pullRequestWebhookSubject(`github.pull_request_review.${action}`, subject, repositoryName, number, `pull request review ${action}`, `${action} a pull request review`);
+    const reviewId = recordIdentity(subject);
+    return pullRequestWebhookSubject(`github.pull_request_review.${action}`, subject, repositoryName, number, `pull request review ${action}`, `${action} a pull request review`,
+      number != null && reviewId ? { type: "github_pull_request_review", id: `${repositoryName}#${number}/reviews/${reviewId}` } : undefined);
   }
   if (event === "pull_request_review_comment") {
     const subject = recordValue(payload, "comment") ?? {};
     const pullRequest = recordValue(payload, "pull_request") ?? {};
     const number = integerValue(pullRequest, "number");
-    return pullRequestWebhookSubject(`github.pull_request_review_comment.${action}`, subject, repositoryName, number, `review comment ${action}`, `${action} a review comment`);
+    const commentId = recordIdentity(subject);
+    return pullRequestWebhookSubject(`github.pull_request_review_comment.${action}`, subject, repositoryName, number, `review comment ${action}`, `${action} a review comment`,
+      number != null && commentId ? { type: "github_pull_request_review_comment", id: `${repositoryName}#${number}/review-comments/${commentId}` } : undefined);
   }
   if (event === "workflow_run") {
     const subject = recordValue(payload, "workflow_run") ?? {};
@@ -3536,11 +3548,13 @@ function pullRequestWebhookSubject(
   number: number | null,
   titleVerb: string,
   summaryVerb: string,
+  item?: { type: string; id: string },
 ): GitHubWebhookSubject {
   return {
     eventType,
     resourceType: "github_pull_request",
     providerResourceId: number == null ? null : `${repositoryName}#${number}`,
+    ...(item ? { item } : {}),
     subject,
     titleVerb,
     summaryVerb,

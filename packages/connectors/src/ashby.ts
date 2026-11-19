@@ -116,7 +116,7 @@ export function createAshbyConnector(config: AshbyConnectorConfig): ConnectorAda
       capabilities: [{ id: AshbyCapabilities.personalMcp, kind: "tool" }, { id: AshbyCapabilities.workspaceEvents, kind: "host" }],
       tools: [], resourceTypes: ["ashby_application", "ashby_candidate", "ashby_job"],
       supportsWebhooks: true, supportsPolling: false, supportsWatches: false,
-      activityTriggers: defineConnectorActivityTriggers("Ashby", { digestible: [], operational: AshbyEventTypes }, Object.fromEntries(AshbyEventTypes.map((event) => [event, { label: AshbyEventLabels[event], openFilterFields: false }]))),
+      activityTriggers: defineConnectorActivityTriggers("Ashby", { digestible: [], operational: AshbyEventTypes }, Object.fromEntries(AshbyEventTypes.map((event) => [event, { label: AshbyEventLabels[event] }]))),
     },
     installationManagement: management,
     agentPlugin: AshbyAgentPluginDescriptor,

@@ -7731,13 +7731,6 @@ describe("agent harness", () => {
           condition: "The issue reports a checkout failure.",
         },
         { ...unused, type: "resource_watch", resourceId: "00000000-0000-7000-8000-000000000042" },
-        {
-          ...unused,
-          type: "webhook",
-          sourceBindingKey: "webhook_source",
-          suggestedSourcePluginId: "plugin_webhook",
-          eventTypes: ["deployment.failed"],
-        },
       ],
     }) as { triggers: unknown[] };
 
@@ -7761,12 +7754,6 @@ describe("agent harness", () => {
         condition: "The issue reports a checkout failure.",
       },
       { type: "resource_watch", resourceId: "00000000-0000-7000-8000-000000000042" },
-      {
-        type: "webhook",
-        sourceBindingKey: "webhook_source",
-        suggestedSourcePluginId: "plugin_webhook",
-        eventTypes: ["deployment.failed"],
-      },
     ]);
   });
 });
