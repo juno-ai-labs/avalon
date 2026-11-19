@@ -364,8 +364,7 @@ embedding children (`search_embedding_batch_v1`) share the regional activity
 Queue with unrelated jobs. Inspect and replay only the failed search messages;
 never purge the whole Queue. A display job can be replayed unchanged at any
 time: it carries only the conversation address and reads the current title and
-archive state when it runs. A display job for a Chat that has since been erased
-(a discarded blank Canvas) reads no display and is acknowledged. Malformed embedding jobs retry and eventually
+archive state when it runs. Malformed embedding jobs retry and eventually
 dead-letter rather than falling through to the legacy-message acknowledgment. Publish a replacement durably before acknowledging
 or removing its failed predecessor.
 
@@ -460,8 +459,11 @@ before its first write; other provider failures are not treated as empty results
 
 A search never waits for a canonical owner: an undecided candidate is omitted and
 filled after the response. A `search_conversation_projection_v1` job that
-dead-letters leaves a conversation's previous title, or an archived conversation's
-rows, visible to admitted readers until it is redriven; a text rewrite that
+reaches an erased Chat (the only way a published job can meet an object with no
+identity: a discarded blank Canvas) reads no display and is acknowledged
+without patching; the Chat was blank, so no indexed row is left stale. A
+`search_conversation_projection_v1` job that dead-letters leaves a
+conversation's previous title, or an archived conversation's rows, visible to admitted readers until it is redriven; a text rewrite that
 dead-letters leaves its row omitted, because a row carries no display until it is
 rewritten. The display rewrite itself is lazy: migration 52 requeues a
 conversation's turns when its AgentLoopDO next wakes, and WorkspaceDO
@@ -744,25 +746,21 @@ wakeups; the CLI provides the eager fleet pass without the retired tracker.
 ### 2026-11-19 — Settle a display job for an erased Chat instead of dead-lettering it
 
 **What changed:** `AgentLoopDO.searchConversationDisplay` answers `null` when the
-object has no identity, rather than throwing
-`search_projection_identity_mismatch`. The consumer already acknowledges a
-`null` display without patching.
+object has no identity, so the consumer acknowledges the job without patching.
+A live object whose identity differs still throws
+`search_projection_identity_mismatch`.
 
-**Why:** A blank Canvas discarded seconds after it was opened had its Chat
-erased (`eraseBlankConversation` deletes all storage) while a
-`search_conversation_projection_v1` job for it was still queued. Every delivery
-then met an object with no identity, threw the mismatch, and the job
-dead-lettered after its retries (production, 2026-11-19 09:56 UTC). The
-`null` answer was already the consumer's contract for "this conversation no
-longer answers"; the identity check reached the throw first.
+**Why:** Discarding a blank Canvas archives its Chat, which publishes a display
+job, and then erases the Chat's storage. The job met an object with no identity,
+threw, and dead-lettered after its retries (production, 2026-11-19 09:56 UTC).
+The erased Chat was blank, so it had no indexed rows and acknowledging loses no
+patch.
 
 **Considered and rejected:** Acknowledging `search_projection_identity_mismatch`
-in the consumer. The same error marks a job routed to the wrong live
-conversation, which is a real fault and should keep failing loudly. Only the
-no-identity case is answered.
+in the consumer. It also marks a job routed to the wrong live conversation,
+which must keep failing loudly.
 
-**Consequences:** A display job for a never-created or erased conversation now
-settles silently.
+Shipped in #1669.
 
 ### 2026-11-15 — Back off a failed search delivery before redelivering it
 

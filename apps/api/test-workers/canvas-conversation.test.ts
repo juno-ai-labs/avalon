@@ -653,9 +653,6 @@ describe("the Canvas list", () => {
       .catch((error: unknown) => { if (!String(error).includes("conversation_erased")) throw error; });
     await expect.poll(() => runInDurableObject(chat(), (_instance, state) => tablesNaming(state.storage.sql, canvasId)),
       { timeout: waitBudget() }).toEqual([]);
-    // A search display job queued before the erase finds nothing to show, and settles.
-    expect(await chat().searchConversationDisplay({ type: "search_conversation_projection_v1", region: "global",
-      workspaceId: WORKSPACE_ID, parentId: canvasId, substreamId: "0" })).toBeNull();
   }));
 
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {

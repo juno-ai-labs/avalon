@@ -6051,8 +6051,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   async searchConversationDisplay(input: unknown): Promise<ConversationDisplay | null> {
     await this.storageReady;
     const request = SearchConversationProjectionMessageSchema.parse(input);
-    // An erased Chat has no identity and nothing left to display: answering
-    // null lets the job settle instead of retrying into the dead-letter queue.
+    // An erased Chat has no identity and nothing to display; null lets the job settle.
     if (!this.objectStore.identity()) return null;
     this.searchProjectionIdentity(request);
     return this.currentConversationDisplay();
