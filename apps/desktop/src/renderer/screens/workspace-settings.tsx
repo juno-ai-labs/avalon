@@ -503,8 +503,10 @@ const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
  * A row reaches the mark from the connector type it already carries, which is
  * the same route the provider card above it takes — so the card somebody
  * connected from and the row it produced always show the same company. A
- * connection that is not a company's (a custom MCP server) draws no mark; the
- * status dot and the name carry the row on their own.
+ * custom MCP server draws the mark of a company its name spells out, or the
+ * Model Context Protocol's own. Every connector Rally ships has a mark, so
+ * nothing is drawn only for a type the renderer does not know; the status dot
+ * and the name carry that row on their own.
  */
 function InstalledConnectionMark({ connection }: { connection: WorkstreamConnection }): React.JSX.Element | null {
   const mark = connectorBrandMark(connection.connectorType, connection.displayName);
@@ -1143,7 +1145,8 @@ export function WorkspaceSettingsScreen({
     id: 'connection' as const,
     connectionId: connection.id,
     label: connection.displayName,
-    // The icon a connection's page wears when its company has no mark to draw.
+    // The fallback the navigation needs for a connector type with no mark;
+    // every connector Rally ships has one, custom MCP servers included.
     icon: Plug,
     mark: connectorBrandMark(connection.connectorType, connection.displayName),
     child: true,

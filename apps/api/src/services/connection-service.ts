@@ -4165,9 +4165,11 @@ export class ConnectionService {
  * `connector_operation_finished` happened to share the millisecond, which works
  * only while traffic is this thin.
  *
- * Naming the event type is safe because it is published vocabulary: the type
- * is in the connector's manifest and `connector_operation_finished` already
- * logs it.
+ * Naming the event type is safe because the delivery that carries it is the
+ * provider's own, signed by it and verified before this runs: the type is the
+ * provider's published vocabulary rather than anything a caller chose, and
+ * `connector_operation_finished` already logs it. Being refused means it is
+ * not in the connector's manifest, so the manifest is not what makes it safe.
  *
  * The `details` carry it too: a provider dashboard replaying a delivery shows
  * the response body, and "Rally does not model the fireflies event

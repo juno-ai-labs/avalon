@@ -1925,7 +1925,7 @@ export const TELEMETRY_EVENTS = {
   }),
   connector_action_completed: productEvent({
     name: "connector_action_completed",
-    definition: "The regional API completed a connector test, reconnect, disconnect, or secret-rotation action.",
+    definition: "The regional API completed a connector test, reconnect, or disconnect action.",
     productQuestion: "Which connector maintenance actions succeed and what health transition follows?",
     sources: ["api"],
     authoritativeSource: "api",
