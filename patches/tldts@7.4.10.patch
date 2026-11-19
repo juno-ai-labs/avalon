@@ -1,0 +1,37 @@
+diff --git a/dist/es6/src/suffix-trie.js b/dist/es6/src/suffix-trie.js
+index 4919cbb69bcc1a70aa6508a193701c6a9cefc5bc..73d29449476c38e2d6f7216ae0d7bff80a29c124 100644
+--- a/dist/es6/src/suffix-trie.js
++++ b/dist/es6/src/suffix-trie.js
+@@ -17,6 +17,14 @@ const numberOfEdges = edgeLength.length;
+ const edgeOffset = new Uint32Array(numberOfEdges);
+ const edgeHash = new Uint32Array(numberOfEdges);
+ const wildcardEdge = new Int32Array(numberOfNodes).fill(-1);
++// Rally patch: derive the index on the first lookup rather than at import.
++// Bundled into a Cloudflare Worker, this loop runs inside the bundle's single
++// top-level function, which V8 does not optimize, so the "~1ms" pass costs tens
++// of milliseconds of the Worker's startup CPU budget. See
++// docs/api-worker-deployment.md.
++let indexBuilt = false;
++function buildIndex() {
++indexBuilt = true;
+ for (let node = 0, offset = 0; node < numberOfNodes; node += 1) {
+     for (let edge = edgeStart[node]; edge < edgeStart[node + 1]; edge += 1) {
+         edgeOffset[edge] = offset;
+@@ -33,6 +41,7 @@ for (let node = 0, offset = 0; node < numberOfNodes; node += 1) {
+         offset = end;
+     }
+ }
++}
+ // Result of the last `walk`, kept in module scope to avoid allocating a match
+ // object. Safe because lookups are synchronous and read right after `walk`.
+ let matchNode = -1;
+@@ -142,6 +151,9 @@ export default function suffixLookup(hostname, options, out) {
+     if (fastPathLookup(hostname, options, out)) {
+         return;
+     }
++    if (!indexBuilt) {
++        buildIndex();
++    }
+     const allowedMask = (options.allowPrivateDomains ? 2 /* RULE_TYPE.PRIVATE */ : 0) |
+         (options.allowIcannDomains ? 1 /* RULE_TYPE.ICANN */ : 0);
+     // Exceptions have priority and strip their own left-most label (e.g. the

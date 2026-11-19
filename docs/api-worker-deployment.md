@@ -339,6 +339,36 @@ resident Channel agent reads the window snapshot once.
 
 ## Changelog
 
+### 2026-11-19 — Build tldts's public-suffix index on first lookup
+
+**What changed:** A pnpm patch (`patches/tldts@7.4.10.patch`) moves the loop
+in tldts's `suffix-trie.js` that derives `edgeOffset`, `edgeHash` and
+`wildcardEdge` into a function that the first non-fast-path lookup runs. The
+typed arrays are still allocated at module scope. Only the ES module build is
+patched, because that is the one Wrangler bundles.
+
+**Why:** The Global upload for #1673, a one-constant model change, failed with
+the startup-budget form of 10021, and the run before it passed. A per-module
+timing of the bundle put this loop at about 30 ms, the largest single cost in
+the startup graph. tldts calls it a "~1ms pass", but esbuild hoists it into the
+bundle's one top-level function, where V8 does not optimize the loop. Over six
+`wrangler check startup` runs each of the same bundle, median active startup
+fell from 291 ms to 251 ms. These are local proportions, not a margin against
+Cloudflare's limit.
+
+**Considered and rejected:** A dynamic `import("tldts")`, which esbuild would
+defer, but it makes all three synchronous call sites async. Upgrading tldts,
+because 7.5.x builds the index at import in the same way. Moving domain
+parsing behind a service boundary, which is a far larger change for a one-time
+loop.
+
+**Consequences:** The first lookup in an isolate that misses the fast path pays
+the index build once. The patch is pinned to 7.4.10, so a tldts bump has to
+carry it forward or drop it, and should check the new `suffix-trie.js` for
+module-scope work. When you edit the patch, keep the lockfile's `latest`
+resolutions: `pnpm patch-commit` re-resolves them, so update only the
+`patch_hash` entries by hand and confirm with `pnpm install --frozen-lockfile`.
+
 ### 2026-11-18 — Take the Google tool catalog and a sentinel Error out of startup
 
 **What changed:** Every Google connector tool now converts its Zod input schema
