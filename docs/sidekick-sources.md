@@ -377,6 +377,14 @@ snippet is a line or two, and a run that has to say what a message said would
 otherwise read it with the mailbox's tools, which only a delegate lends. So
 the host reads it.
 
+The opening also names what the event is about by the connector's own
+identifiers: admission reads the stored event's `subject` (for Gmail,
+`messageId` and `threadId`) from the same storage and hands it to
+`externalEventOpening`, which prints it ahead of the metadata and carries it in
+the structured half. It is not carried on the Queue delivery, whose size budget
+it would share. A run keys its records on these, as
+`tracking-seen-or-done-items` tells it to.
+
 When a run is provisioned, `runProvisioning` names the event that started it
 and its connection (`eventContent`), after checking again that a person's
 connection still has its owner's eligible source for that event type. The
@@ -872,6 +880,24 @@ one as it is resolved; the resolution becomes a changelog entry.
    Sidekick asked about from its own conversation.
 
 ## Changelog
+
+### 2026-11-19 — A run's opening names its event's message and thread
+
+**What changed:** Admitting a connector event reads the stored event's
+`subject` and puts it in the run's opening, as text before the metadata and as
+`structuredContent.subject`. `setting-up-a-filtered-trigger` step 5 now says
+what a run receives: the identifiers on every event, the full text only for
+`email.received`.
+
+**Why:** A GTM-CRM Sidekick keyed its rows on Gmail message ids, as
+`tracking-seen-or-done-items` tells a run to. The adapter wrote the ids into
+the event's `subject`, but the opening showed only the title, summary, snippet
+and metadata, so the run never saw them. Over two days, 32 of its 102 runs
+refused to write because they lacked a message id, among them a real customer
+thread. Carrying `subject` on `WorkspaceExternalEvent` was rejected: it would
+add to every Queue delivery and to the reference path that reloads oversized
+ones, when the row already sits in the storage that admits it. A future change
+must keep the identifiers ahead of anything the message bound can cut.
 
 ### 2026-11-16 — Connecting is part of answering a request
 

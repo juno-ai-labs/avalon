@@ -193,6 +193,18 @@ describe("Sidekick sources", () => {
     expect(await runs()).toEqual([]);
   });
 
+  it("names the admitted message and its thread in the run's opening, so the run can key its records on them", async () => {
+    await watchingMail();
+    const delivery = (await mail(creatorMail, creator, "Term sheet"))[0]!;
+    expect(await admit(delivery)).toMatchObject({ admitted: true });
+    const opening = JSON.parse((await runs())[0]!.opening_json!) as {
+      textContent: string; structuredContent: { subject?: Record<string, unknown> };
+    };
+    expect(opening.structuredContent.subject).toEqual({ messageId: `message-${delivery.event.id}`, threadId: `thread-${delivery.event.id}` });
+    expect(opening.textContent).toContain(`"messageId": "message-${delivery.event.id}"`);
+    expect(opening.textContent).toContain(`"threadId": "thread-${delivery.event.id}"`);
+  });
+
   it("lets only the person asked answer a request", async () => {
     await watchingMail();
     const asked = await ask([jane]);

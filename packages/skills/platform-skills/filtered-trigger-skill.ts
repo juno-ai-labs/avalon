@@ -156,8 +156,12 @@ and an event that should not have been shared cannot be taken back.
 
 ## 5. Write the run instructions for what a run actually receives
 
-Each run starts with the event that was let in and, for mail, the full text of
-that one message. Write the Sidekick's instructions to work from that. A run
+Each run starts with the event that was let in: its title, summary, snippet,
+the connector's identifiers for it (for mail, the message and thread ids, which
+are the stable keys to record it under), and for new mail (\`email.received\`)
+the full text of that one message. A label change (\`email.updated\`, such as
+mail being sent) carries only the subject line, sender and snippet. Write the
+Sidekick's instructions to work from that. A run
 cannot search or read a mailbox whose owner only shared a source, so do not
 write instructions that tell it to; if the work truly needs more than the one
 message, say so to the person, because that is asking the mailbox's owner for

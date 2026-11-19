@@ -33,6 +33,28 @@ describe("the event that woke a run, as its opening message", () => {
     });
   });
 
+  it("names what the event is about by the connector's own identifiers, ahead of its metadata", () => {
+    const opening = externalEventOpening({
+      id: "00000000-0000-7000-8000-0000000000e3",
+      eventType: "email.updated",
+      title: "Email updated: Re: pilot pricing",
+      summary: "From buyer@example.com",
+      textSnippet: "",
+      metadata: { changeType: "labelAdded" },
+      occurredAt: 0,
+    }, { messageId: "18c0ffee", threadId: "18c0ff00" });
+
+    expect(opening.textContent.split("\n\n")[2]).toBe([
+      "Subject (the connector's identifiers for what this event is about):",
+      "{",
+      "  \"messageId\": \"18c0ffee\",",
+      "  \"threadId\": \"18c0ff00\"",
+      "}",
+    ].join("\n"));
+    expect(opening.textContent.indexOf("Subject (")).toBeLessThan(opening.textContent.indexOf("Metadata:"));
+    expect(opening.structuredContent.subject).toEqual({ messageId: "18c0ffee", threadId: "18c0ff00" });
+  });
+
   it("leaves out the sections an event does not have", () => {
     const opening = externalEventOpening({
       id: "00000000-0000-7000-8000-0000000000e2",
