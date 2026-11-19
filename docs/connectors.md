@@ -1458,6 +1458,8 @@ Every rule below was learned from a defect in production or in review, and each 
 
 **A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, the spelling that says so without depending on the sanitizer; since `@juno-ai/bind` 14 the flat `type: ["string", "null"]` reaches the model as the same union, and `apps/api/test/tool-schema-sanitization.test.ts` asserts the delivered null branch for every property of every tool rather than only the cursors. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
 
+**An event names its item when the item is not its resource.** `NormalizedActivity.item` is `{ type, id }` for the provider's own item inside the resource: a Gmail message in its thread (`gmail_message`), a comment or review on a GitHub issue or pull request, named as that adapter's resource hints name it. Absent, the resource is the item. It is ids only, never content: it is what a Sidekick run is told the event is about, the key a run records it under. It is derived from the payload the activity already carries, so the payload hash and content fingerprint leave it out, and an event stored before its adapter set one is still the same event when it is delivered again. `entityKeys` are not that field: they are the raw provider ids an event is matched to registered resources by, and must keep matching `resources.provider_resource_id`. *A Gmail Sidekick keyed its records on message ids it was never shown, and refused 32 of 102 runs, including a real customer thread.*
+
 **An event a connection cannot receive is never advertised to it.** A connector whose `normalize` refuses a connection scope declares that scope out of `activityConnectionScopes`, so no surface offers it a trigger on that connection. *A personal Granola connection advertised its four triggers, and the Sidekick drafted on one applied, activated, and never fired; nothing in the product distinguished that from a Sidekick that had nothing to do yet.*
 
 **Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
@@ -1645,6 +1647,12 @@ now guards it.
 
 ## Testing
 
+`apps/api/test/workspace-connector-event-hash.test.ts` proves an event stored
+before its adapter named an `item` hashes and fingerprints as the same event
+delivered again with one, and that the hash still tells two events apart. The
+Gmail and GitHub normalizer tests (`packages/connectors/src/index.test.ts`,
+`github.test.ts`) assert the item each names.
+
 `apps/api/test-workers/resource-update-cost.test.ts` covers no-op discovery, each
 independent change condition, mixed batches, and URL/metadata merge behavior.
 
@@ -1790,23 +1798,35 @@ surface that tells somebody about connector activity reads
 
 ## Changelog
 
-### 2026-11-19 — A run's opening lists its event's entity keys
+### 2026-11-19 — An event names the item it is about
 
-**What changed:** A Sidekick run started by a connector event gets the entity
-keys its adapter declared (`google:gmail:message:<id>`) in its opening.
+**What changed:** `NormalizedActivity` gains an optional `item: { type, id }`,
+stored in `workspace_connector_events.item_type` and `item_id` (WorkspaceDO
+migration 153). Gmail names the message in its thread, and GitHub the comment
+or review on its issue or pull request. A Sidekick run's opening names the item
+and the resource it sits in.
 
-**Why:** A Gmail run had no message id to key its records on: the ids were in
-the subject and the entity keys, which never reached it, the gap Granola's
-`noteId` closed for one connector on 2026-09-17.
+**Why:** A Gmail Sidekick keyed its records on message ids, and its runs were
+never shown one: the id was in the subject, which never reaches a run. Over two
+days 32 of its 102 runs refused to write, among them a real customer thread.
+Granola closed the same gap for itself on 2026-09-17 by putting `noteId` in its
+metadata; every other connector kept it.
 
-**Considered and rejected:** Handing the run the subject, which the 2026-09-17
-entry already rejected and which is still rejected. Entity keys narrow that
-decision rather than reverse it: they are ids every adapter already declares,
-never the item's content, so what a run may read of an item stays a decision
-per connector.
+**Considered and rejected:**
+- Handing the run the subject, which the 2026-09-17 entry rejected and which
+  stays rejected: for GitHub, Linear and Notion it is the whole item, body
+  included.
+- Handing the run the entity keys. They are ids, but they are the resource
+  matching index: raw provider ids beside the Organization, parent and app-user
+  ids, with nothing saying which one is the item. Reshaping them would break
+  matching for every connector but Google.
+- Putting the ids in metadata, as Granola did. Metadata is compared on replay,
+  and is per connector by construction.
 
-**Consequences:** An adapter's entity keys are now read by models. Keep them
-ids, in the `<provider>:<kind>:<id>` shape where the adapter has one.
+**Consequences:** An adapter whose events are about something inside their
+resource names it in `item`; one whose resource is the item sets nothing. The
+field stays out of the payload hash and the content fingerprint, because it is
+derived; one that carried new information would have to be hashed.
 
 ### 2026-11-17 — A poll refused on its grant fails once, not four times
 

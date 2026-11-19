@@ -33,8 +33,7 @@ describe("the event that woke a run, as its opening message", () => {
     });
   });
 
-  it("names what the event is about by the keys its connector declared, ahead of its metadata", () => {
-    const keys = ["google:gmail:thread:18c0ff00", "google:gmail:message:18c0ffee"];
+  it("names the item an event is about and the resource it sits in, by the provider's own ids", () => {
     const opening = externalEventOpening({
       id: "00000000-0000-7000-8000-0000000000e3",
       eventType: "email.updated",
@@ -43,33 +42,36 @@ describe("the event that woke a run, as its opening message", () => {
       textSnippet: "",
       metadata: { changeType: "labelAdded" },
       occurredAt: 0,
-    }, keys);
+    }, { item: { type: "gmail_message", id: "18c0ffee" }, resource: { type: "gmail_thread", id: "18c0ff00" } });
 
-    const blocks = opening.textContent.split("\n\n");
-    expect(blocks.find((block) => block.startsWith("IDs ("))).toBe([
-      "IDs (stable keys for what this event is about):",
-      "- google:gmail:thread:18c0ff00",
-      "- google:gmail:message:18c0ffee",
-    ].join("\n"));
-    expect(blocks.findIndex((block) => block.startsWith("IDs ("))).toBeLessThan(blocks.findIndex((block) => block.startsWith("Metadata:")));
-    expect(opening.structuredContent.entityKeys).toEqual(keys);
+    expect(opening.textContent.split("\n").slice(0, 5)).toEqual([
+      "External event: Email updated: Re: pilot pricing",
+      "Type: email.updated",
+      "Occurred: 1970-01-01T00:00:00.000Z",
+      "About: gmail_message 18c0ffee",
+      "In: gmail_thread 18c0ff00",
+    ]);
+    expect(opening.structuredContent).toMatchObject({
+      about: { type: "gmail_message", id: "18c0ffee" },
+      in: { type: "gmail_thread", id: "18c0ff00" },
+    });
   });
 
-  it("leaves the keys to the text when they would carry the structured half past the message bound", () => {
-    const keys = Array.from({ length: 2_000 }, (_, index) => `linear:issue:${"k".repeat(60)}-${index}`);
+  it("names the resource as what the event is about when no item was named", () => {
     const opening = externalEventOpening({
       id: "00000000-0000-7000-8000-0000000000e5",
-      eventType: "issue.updated",
-      title: "Issue updated: ENG-42",
+      eventType: "drive.file_changed",
+      title: "File changed: Q4 plan",
       summary: "",
       textSnippet: "",
       metadata: {},
       occurredAt: 0,
-    }, keys);
+    }, { item: null, resource: { type: "drive_file", id: "1AbC" } });
 
-    expect(JSON.stringify(opening.structuredContent).length).toBeLessThanOrEqual(100_000);
-    expect(opening.structuredContent).not.toHaveProperty("entityKeys");
-    expect(opening.textContent).toContain(`- ${keys[0]}`);
+    expect(opening.textContent.split("\n")[3]).toBe("About: drive_file 1AbC");
+    expect(opening.textContent).not.toContain("In: ");
+    expect(opening.structuredContent).toMatchObject({ about: { type: "drive_file", id: "1AbC" } });
+    expect(opening.structuredContent).not.toHaveProperty("in");
   });
 
   it("keeps its closing guard when a long event is cut at the message bound", () => {
@@ -99,8 +101,8 @@ describe("the event that woke a run, as its opening message", () => {
     });
 
     expect(opening.textContent).not.toContain("Metadata:");
-    expect(opening.textContent).not.toContain("IDs (");
-    expect(opening.structuredContent).not.toHaveProperty("entityKeys");
+    expect(opening.textContent).not.toContain("About: ");
+    expect(opening.structuredContent).not.toHaveProperty("about");
     expect(opening.textContent.split("\n").filter((line) => line.trim() === "")).toHaveLength(1);
   });
 });

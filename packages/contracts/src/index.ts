@@ -2828,6 +2828,16 @@ export const NormalizedActivitySchema = z.object({
   eventType: z.string().min(1),
   resourceType: z.string().nullable(),
   providerResourceId: z.string().nullable(),
+  /**
+   * The provider's own item this activity is about, when that is not the
+   * resource itself: a Gmail message in its thread (`gmail_message`), a
+   * comment on an issue (`github_issue_comment`). Absent, the resource is the
+   * item. Ids only, never content: it is what a run is told the event is
+   * about, and a run keys its records on it. Adapter code derives it from the
+   * same payload the activity already carries, so it is not part of the
+   * event's payload hash.
+   */
+  item: z.strictObject({ type: z.string().min(1).max(200), id: z.string().min(1).max(2000) }).optional(),
   actor: z.record(z.string(), z.unknown()),
   subject: z.record(z.string(), z.unknown()),
   occurredAt: TimestampSchema,

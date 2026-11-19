@@ -934,6 +934,8 @@ interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
   event_type: string;
   resource_type: string | null;
   provider_resource_id: string | null;
+  item_type: string | null;
+  item_id: string | null;
   actor_json: string;
   subject_json: string;
   occurred_at: number;
@@ -4507,7 +4509,20 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // backfill: a list is built from the Canvases themselves whenever a socket
   // subscribes, so nothing here has to catch up.
   statements: CANVAS_SHARE_FEDERATION_STATEMENTS,
-}, CANVA_RETIREMENT_MIGRATION];
+}, CANVA_RETIREMENT_MIGRATION, {
+  version: 153,
+  description: "record the provider item a connector event is about, apart from its resource",
+  // See NormalizedActivity.item and docs/connectors.md. No backfill: a stored
+  // event without one reads as its resource being the item, which is what
+  // every adapter meant before Gmail and GitHub named a message or a comment.
+  statements: [
+    `ALTER TABLE workspace_connector_events ADD COLUMN item_type TEXT
+       CHECK (item_type IS NULL OR length(item_type) BETWEEN 1 AND 200)`,
+    `ALTER TABLE workspace_connector_events ADD COLUMN item_id TEXT
+       CHECK (item_id IS NULL OR length(item_id) BETWEEN 1 AND 2000)
+       CHECK ((item_id IS NULL) = (item_type IS NULL))`,
+  ],
+}];
 
 function conversationToolEntry(conversation: {
   conversationId: string; parentId: string; substreamId: string; kind: ConversationToolEntry["kind"];
@@ -4754,6 +4769,7 @@ function connectorEventFromRow(
       eventType: row.event_type,
       resourceType: row.resource_type,
       providerResourceId: row.provider_resource_id,
+      ...(row.item_type !== null && row.item_id !== null ? { item: { type: row.item_type, id: row.item_id } } : {}),
       actor: JSON.parse(row.actor_json) as unknown,
       subject: JSON.parse(row.subject_json) as unknown,
       occurredAt: iso(row.occurred_at),
@@ -9192,6 +9208,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               event_id, payload_hash, connection_id, connection_scope,
               connection_owner_user_id, connector_type, provider,
               provider_event_id, event_type, resource_type, provider_resource_id,
+              item_type, item_id,
               actor_json, subject_json, occurred_at, received_at, title, summary,
               text_snippet, payload_ref, visibility_json, target_user_ids_json,
               entity_keys_json, dedupe_key, raw_content_hash, metadata_json,
@@ -9199,7 +9216,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               processing_attempt, claimed_at, processed_at, processing_error, created_at, updated_at
             ) VALUES (
               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              ?, ?, ?, ?, 'pending', NULL, -1, NULL, NULL, NULL, ?, ?
+              ?, ?, ?, ?, ?, ?, 'pending', NULL, -1, NULL, NULL, NULL, ?, ?
             )`,
             activity.id,
             request.payloadHash,
@@ -9212,6 +9229,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             activity.eventType,
             activity.resourceType,
             activity.providerResourceId,
+            activity.item?.type ?? null,
+            activity.item?.id ?? null,
             JSON.stringify(activity.actor),
             JSON.stringify(activity.subject),
             occurredAt,
@@ -9261,6 +9280,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                 event_id, payload_hash, connection_id, connection_scope,
                 connection_owner_user_id, connector_type, provider,
                 provider_event_id, event_type, resource_type, provider_resource_id,
+                item_type, item_id,
                 actor_json, subject_json, occurred_at, received_at, title, summary,
                 text_snippet, payload_ref, visibility_json, target_user_ids_json,
                 entity_keys_json, dedupe_key, raw_content_hash, metadata_json,
@@ -9270,6 +9290,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               SELECT ?, ?, connection_id, connection_scope,
                      connection_owner_user_id, connector_type, provider,
                      ?, event_type, resource_type, provider_resource_id,
+                     item_type, item_id,
                      actor_json, subject_json, ?, ?, title, summary,
                      text_snippet, ?, visibility_json, target_user_ids_json,
                      entity_keys_json, ?, raw_content_hash, metadata_json,

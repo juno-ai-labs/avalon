@@ -91,7 +91,7 @@ import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
 import { conversationMessageOpening } from "@rally/prompts/api/conversation-message-opening";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { externalEventOpening } from "@rally/prompts/api/external-event-opening";
+import { externalEventOpening, type EventAbout } from "@rally/prompts/api/external-event-opening";
 import { renderAppTaskOpening } from "@rally/prompts/api/app-task-opening";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { parseRpcInput } from "../lib/rpc-input";
@@ -549,10 +549,12 @@ export function skillSource(
   });
 }
 
-/** A stored event's entity keys: the adapter's ids for what it is about. None when the row is gone. */
-function storedEntityKeys(json: string | undefined): string[] {
-  const keys: unknown = json === undefined ? [] : JSON.parse(json);
-  return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === "string") : [];
+/** What a stored event is about, by its provider's ids; nothing when the row is gone. */
+function eventAbout(row: {
+  item_type: string | null; item_id: string | null; resource_type: string | null; provider_resource_id: string | null;
+} | null | undefined): EventAbout {
+  const ref = (type: string | null | undefined, id: string | null | undefined) => type && id ? { type, id } : null;
+  return { item: ref(row?.item_type, row?.item_id), resource: ref(row?.resource_type, row?.provider_resource_id) };
 }
 
 export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
@@ -2055,15 +2057,17 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
       }
     }
-    const entityKeys = storedEntityKeys(first(this.sql.exec<{ entity_keys_json: string }>(
-      "SELECT entity_keys_json FROM workspace_connector_events WHERE event_id = ?", request.event.id))?.entity_keys_json);
+    const about = eventAbout(first(this.sql.exec<{
+      item_type: string | null; item_id: string | null; resource_type: string | null; provider_resource_id: string | null;
+    }>("SELECT item_type, item_id, resource_type, provider_resource_id FROM workspace_connector_events WHERE event_id = ?",
+      request.event.id)));
     const admitted = this.admitOccurrence(row.accepted_definition_revision, externalEventOccurrenceKey(request.event), {
       kind: "external_event",
       workspaceEventId: request.event.id,
       eventType: request.event.eventType,
       occurredAt: request.event.occurredAt,
       payloadHash: request.payloadHash,
-    }, externalEventOpening(request.event, entityKeys), coordinator);
+    }, externalEventOpening(request.event, about), coordinator);
     return {
       admitted: true,
       outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",

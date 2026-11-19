@@ -157,8 +157,9 @@ and an event that should not have been shared cannot be taken back.
 ## 5. Write the run instructions for what a run actually receives
 
 Each run starts with the event that was let in: its title, summary, snippet,
-and its IDs (for mail, \`google:gmail:message:<id>\` and
-\`google:gmail:thread:<id>\`, the stable keys to record it under). New mail
+and what it is about by the provider's own ids (for mail, \`About:
+gmail_message <id>\` and \`In: gmail_thread <id>\`; the message id is the
+stable key to record it under). New mail
 (\`email.received\`) also comes with the full text of that one message. Every
 other mail change (\`email.updated\`: mail that was sent, relabelled, skipped
 the inbox or was removed) comes with those IDs and no full text. Write the

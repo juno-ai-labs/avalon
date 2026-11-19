@@ -3731,6 +3731,7 @@ function normalizeGmailActivity(
     eventType: received ? "email.received" : "email.updated",
     resourceType: "gmail_thread",
     providerResourceId: threadId,
+    item: { type: "gmail_message", id: change.messageId },
     actor: fromHeader ? { from: truncateText(fromHeader, 500) } : {},
     subject: { messageId: change.messageId, threadId, subject },
     occurredAt,

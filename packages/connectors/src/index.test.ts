@@ -534,6 +534,7 @@ describe("connectors", () => {
       eventType: "email.received",
       resourceType: "gmail_thread",
       providerResourceId: "thread-1",
+      item: { type: "gmail_message", id: "message-1" },
       title: "New email: Quarterly planning",
       visibility: { scope: "personal", ownerUserId: TEST_USER_ID },
       targetUserIds: [TEST_USER_ID]

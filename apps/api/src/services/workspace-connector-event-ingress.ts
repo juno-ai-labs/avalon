@@ -42,14 +42,21 @@ function canonicalJson(value: unknown): string {
   )).join(",")}}`;
 }
 
-/** Hash the event with the named activity fields blanked. */
+/**
+ * Hash the event with the named activity fields blanked. `item` is left out
+ * altogether: an adapter derives it from the payload the rest of the activity
+ * already carries, and an event stored before adapters set it must still hash
+ * as the same event when it is delivered again.
+ */
 async function hashEventWithout(
   event: WorkspaceConnectorEvent,
   blanked: readonly (keyof NormalizedActivity)[],
 ): Promise<string> {
+  const activity: Partial<NormalizedActivity> = { ...event.activity };
+  delete activity.item;
   const content = {
     ...event,
-    activity: { ...event.activity, ...Object.fromEntries(blanked.map((field) => [field, ""])) },
+    activity: { ...activity, ...Object.fromEntries(blanked.map((field) => [field, ""])) },
   };
   return `sha256:${await sha256Hex(canonicalJson(content))}`;
 }

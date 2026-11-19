@@ -814,6 +814,8 @@ describe("GitHub connector", () => {
       eventType: "github.pull_request_comment.created",
       resourceType: "github_pull_request",
       providerResourceId: "acme/widget#12",
+      // The comment, named as its resource hint names it.
+      item: { type: "github_pull_request_comment", id: "acme/widget#12/comments/88" },
     });
     const discovery = discoverGitHubWebhookResources(delivery);
     expect(discovery.resources).toEqual(expect.arrayContaining([
