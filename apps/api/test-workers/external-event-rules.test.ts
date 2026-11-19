@@ -301,9 +301,10 @@ describe("external event rules across connectors", () => {
     await register(AUTOMATIONS.slowDeploys, [
       rule(AUTOMATIONS.slowDeploys, 1, "github", "github.workflow_run.completed", {
         kind: "all",
+        // Fields GitHub declares for every event it announces.
         allOf: [
-          { kind: "string", attribute: "service", operator: "equals", value: "checkout" },
-          { kind: "number", attribute: "durationMs", operator: "greater_than", value: 300_000 },
+          { kind: "string", attribute: "repository", operator: "equals", value: "acme/checkout" },
+          { kind: "string", attribute: "action", operator: "equals", value: "completed" },
         ],
       }),
       // A second rule on another event type of the same connection: OR across
@@ -314,13 +315,13 @@ describe("external event rules across connectors", () => {
       rule(AUTOMATIONS.workspaceWide, 1, "github", "github.workflow_run.completed", { kind: "always" }),
     ]);
 
-    const slow = await ingest("github", "github.workflow_run.completed", { metadata: { service: "checkout", durationMs: 420_000 } });
-    const fast = await ingest("github", "github.workflow_run.completed", { metadata: { service: "checkout", durationMs: 12_000 } });
-    const failed = await ingest("github", "github.release.published", { metadata: { service: "search" } });
+    const checkout = await ingest("github", "github.workflow_run.completed", { metadata: { repository: "acme/checkout", action: "completed" } });
+    const search = await ingest("github", "github.workflow_run.completed", { metadata: { repository: "acme/search", action: "completed" } });
+    const release = await ingest("github", "github.release.published", { metadata: { repository: "acme/search", action: "published" } });
 
-    expect(await destinationsFor(slow)).toEqual([AUTOMATIONS.slowDeploys, AUTOMATIONS.workspaceWide].sort());
-    expect(await destinationsFor(fast)).toEqual([AUTOMATIONS.workspaceWide]);
-    expect(await destinationsFor(failed)).toEqual([AUTOMATIONS.slowDeploys]);
+    expect(await destinationsFor(checkout)).toEqual([AUTOMATIONS.slowDeploys, AUTOMATIONS.workspaceWide].sort());
+    expect(await destinationsFor(search)).toEqual([AUTOMATIONS.workspaceWide]);
+    expect(await destinationsFor(release)).toEqual([AUTOMATIONS.slowDeploys]);
   });
 
   it("names people by id, and keeps a restricted event away from a Sidekick nobody in its audience let it into", async () => {

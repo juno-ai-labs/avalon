@@ -229,7 +229,8 @@ describe("automation-creator plugin catalog", () => {
     // Narrowed per connector, not per scope: a personal Notion connection
     // receives its own events and keeps every trigger its manifest declares.
     const notionEntry = entries.find((entry) => entry.pluginId === "plugin_notion");
-    expect(notionEntry?.activityTriggerCount).toBeGreaterThan(0);
+    // Every one Notion's manifest declares.
+    expect(notionEntry?.activityTriggerCount).toBe(31);
     expect(notionEntry).not.toHaveProperty("activityTriggersUnavailable");
   });
 
