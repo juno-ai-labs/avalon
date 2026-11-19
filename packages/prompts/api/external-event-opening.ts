@@ -49,21 +49,26 @@ export function externalEventOpening(
   const metadataKeys = Object.keys(event.metadata);
   if (metadataKeys.length > 0) lines.push("", "Metadata:", JSON.stringify(event.metadata, null, 2));
   const ending = `\n\n${CLOSING_GUARD}`;
+  const structured = (withSubject: boolean): Record<string, unknown> => ({
+    kind: "external_event",
+    untrusted: true,
+    workspaceEventId: event.id,
+    eventType: event.eventType,
+    title: event.title,
+    summary: event.summary,
+    occurredAt: event.occurredAt,
+    ...(withSubject ? { subject: fields } : {}),
+    metadata: event.metadata,
+  });
+  // The stored structured half shares the message bound, and a scalar can be
+  // long (a Linear issue's description). When the subject would carry it past
+  // the bound, the structured half goes without it; the text still names it.
+  const withSubject = hasSubject && JSON.stringify(structured(true)).length <= MESSAGE_MAX_CHARACTERS;
   return {
     // The message bound is the one every row already has; an event that
     // renders past it is cut there rather than refused, and the guard after it
     // is never what is cut.
     textContent: `${lines.join("\n").slice(0, MESSAGE_MAX_CHARACTERS - ending.length)}${ending}`,
-    structuredContent: {
-      kind: "external_event",
-      untrusted: true,
-      workspaceEventId: event.id,
-      eventType: event.eventType,
-      title: event.title,
-      summary: event.summary,
-      occurredAt: event.occurredAt,
-      ...(hasSubject ? { subject: fields } : {}),
-      metadata: event.metadata,
-    },
+    structuredContent: structured(withSubject),
   };
 }

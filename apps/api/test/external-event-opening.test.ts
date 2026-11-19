@@ -56,6 +56,23 @@ describe("the event that woke a run, as its opening message", () => {
     expect(opening.textContent).not.toContain("a whole entity payload");
   });
 
+  it("keeps the structured half within the message bound when a subject field is long, and still names the ids in the text", () => {
+    const opening = externalEventOpening({
+      id: "00000000-0000-7000-8000-0000000000e5",
+      eventType: "issue.updated",
+      title: "Issue updated: ENG-42",
+      summary: "",
+      textSnippet: "",
+      metadata: {},
+      occurredAt: 0,
+    }, { id: "issue-42", identifier: "ENG-42", description: "d".repeat(110_000) });
+
+    expect(JSON.stringify(opening.structuredContent).length).toBeLessThanOrEqual(100_000);
+    expect(opening.structuredContent).not.toHaveProperty("subject");
+    expect(opening.textContent).toContain("\"id\": \"issue-42\"");
+    expect(opening.textContent).toContain("\"identifier\": \"ENG-42\"");
+  });
+
   it("keeps its closing guard when a long event is cut at the message bound", () => {
     const opening = externalEventOpening({
       id: "00000000-0000-7000-8000-0000000000e4",
