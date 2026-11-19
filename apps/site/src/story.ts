@@ -8,8 +8,9 @@
  * and then each email show one at a time, and one or more `.story-page`, the
  * page those emails change. Each step shows its email first and changes the
  * page a moment later, so the eye reads cause, then effect. This module only
- * keeps time: it sets each step's classes, and how a change looks is each
- * page's own stylesheet (and, for more, a `story:step` listener). It only runs on
+ * keeps time: it sets each step's classes and announces `story:slide` and
+ * `story:step`; how a change looks is each page's own stylesheet (and, for
+ * more, a listener). It only runs on
  * screen, a chosen tab plays its slide from the start, and the pause button
  * stops it. With reduced motion nothing moves and every slide shows its end.
  */
@@ -81,7 +82,6 @@ function run(story: HTMLElement): void {
   const manual = story.hasAttribute('data-story-manual');
   // The dot that flies from an email to what it changed is one page's motion, not every page's.
   const dot = story.hasAttribute('data-story-dot');
-  const word = story.dataset.storyWord ? document.getElementById(story.dataset.storyWord) : null;
   if (!slides.length || !stage) return;
   let current = 0;
   let step = 0;
@@ -154,10 +154,8 @@ function run(story: HTMLElement): void {
       if (!on) set(slide, lastStep(slide));
     });
     const slide = slides[current]!;
-    if (word && slide.dataset.word && word.textContent !== slide.dataset.word) {
-      word.textContent = slide.dataset.word;
-      if (!reduced) word.animate([{ opacity: 0, transform: 'translateY(.18em)' }, { opacity: 1, transform: 'none' }], { duration: 420, easing: 'ease-out' });
-    }
+    // Anything on the page that follows the story, such as a headline's word (word-swap.ts), hears which slide is up.
+    story.dispatchEvent(new CustomEvent('story:slide', { bubbles: true, detail: { slide, index: current } }));
     if (chosen) {
       tabs[current]?.focus({ preventScroll: true });
       // Only a person's choice scrolls the tab row: autoplay scrolling it would read as page input to traffic-signals.ts.

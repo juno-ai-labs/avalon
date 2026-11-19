@@ -32,7 +32,7 @@ export const pageCards: readonly PageCard[] = [
   {
     path: '/',
     eyebrow: 'Start free · No credit card needed',
-    title: 'Connect Gmail.\nGet a dashboard of your leads\nin five minutes.',
+    title: 'Connect Gmail. Get a dashboard of your leads in five minutes.',
     description: 'Rally turns your inbox into one page you can check at a glance: a dashboard, a board or a table. It stays up to date as new mail arrives.',
     scene: 'canvas',
   },
@@ -47,7 +47,7 @@ export const pageCards: readonly PageCard[] = [
   {
     path: '/off-the-beaten-path/',
     eyebrow: 'Beyond the inbox',
-    title: 'Off the\nbeaten\npath',
+    title: 'Off the beaten path',
     description: 'Email is where most people start. Rally also builds dashboards, small apps, podcast feeds and websites that react to the tools you already use.',
     scene: 'canvas',
   },
@@ -55,14 +55,14 @@ export const pageCards: readonly PageCard[] = [
     path: '/canvases/',
     eyebrow: 'Rally Canvases',
     title: 'Made once.\nKept current.',
-    description: 'A document, spreadsheet, dashboard or site that Rally republishes whenever something changes in your tools. Start alone, then share it.',
+    description: 'Your conversation with Rally and the page it makes beside it: a dashboard, a board or a table, kept up to date from your email and your tools.',
     scene: 'canvas',
   },
   {
     path: '/sidekicks/',
     eyebrow: 'Rally Sidekicks',
     title: 'The AI that keeps\nwork current.',
-    description: 'It watches your tools or runs on a schedule, then does the work: updates a Canvas, drafts the follow-up, posts the digest.',
+    description: 'The helper behind a page that updates itself. It watches your email and tools, or runs on a schedule, then does the work.',
     scene: 'sidekick',
   },
   {

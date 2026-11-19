@@ -25,7 +25,7 @@
       crossorigin
     />
     <link rel="stylesheet" href="/src/home.css" />
-    <script type="module" src="/src/story.ts"></script>
+    <script type="module" src="/src/home.ts"></script>
     <title>Connect Gmail. Get a dashboard of your leads in five minutes.</title>
   </head>
   <body>
@@ -35,9 +35,15 @@
       <section class="home-hero story-hero wrap" aria-labelledby="hero-title">
         <div class="hero-copy">
           <h1 id="hero-title">
-            Connect Gmail.<br />Get a dashboard of<br />your
-            <span class="hero-word pencil-underline" id="hero-word">leads</span
-            ><br />in five minutes.
+            Connect Gmail. Get a
+            <span class="swap" data-swap="home-story:kind"
+              ><span class="swap-now">dashboard</span></span
+            >
+            of your
+            <span class="swap hero-word pencil-underline" data-swap="home-story:word"
+              ><span class="swap-now">leads</span></span
+            >
+            in five minutes.
           </h1>
           <p class="hero-intro">
             Rally reads the email you already get and turns it into one page
@@ -79,7 +85,7 @@
       </section>
       <!-- Connector artwork: @thesvg/react, per-brand mono (Slack: default), painted in currentColor. -->
       <section class="tool-strip wrap" aria-label="Connected tools">
-        <p>Starts with Gmail. <br />Works with these too.</p>
+        <p>Starts with Gmail. Works with these too.</p>
         <ul>
           <li class="tool-gmail">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
@@ -138,7 +144,7 @@
         <div class="section-intro">
           <p class="eyebrow">01 / Who it’s for</p>
           <h2 id="who-title">
-            For people who run<br />their work from
+            For people who run their work from
             <span class="pencil-underline short">email</span>
           </h2>
           <p>
@@ -153,7 +159,7 @@
       <section class="how-section wrap" id="how" aria-labelledby="how-title">
         <div class="section-intro">
           <p class="eyebrow">02 / How it works</p>
-          <h2 id="how-title">Three steps.<br />About five minutes.</h2>
+          <h2 id="how-title">Three steps. About five minutes.</h2>
           <p>
             Nothing to install and no setup project. You can do it between two
             emails.
@@ -191,7 +197,7 @@
       <section class="fits-section wrap" aria-labelledby="fits-title">
         <div class="section-intro">
           <p class="eyebrow">03 / It fits how you work</p>
-          <h2 id="fits-title">Nothing new to learn.<br />Nothing to keep up.</h2>
+          <h2 id="fits-title">Nothing new to learn. Nothing to keep up.</h2>
           <p>
             Most tools ask you to change how you work. Rally sits on top of
             what you already do.
@@ -252,7 +258,7 @@
         <div class="pricing-heading">
           <div>
             <p class="eyebrow">Room for the whole team</p>
-            <h2 id="pricing-title">Good company.<br />No seat counting.</h2>
+            <h2 id="pricing-title">Good company. No seat counting.</h2>
           </div>
           <p>
             Start free, and choose more room as the work grows. Every plan
@@ -292,7 +298,7 @@
       <section class="faq-section wrap" aria-labelledby="faq-title">
         <div>
           <p class="eyebrow">Before you connect</p>
-          <h2 id="faq-title">A few good<br />questions.</h2>
+          <h2 id="faq-title">A few good questions.</h2>
           <p>
             More curious?
             <a href="/help/">There’s a whole manual. <!-- rally:arrow --></a>
@@ -386,7 +392,7 @@
         <!-- rally:home-illustration-together -->
         <div>
           <p class="eyebrow">Five minutes from now</p>
-          <h2 id="closer-title">Your inbox,<br />as one page.</h2>
+          <h2 id="closer-title">Your inbox, as one page.</h2>
           <a
             class="button primary"
             data-site-action="web-app-hero"

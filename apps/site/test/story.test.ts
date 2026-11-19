@@ -6,8 +6,7 @@ let observers: Callback[] = [];
 
 /** A story of two slides, two emails each, drawn at its last step as a page writes it. */
 const story = (attributes = ''): string => `
-<h1>Your <span id="word">leads</span></h1>
-<div class="story" data-story data-story-word="word" ${attributes}>
+<div class="story" data-story ${attributes}>
   <div class="story-bar">
     <div class="story-tabs" role="tablist">
       <button type="button" role="tab" id="tab-a" aria-selected="true">A<i class="story-progress"></i></button>
@@ -105,15 +104,17 @@ describe('story player', () => {
     expect(has('a-moved', 'is-touched')).toBe(true);
   });
 
-  it('goes on to the next slide after the last step and writes its word into the headline', async () => {
+  it('goes on to the next slide after the last step and says which slide is up', async () => {
+    const up: string[] = [];
+    document.addEventListener('story:slide', (event) => up.push((event as CustomEvent<{ slide: HTMLElement }>).detail.slide.id));
     await start(story());
-    expect(document.getElementById('word')!.textContent).toBe('leads');
+    expect(up).toEqual(['a']);
     vi.advanceTimersByTime(2800 + 3400 + 3400 + 2200);
+    expect(up).toEqual(['a', 'b']);
     expect(has('b', 'is-active')).toBe(true);
     expect(has('a', 'is-active')).toBe(false);
     expect(selected('tab-b')).toBe('true');
     expect(selected('tab-a')).toBe('false');
-    expect(document.getElementById('word')!.textContent).toBe('orders');
     // The slide that left rests at its end; the one that arrived starts at its ask.
     expect(has('a-moved', 'is-on')).toBe(true);
     expect(has('b-mail-1', 'is-on')).toBe(false);

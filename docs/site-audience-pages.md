@@ -24,7 +24,8 @@ stories are drawn with. The look of the pencil pages belongs to
 | `apps/site/src/story.ts` | The story player: steps, tabs, pause, the stage's height, the `story:step` event. |
 | `apps/site/src/story.css` | The player's styles and the kit (`kit-*`): pills, faces, boards, rows, stats, checklists, timelines. Imported by `home.css`. |
 | `apps/site/src/steps.ts` | `applyStep`, the step primitive the player shares with the earlier demo and carousel. |
-| `apps/site/src/home-story.html` | The homepage's hero story: one slide per audience. |
+| `apps/site/src/home-story.html` | The homepage's hero story: one slide per audience, each a different kind of page. |
+| `apps/site/src/word-swap.ts`, `apps/site/src/home.ts` | The homepage headline's two words, which follow the hero story's slide. `home.ts` loads it before the player. |
 | `apps/site/src/home-header.ts` | The header of every pencil page. |
 | `apps/site/off-the-beaten-path/index.html` | The page for everything that is not an inbox: the general-purpose pitch and the three-example Canvas, played by `src/canvas-example.ts`. |
 
@@ -94,15 +95,14 @@ Everything that changes says when, with five attributes, inside a
 
 On the slide, `data-steps` sets how many steps it has (3 if left out). On the
 story, `data-story-manual` keeps it on the slide a person chose and replays
-that one; `data-story-dot` flies a dot from each email to the first thing it
-touched; `data-story-word="id"` writes each slide's `data-word` into that
-element, which is how the homepage headline's noun follows its story. A story
-with one slide needs no tabs.
+that one, and `data-story-dot` flies a dot from each email to the first thing
+it touched. A story with one slide needs no tabs.
 
 The player only keeps time. Each step it applies to the mail first and to the
 page 700 ms later, so the eye reads cause, then effect. It sets `s1` … `s<n>`
 on each `.story-mail` and `.story-page`, the classes above, and `is-new` on
-what arrived, then sends `story:step` (with `detail.step`) from the slide. How
+what arrived, then sends `story:step` (with `detail.step`) from the slide. When
+a slide comes up it sends `story:slide` (with `detail.slide`) from the story. How
 a change looks is the page's own stylesheet: a rule on `.s2 .thing`, a
 transition, an animation on `.is-touched`. A page that needs more than CSS
 listens for `story:step` in its own script.
@@ -111,13 +111,34 @@ The stage is held at the height of its tallest slide's last step, and the mail
 slot at the height of its tallest message, so playing never moves the page
 below. Stories run only while on screen.
 
+### The homepage's headline
+
+The homepage's examples are seven different kinds of page (a dashboard, a
+board, a pipeline, a table, a tracker, a checklist, a timeline), because the
+pitch is a single view onto your work in whatever shape suits it, not
+dashboards only. The headline says so: "Get a dashboard of your leads" becomes
+"Get a board of your orders" with the story. Each slide carries `data-kind` and
+`data-word`, and each word in the `<h1>` names the story and the attribute it
+shows:
+
+```html
+<span class="swap" data-swap="home-story:word"><span class="swap-now">leads</span></span>
+```
+
+`word-swap.ts` hears `story:slide` and changes both words together. The
+headline wraps on its own, so a longer word can turn its lines somewhere else;
+every word is measured before and after and glides to its new place, while the
+old word drifts up and the new one rises in. The `<h1>` keeps room for its
+longest wording so nothing below it moves.
+
 ### The kit
 
 `story.css` holds plain page pieces under `kit-`: `kit-head` (the page's
 title) with `kit-live` (the mark that it updates itself, and from one inbox or
 several), `kit-face`,
 `kit-pill` (`new`, `wait`, `late`, `good`), `kit-board`, `kit-rows`,
-`kit-stats`, `kit-matrix` and `kit-tick`, `kit-timeline`, `kit-meter`. A page
+`kit-table`, `kit-stats`, `kit-matrix` and `kit-tick`, `kit-steps`,
+`kit-timeline`, `kit-meter`. A page
 uses them where they fit and draws its own artifact where they do not. The
 homepage story uses only the kit.
 
@@ -147,6 +168,11 @@ homepage story uses only the kit.
 - **A story reads with no script, and at any width.** Drawn at its last step;
   nothing is hidden unless the player has run (`.story.is-live`). No fixed
   widths that overflow a 390px screen. Verified visually.
+- **Text wraps on its own.** No `<br>` and no other forced break on the
+  homepage, the audience pages or `/off-the-beaten-path/`: headings use
+  `text-wrap: balance`, paragraphs `pretty`, and a `max-width` sets the measure.
+  A hand-placed break is right at one width and wrong at the rest, and these
+  pages are read on phones first. Verified visually.
 - **Anything that moves has a pause.** A story plays for longer than five
   seconds, so its bar carries the pause button (WCAG 2.2.2). The homepage
   headline's word changes only with the story, so the same button stops it.
@@ -193,7 +219,8 @@ Examples are illustrations. They run no jobs and read no mail.
 `pnpm --filter @rally/site exec vitest run test/site.test.ts` renders the
 shared header, the footer's audience column, the audience grid and sitemap,
 and checks the tracked ids on the homepage. `test/story.test.ts` plays a story
-in jsdom and checks each step's state. How a page looks and moves has no
+in jsdom and checks each step's state, and `test/word-swap.test.ts` checks the
+headline's words follow a slide. How a page looks and moves has no
 automated test: run `pnpm --filter @rally/site dev`, open the page at 1440px
 and 390px, and watch each story through, as the repository's rule on visible
 changes requires.

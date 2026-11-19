@@ -1943,7 +1943,60 @@ h2 {
   max-width: 440px; margin-top: 30px;
 }
 
-/* The headline's word follows the story's slide. */
+/* Text wraps on its own everywhere on these pages: no manual breaks. Headings
+   balance their lines, and a measure, not a <br>, decides where they turn. */
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+p,
+li {
+  text-wrap: pretty;
+}
+
+.section-intro h2 {
+  max-width: 14em;
+}
+
+.pricing-heading h2,
+.faq-section h2,
+.home-closer h2 {
+  max-width: 9em;
+}
+
+/* The headline's words follow the story's slide (word-swap.ts). A new word
+   can turn the lines somewhere else, so every word is its own inline-block
+   that word-swap.ts glides to its new place, and the block keeps room for its
+   longest wording so nothing below it moves. */
+.story-hero .hero-copy h1 {
+  text-wrap: balance; min-height: 4em;
+}
+
+/* Every slide's page fills the stage, so a short example is a page with room
+   on it and not a gap under the card. */
+.home-story.is-live .story-slide {
+  display: flex; flex-direction: column;
+}
+
+.home-story.is-live .story-page {
+  flex: 1;
+}
+
+.swap {
+  display: inline-block; position: relative; white-space: nowrap;
+}
+
+.swap-now,
+.swap-part {
+  display: inline-block;
+}
+
+.swap-old {
+  position: absolute; left: 0; top: 0;
+}
+
 .hero-word {
   color: var(--green);
 }
