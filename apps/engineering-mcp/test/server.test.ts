@@ -35,6 +35,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
     archiveSidekick: vi.fn<EngineeringInspectionRpcBinding["archiveSidekick"]>(),
+    archiveCanvas: vi.fn<EngineeringInspectionRpcBinding["archiveCanvas"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
     addOrgMember: vi.fn<EngineeringInspectionRpcBinding["addOrgMember"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
@@ -244,6 +245,21 @@ describe("Rally engineering MCP tools", () => {
     expect(global.addOrgMember).not.toHaveBeenCalled();
   });
 
+  it("routes archive_canvas to the Organization's region as the trusted operator", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    const canvasId = "00000000-0000-7000-8000-000000000ef7";
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.archiveCanvas).mockResolvedValue({ region: "enterprise", orgId, canvasId, archived: true });
+    const request = { orgId, userId: asUserId("00000000-0000-7000-8000-000000000ef2"), canvasId };
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "archive_canvas", arguments: request });
+    expect(response.result).not.toHaveProperty("isError", true);
+    expect(response.result).toMatchObject({ content: [{ type: "text", text: expect.stringContaining('"archived": true') }] });
+    expect(enterprise.archiveCanvas).toHaveBeenCalledExactlyOnceWith(request, principal);
+    expect(global.archiveCanvas).not.toHaveBeenCalled();
+  });
+
   it("retires an Organization only in the region that owns it, as the trusted operator", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -315,6 +331,7 @@ describe("Rally engineering MCP tools", () => {
       "resume_sidekick",
       "archive_sidekick",
       "add_org_member",
+      "archive_canvas",
       "retire_org",
       "read_canvas_chat",
       "read_sidekick_conversation",

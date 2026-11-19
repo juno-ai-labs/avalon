@@ -40,6 +40,9 @@ import {
   AddEngineeringOrgMemberInputSchema,
   AddEngineeringOrgMemberResultSchema,
   type AddEngineeringOrgMemberResult,
+  ArchiveEngineeringCanvasInputSchema,
+  ArchiveEngineeringCanvasResultSchema,
+  type ArchiveEngineeringCanvasResult,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
@@ -115,6 +118,7 @@ import { sendEngineeringMessage, readEngineeringConversation } from "./services/
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { archiveEngineeringSidekick, setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
 import { addEngineeringOrgMember } from "./services/engineering-members";
+import { archiveEngineeringCanvas } from "./services/engineering-canvases";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
@@ -337,6 +341,17 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         action: "add_org_member", orgId: request.orgId, representedUserId: request.adminUserId, operationId,
       }, async () => AddEngineeringOrgMemberResultSchema.parse(await addEngineeringOrgMember(this.env, request, operationId)),
       (result) => ({ memberUserId: result.member.userId, role: result.member.role, emailDelivery: result.emailDelivery }));
+    });
+  }
+
+  async archiveCanvas(input: unknown, operator: unknown): Promise<ArchiveEngineeringCanvasResult> {
+    return this.productOperation("archiveCanvas", async () => {
+      const request = ArchiveEngineeringCanvasInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "archive_canvas", orgId: request.orgId,
+        representedUserId: request.userId, operationId: crypto.randomUUID(), conversationId: request.canvasId,
+      }, async () => ArchiveEngineeringCanvasResultSchema.parse(await archiveEngineeringCanvas(this.env, request)),
+      () => ({}));
     });
   }
 

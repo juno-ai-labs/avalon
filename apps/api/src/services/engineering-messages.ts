@@ -8,7 +8,7 @@ import type {
 } from "@rally/contracts/engineering-inspection";
 
 import type { Env } from "../env";
-import { engineeringUserAuth } from "./engineering-creation";
+import { engineeringUserAuth } from "./engineering-user-auth";
 import { ApiError } from "../lib/api-error";
 import { ConversationService } from "./conversation-service";
 

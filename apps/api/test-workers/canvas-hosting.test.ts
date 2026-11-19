@@ -117,6 +117,15 @@ describe("who can open a Canvas", () => {
     expect(await opens(member(MEMBER))).toBe(true);
   });
 
+  it("refuses archive as not found to a member the Canvas does not admit", async () => {
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "creator", userIds: [] } });
+    await expect(runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.canvasArchive({
+      workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER),
+    }))).rejects.toMatchObject({ code: "canvas_not_found" });
+    expect(await opens(member(CREATOR))).toBe(true);
+  });
+
   it("opens a new Canvas to the whole Organization by default, with no artifacts", async () => {
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
     expect(detail).toMatchObject({ id: CANVAS_ID, title: "Launch plan", visibility: "workspace", participantUserIds: [],

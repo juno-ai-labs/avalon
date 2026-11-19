@@ -2,7 +2,7 @@ import type { AddEngineeringOrgMemberInput, AddEngineeringOrgMemberResult } from
 
 import type { Env } from "../env";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
-import { engineeringUserAuth } from "./engineering-creation";
+import { engineeringUserAuth } from "./engineering-user-auth";
 import { publishWorkspaceSync, workspaceSyncPublicationsForMutation } from "./workspace-realtime-service";
 import { WorkspaceService } from "./workspace-service";
 
