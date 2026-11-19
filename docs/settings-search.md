@@ -112,8 +112,8 @@ target, then scrolls it into view, focuses it and highlights it. Replacing the
 request, leaving its section, a failed destination read, or further user interaction disconnects the observer. Action labels inside buttons are scrolled and highlighted without focusing their activatable ancestor. Arrow keys navigate
 results; Enter activates a result; Escape clears search before closing a window.
 
-Setup fields such as MCP authorization or webhook signing secrets point to their
-provider's setup entry point. The reader must choose personal or Organization scope
+Setup fields such as MCP authorization or the Ashby organization API key point
+to their provider's setup entry point. The reader must choose personal or Organization scope
 and start setup themselves. Search never creates a connection merely to show a
 field whose value only exists after creation. A visible explanation describes
 this handoff. Conditional network-domain and repository-default controls show

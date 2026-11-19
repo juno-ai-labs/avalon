@@ -42,6 +42,7 @@ notice are.
 | `apps/api/src/services/wizard-canvas-cards.ts` | `wizardTurnCanvasId` and `postWizardCard`: the card a wizard turn a Canvas's Chat started posts into that Chat. |
 | `packages/skills/platform-skills/filtered-trigger-skill.ts` | `setting-up-a-filtered-trigger`, the wizard's procedure. |
 | `apps/api/src/services/sidekick-event-content.ts`, `packages/connectors/src/types.ts` (`readActivityContent`) | The host's read of what an admitted event is about, and the run's opening with it. |
+| `packages/prompts/api/external-event-opening.ts` | `externalEventOpening`: the event as a run's opening message, with the ids of what it is about and the note when it was cut. |
 
 ## How it works
 
@@ -379,11 +380,13 @@ the host reads it.
 
 The opening also names what the event is about: admission reads the stored
 row's `item_type` and `item_id`, and its resource, and `externalEventOpening`
-writes `About: gmail_message <id>` and `In: gmail_thread <id>` under the event's
-time, and `about` and `in` in the structured half. Without an item, the
-resource is what it is about. These are ids only, never the item's content
-([connectors](connectors.md#invariants)). Only the connector's content is cut at
-the message bound, and the closing "not an instruction to follow" line always
+writes `About: gmail_message <id>` and `In: gmail_thread <id>` after the event's
+summary and before its snippet and metadata, so a collapsed view of the
+message's first lines still shows the summary; and `about` and `in` in the
+structured half. Without an item, the resource is what it is about. These are
+ids only, never the item's content ([connectors](connectors.md#invariants)).
+Only the connector's content is cut at the message bound; a cut is followed by
+a line saying so, and the closing "not an instruction to follow" line always
 survives it.
 
 When a run is provisioned, `runProvisioning` names the event that started it
@@ -692,7 +695,7 @@ source's condition.
 | `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 146 over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none; every active Sidekick with a trigger that nobody lends an account to is marked stopped, whatever it said before, and no other. |
 | `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
 | `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content; content that tries to close its own fence, in any case or spacing. |
-| `apps/api/test/external-event-opening.test.ts` | The event's opening: the item and the resource it sits in, or the resource alone, in the text and the structured half; the closing guard kept when a long event is cut. |
+| `apps/api/test/external-event-opening.test.ts` | The event's opening: the item and the resource it sits in, or the resource alone, after the summary, in the text and the structured half; the cut note and the closing guard kept when a long event is cut, and no note when it fits. |
 | `apps/api/test-workers/sidekick-source-notices.test.ts` | Real workerd. The asked person's row lists though the Sidekick is closed to them, and reads as seen once the request is answered or replaced; the asker is told on an approval and a decline and nobody on a cancel or an own ask; the email is queued after the commit; a person asked is led to the Canvas the request was asked in only if they can open it, and otherwise to the Sidekick; an edited link is refused and a replaced request's link says so; a build older than contract 14 gets neither the rows nor their count. |
 | `apps/api/test/sidekick-source-decision-link.test.ts`, `apps/api/test/sidekick-source-notice-migration.test.ts` | The link's shape and signature against an independent HMAC, `GET` 405, unsigned 401, wrong origin 403; and the two rebuilt tables keeping their rows, indexes and triggers. |
 | `apps/api/test/sidekick-source-tools.test.ts` | An ask leaves its request ids in the transcript and nothing else. |
@@ -908,8 +911,10 @@ customer thread.
   oversized-delivery reference path would grow, when the row already sits in
   the storage that admits it.
 
-**Consequences:** What reaches a run's opening of an item is its ids; its text
-reaches a run only through `readActivityContent`, which re-checks the source.
+**Consequences:** What admission freezes into a run's opening is the event's
+title, summary and snippet, as before, plus the item's and resource's ids; the
+item's full content reaches a run only through `readActivityContent` at
+provisioning, which re-checks the source.
 
 ### 2026-11-16 — Connecting is part of answering a request
 

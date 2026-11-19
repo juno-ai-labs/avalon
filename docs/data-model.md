@@ -852,7 +852,11 @@ column catalog; what follows is only what WorkspaceDO still holds.
   constraints select one canonical event; processing status, processing owner,
   claim, error, and settlement timestamps stay beside the body. The separate
   `workspace_connector_event_ingress_receipts` maps each Queue/provider ingress
-  UUID and content hash to that canonical event. A `processed` event is deleted
+  UUID and content hash to that canonical event. `item_type` and `item_id` name
+  the provider item the event is about when it is not the resource, and are set
+  together or both null; null means the resource is the item. Migration 153
+  backfilled a stored Gmail event's from the message id in its subject. A
+  `processed` event is deleted
   90 days after it was received, by the alarm's `connector_event_reap` phase;
   see [`workstream-durable-object.md`](workstream-durable-object.md).
 
@@ -1049,7 +1053,12 @@ and deletion promotion. The real-workerd suites in
 migration, object isolation, eviction, compaction state, pagination, agent
 checkpoint behavior, routed cleanup SQL, and actual R2 retention/deletion.
 `apps/api/test-workers/workspace-thread-parents-drop-migration.test.ts`
-covers migration 141 on a populated object.
+covers migration 141 on a populated object, and
+`canva-retirement-migration.test.ts` and
+`generic-webhook-retirement-migration.test.ts` cover the connector retirements,
+152 and 154, on objects populated at the version before: what each purge
+removes and keeps, that every rewritten revision still parses as a draft, and
+the triggers that refuse the connector afterwards.
 These tests are required because the regional D1 suite cannot validate
 object-local SQLite lifecycle semantics.
 
@@ -1142,16 +1151,21 @@ secret lived there), marks its event registrations removed, deletes its
 `webhook_receipts` rows, and filters every `webhook`-type trigger, and every
 evaluator, trigger, recommended plugin and binding naming a generic webhook
 connection (by `connectorType` or `model_plugin_id`), out of
-`automation_directory` and every `sidekick_revisions` row. Triggers then abort a
+`automation_directory` and every `sidekick_revisions` row. A revision also loses
+the evaluator rules bound to a removed trigger's binding key and the generic
+webhooks' plugin ids in its custom tools' `requiredPlugins` (a tool that
+required nothing else goes); one left with custom tools and no trigger is marked
+not ready, in the `ready` column and its draft, so it still parses. Triggers then abort a
 `generic_webhook` `connector_connections` insert, a generic webhook
 connection's move off `disabled`, and a generic webhook event registration. The
 JSON-array filters are shared with migration 152 through
 `connector-retirement-sql.ts`, whose output for 152 is unchanged.
 
-**Why:** the owner asked for the generic webhook connector to be removed from
-the product, and with it the `webhook` trigger type; a stored `webhook` trigger
-no longer parses as a Sidekick definition, so the revisions are rewritten
-rather than left unreadable. A revision's `definition_hash` is written and
+**Why:** The owner asked for the generic webhook connector to be removed; the
+product reasoning behind the request is not recorded. With it went the
+`webhook` trigger type, and a stored `webhook` trigger no longer parses as a
+Sidekick definition, so the revisions are rewritten rather than left
+unreadable. A revision's `definition_hash` is written and
 never verified, so the rewrite leaves it as it was.
 
 **Alternatives rejected:** narrowing the `generic_webhook` CHECK constraints,
@@ -1164,9 +1178,11 @@ polled nor supported watches.
 **Consequences:** `generic_webhook` stays in the stored CHECK vocabularies and
 the disabled rows and removed registrations stay; code no longer accepts the
 value anywhere, and source reconciliation reads earlier registrations only on
-live connections. A populated version-153 workerd test covers the purge, the
-untouched Linear control, the triggers, and that reconciliation still reads
-past a removed registration.
+live connections. A later migration that rebuilds `connector_connections` drops
+the refusal triggers on it with the table and must recreate them, 152's and
+154's. A populated version-153 workerd test covers the purge, the untouched
+Linear control, the triggers, and that reconciliation still reads past a
+removed registration.
 
 ### 2026-11-17 — WorkspaceDO 152 purges the retired Canva connector
 
