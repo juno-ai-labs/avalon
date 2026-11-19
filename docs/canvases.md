@@ -422,7 +422,12 @@ Canvas's own work.
 ### One artifact
 
 A Canvas holds one artifact, its main artifact: a request that needs a reader,
-a feed and a page is one site with several routes. `canvas_artifacts` keeps its
+a feed and a page is one site with several routes. The model is told this in
+one sentence set, `CANVAS_DEFINITION` (`packages/prompts/api/canvas-definition.ts`),
+which the Chat's, a run's and the wizard's guidance each carry: a Canvas is one
+Chat and the one artifact it makes, everything goes inside that artifact, and a
+publish is never storage, so no file is published on its own beside it. The
+wizard is also told never to save a step that does. `canvas_artifacts` keeps its
 `(canvas_id, resource_id)` key, so a Canvas converted from a Thread may hold
 several until one replaces them, and any listed one republishes.
 
@@ -1100,6 +1105,29 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-19 — One definition of a Canvas, and a publish is never storage
+
+**What changed.** `CANVAS_DEFINITION` defines a Canvas for the model once, and
+the Canvas Chat, Sidekick run and wizard guidance all carry it. The wizard is
+told never to save a step that publishes a file on its own, and a run to fold
+such a step into the artifact. `building-live-sites`, `publishing-a-feed` and
+`creating-a-podcast-episode` say the same where they teach publishing.
+
+**Why.** A podcast Sidekick's wizard saved "keep final audio resources" so a
+retry could skip re-rendering. Every run then published its finished MP3 on its
+own. Before runs stopped making Canvases, each such publish made a Canvas
+nobody asked for; after, it would be refused `canvas_artifact_held`, whose
+remedy `replaceCanvasArtifact` would drop the feed's site. The skills already
+said media goes inside the site, but nothing said a publish is not a save, and
+each prompt described the one-artifact rule in its own words.
+
+**Considered and rejected.** A durable scratch store for intermediate files:
+the retry already has the section recordings `generate_audio` saved, and
+re-joining them is cheap, so no new primitive is needed for this case.
+
+**Consequences.** A new prompt that publishes into a Canvas carries
+`CANVAS_DEFINITION` rather than restating the rule.
 
 ### 2026-11-19 — A Sidekick run never creates a Canvas
 
