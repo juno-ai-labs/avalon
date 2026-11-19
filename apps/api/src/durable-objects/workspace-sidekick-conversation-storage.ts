@@ -6,8 +6,8 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  *
  * A Sidekick reaches its own shared conversation (substream `"0"` under the
  * Sidekick, `automation_directory`) and every Canvas attached to it in
- * `sidekick_conversation_attachments`: the Canvas each of its runs made, the
- * Canvas whose Chat made it, and any its wizard attached. A Canvas's Chat is the Canvas's
+ * `sidekick_conversation_attachments`: the Canvas whose Chat made it, any its
+ * wizard attached, and any its runs made before runs stopped making Canvases. A Canvas's Chat is the Canvas's
  * conversation `"0"`, and its conversation id is the Canvas's id.
  *
  * This is not `sidekick_attachments` (per conversation): that recorded that a
@@ -108,8 +108,9 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
     parentKind: "automation", parentId: scope.automationId, substreamId: "0", conversationId: scope.automationId,
     kind: "sidekick", title, isOwn: scope.authoring === true, isParent: scope.authoring !== true,
   }];
-  // Each run's own Canvas is attached as it is made, so the attachments are
-  // the whole of it: there is no second list to merge.
+  // A Canvas a run made before runs stopped making them was attached as it
+  // was made, so the attachments are the whole of it: there is no second
+  // list to merge.
   for (const row of sql.exec<{ canvas_id: string; title: string }>(
     `SELECT canvas.canvas_id, canvas.title
        FROM sidekick_conversation_attachments attachment

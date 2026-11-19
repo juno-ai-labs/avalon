@@ -177,6 +177,20 @@ async function seedChatMessage(transcript: ReturnType<typeof createTranscriptObj
   }
 }
 
+/**
+ * A Canvas a Sidekick writes, as a run made one before runs stopped making
+ * Canvases: its writer named on the row and attached to the Sidekick.
+ */
+async function writtenCanvas(sidekickId: string, title: string): Promise<string> {
+  const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title });
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`UPDATE canvas_directory SET writer_sidekick_id = ?, writer_run_id = ? WHERE canvas_id = ?`,
+      sidekickId, crypto.randomUUID(), canvasId);
+  });
+  await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: sidekickId, userId: CREATOR, reference: canvasId });
+  return canvasId;
+}
+
 async function opens(userId: string, canvasId: string): Promise<boolean> {
   try {
     await new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(canvasId);
@@ -1308,7 +1322,9 @@ describe("a Canvas's artifacts", () => {
 
   it("names on the Canvas list the Sidekick run whose publish made the newest version, until a later one from its Chat", async () => {
     const sidekickId = crypto.randomUUID();
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId,
+      madeInCanvasId: canvasId });
     // Three runs, oldest first: the third is run #3.
     const runIds = ["00000000-0000-7000-8000-0000000cbf01", "00000000-0000-7000-8000-0000000cbf02", "00000000-0000-7000-8000-0000000cbf03"];
     await runInDurableObject(workspace(), (_instance, state) => {
@@ -1321,24 +1337,23 @@ describe("a Canvas's artifacts", () => {
     });
     const run = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
       substreamId: asSubstreamId(runIds[2]!), executionPrincipal: { type: "user" as const, userId: CREATOR } };
-    const home = (await resolveTerminalPublicationHome(TEST_ENV, run, { title: "Digest" }))!;
-    const canvasId = home.parentId;
+    const home = (await resolveTerminalPublicationHome(TEST_ENV, run))!;
+    expect(home).toEqual({ parentId: canvasId, substreamId: "0" });
     const lastWrittenBy = async () => (await runInDurableObject(workspace(), (_instance, state) =>
       canvasSidebarRows(state.storage.sql, { userId: CREATOR, member: true }, new Map(), 50, () => undefined)))
       .find((row) => row.id === canvasId)?.lastWrittenBy;
     // A version of its artifact, noted as run #3's publish notes it.
     const { resourceId } = await publish(canvasId, "digest.md", "# Digest");
     expect(await lastWrittenBy()).toBeNull();
-    // A worker run #3 started publishes where run #3 does, and notes as run #3,
-    // not as a run of its own that would make a second Canvas.
+    // A worker run #3 started publishes where run #3 does, and notes as run #3.
     const worker = { ...run, substreamId: asSubstreamId(crypto.randomUUID()), backgroundAgent: true,
       backgroundAgentRootSubstreamId: runIds[2]!, automationDelegation: { runId: runIds[2]!, stopGeneration: 0 } };
-    expect(await resolveTerminalPublicationHome(TEST_ENV, worker, { title: "Digest" })).toEqual(home);
+    expect(await resolveTerminalPublicationHome(TEST_ENV, worker)).toEqual(home);
     await canvasArtifactNoter(TEST_ENV, worker)!(home, resourceId, false);
     expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
     // An agent the wizard started publishes nowhere, as the wizard.
     expect(await resolveTerminalPublicationHome(TEST_ENV, { ...run, substreamId: asSubstreamId(crypto.randomUUID()),
-      backgroundAgent: true, backgroundAgentRootSubstreamId: "0" }, { title: "Digest" })).toBeNull();
+      backgroundAgent: true, backgroundAgentRootSubstreamId: "0" })).toBeNull();
     await canvasArtifactNoter(TEST_ENV, run)!(home, resourceId, false);
     expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
     // A deleted Sidekick's run is no run to open.
@@ -1387,32 +1402,49 @@ describe("a Canvas's artifacts", () => {
 
   it("refuses an archived Sidekick publication home for both explicit and implicit selection", async () => {
     const sidekickId = crypto.randomUUID();
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId,
+      madeInCanvasId: canvasId });
     const run = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
       substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "user" as const, userId: CREATOR } };
-    const home = await resolveTerminalPublicationHome(TEST_ENV, run);
-    await new CanvasService(TEST_ENV, auth(CREATOR)).archive(home!.parentId);
+    await new CanvasService(TEST_ENV, auth(CREATOR)).archive(canvasId);
     await expect(resolveTerminalPublicationHome(TEST_ENV, run)).rejects.toMatchObject({ code: "canvas_archived" });
-    await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: home!.parentId })).rejects.toMatchObject({ code: "canvas_archived" });
+    await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: canvasId })).rejects.toMatchObject({ code: "canvas_archived" });
   });
 
-  it("makes the Canvas of a run that acts as the Sidekick itself as the Sidekick's author, and refuses by name with nobody to make it as", async () => {
-    const sidekickId = crypto.randomUUID();
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
-    // A run with no delegate behind it executes under the Organization's authority: no person to create as.
-    const itself = (parentId: string) => ({ workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId,
-      substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID } });
-    const home = (await resolveTerminalPublicationHome(TEST_ENV, itself(sidekickId), { title: "Digest" }))!;
-    expect(home.substreamId).toBe("0");
-    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
-      `SELECT created_by_user_id, writer_sidekick_id, title FROM canvas_directory WHERE canvas_id = ?`, home.parentId).toArray()))
-      .toEqual([{ created_by_user_id: CREATOR, writer_sidekick_id: sidekickId, title: "Digest" }]);
-    // A Sidekick the Organization holds no row for has no author either.
-    await expect(resolveTerminalPublicationHome(TEST_ENV, itself(crypto.randomUUID()), { title: "Digest" }))
-      .rejects.toMatchObject({ code: "canvas_creator_unavailable", details: { field: "canvas" } });
+  it("publishes a run that names no Canvas into the one its Sidekick was made in, and never makes a Canvas", async () => {
+    const canvasCount = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM canvas_directory`).one().count);
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const madeHere = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: madeHere,
+      madeInCanvasId: canvasId });
+    const elsewhere = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: elsewhere });
+    const runOf = (parentId: string) => ({ workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId,
+      substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "user" as const, userId: CREATOR } });
+    const before = await canvasCount();
+    expect(await resolveTerminalPublicationHome(TEST_ENV, runOf(madeHere))).toEqual({ parentId: canvasId, substreamId: "0" });
+    // A run a schedule started acts as the Sidekick itself and lands there too.
+    const scheduled = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
+          harness_run_id, state, run_as_user_id, coordinator_user_id, requester_user_id, created_at, updated_at)
+        VALUES (?, ?, ?, '{"kind":"schedule"}', 1, ?, 'running', ?, ?, NULL, 1, 1)`,
+      madeHere, scheduled, `run:${scheduled}`, `${scheduled}-harness`, CREATOR, CREATOR);
+    });
+    expect(await resolveTerminalPublicationHome(TEST_ENV, { ...runOf(madeHere), substreamId: asSubstreamId(scheduled),
+      executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID } })).toEqual({ parentId: canvasId, substreamId: "0" });
+    // A Sidekick made outside any Canvas has nowhere implicit to publish.
+    await expect(resolveTerminalPublicationHome(TEST_ENV, runOf(elsewhere)))
+      .rejects.toMatchObject({ code: "canvas_required", details: { field: "canvas" } });
+    expect(await canvasCount()).toBe(before);
+    // Naming a Canvas attached to it still works.
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: elsewhere, userId: CREATOR, reference: canvasId });
+    expect(await resolveTerminalPublicationHome(TEST_ENV, runOf(elsewhere), { canvas: canvasId })).toEqual({ parentId: canvasId, substreamId: "0" });
   });
 
-  it("publishes a Sidekick run into a Canvas it makes, open to whoever the Sidekick is shared with", async () => {
+  it("opens a Canvas a Sidekick writes to whoever the Sidekick is shared with, and publishes a run only into a Canvas attached to it", async () => {
     const sidekickId = crypto.randomUUID();
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
     await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId,
@@ -1421,10 +1453,8 @@ describe("a Canvas's artifacts", () => {
     const runId = crypto.randomUUID();
     const run = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
       substreamId: asSubstreamId(runId), executionPrincipal: { type: "user" as const, userId: CREATOR } };
-    const home = await resolveTerminalPublicationHome(TEST_ENV, run, { title: "Weekly report" });
-    // The run's later publishes land in the same Canvas.
-    expect(await resolveTerminalPublicationHome(TEST_ENV, run)).toEqual(home);
-    const canvasId = home!.parentId;
+    const canvasId = await writtenCanvas(sidekickId, "Weekly report");
+    expect(await resolveTerminalPublicationHome(TEST_ENV, run, { canvas: canvasId })).toEqual({ parentId: canvasId, substreamId: "0" });
     const read = (userId: string, actorRole: "member" | "admin" = "member") => runInDurableObject(workspace(), async (instance: WorkspaceDO) => {
       try {
         return await instance.canvasDetail({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: asUserId(userId), actorRole } });
@@ -1459,9 +1489,7 @@ describe("a Canvas's artifacts", () => {
     const sidekickId = crypto.randomUUID();
     const actor = { userId: CREATOR, actorRole: "member" as const, participantOfOwningWorkstream: false };
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
-    const home = await resolveTerminalPublicationHome(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: sidekickId,
-      substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "user", userId: CREATOR } }, { title: "Weekly report" });
-    const canvasId = home!.parentId;
+    const canvasId = await writtenCanvas(sidekickId, "Weekly report");
     const member = await connect(MEMBER);
     try {
       const update = { workspaceId: WORKSPACE_ID, automationId: sidekickId, actor, update: { audience: "people" as const, userIds: [MEMBER] } };
@@ -1497,10 +1525,7 @@ describe("a Canvas's artifacts", () => {
     const sidekickId = crypto.randomUUID();
     const actor = { userId: CREATOR, actorRole: "member" as const, participantOfOwningWorkstream: false };
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
-    const runId = crypto.randomUUID();
-    const home = await resolveTerminalPublicationHome(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: sidekickId,
-      substreamId: asSubstreamId(runId), executionPrincipal: { type: "user", userId: CREATOR } }, { title: "Weekly report" });
-    const canvasId = home!.parentId;
+    const canvasId = await writtenCanvas(sidekickId, "Weekly report");
     const member = await connect(MEMBER);
     try {
       expect(clientCanvasRows(member.frames).map((row) => row.id)).not.toContain(canvasId);

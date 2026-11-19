@@ -141,8 +141,9 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    3. **Republish the whole directory** with \`publish_resource\`
       \`filePath: "<site>"\` (relative to \`.rally-output\`). Only new or
       changed files move (\`building-live-sites\`, Media, downloads and
-      feeds). In a Sidekick run, name the feed's Canvas in the \`canvas\` argument, or the site
-      lands in the run's own Canvas as a second site.
+      feeds). In a Sidekick run, name the feed's Canvas in the \`canvas\` argument.
+      Without it the site lands in the Canvas the Sidekick was made in, or
+      the publish is refused if there is none.
    4. **Write the entry's row**, with the file's path in the site and its
       size in bytes. Write it after the publish, so no row names a file
       the site does not serve yet.

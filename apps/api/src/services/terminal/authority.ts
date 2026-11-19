@@ -1,4 +1,3 @@
-import { createCanvas } from "../canvas-service";
 import {
   agentAddressForId,
   agentIdForAddress,
@@ -130,17 +129,15 @@ export async function resolveTerminalRunScope(
  * Where a Sidekick's publication belongs.
  *
  * A run (substream other than `"0"`, whose id is the run's) publishes into a
- * Canvas, the Sidekick's output: the one it was asked to update (`canvas`,
- * which must be a Canvas this Sidekick writes), or the Canvas this run made,
- * which its first publish creates with the Sidekick as writer and, as
- * creator, the person the run acts as, or the Sidekick's author when it acts
- * as the Sidekick itself (`docs/canvases.md#from-a-sidekick-run`). The
- * Sidekick's own conversation has no home to publish into.
+ * Canvas attached to its Sidekick: the one it names (`canvas`), or else the
+ * Canvas the Sidekick was made in. It never makes a Canvas
+ * (`docs/canvases.md#from-a-sidekick-run`). The Sidekick's own conversation
+ * has no home to publish into.
  */
 export async function resolveTerminalPublicationHome(env: Env, input: Pick<WorkstreamWorkflowInput,
   "workspaceId" | "parentKind" | "parentId" | "substreamId" | "executionPrincipal">
     & Partial<Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation" | "backgroundAgent" | "backgroundAgentRootSubstreamId">>,
-  request: { canvas?: string | undefined; title?: string | undefined } = {}): Promise<{ parentId: string; substreamId: string } | null> {
+  request: { canvas?: string | undefined } = {}): Promise<{ parentId: string; substreamId: string } | null> {
   if (input.parentKind !== "automation") return null;
   // A background agent publishes where its root does (`loopAuthority`): a run's
   // worker into its run's Canvas, a wizard's agent nowhere, as the wizard.
@@ -157,7 +154,7 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
       userId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
     }).catch((error: unknown) => {
       if ((error as { code?: string }).code === "canvas_archived") {
-        throw new TerminalToolError("canvas_archived", "That Canvas was archived. Publish into another active Canvas attached to this Sidekick, or start a new Sidekick run to create a new Canvas.");
+        throw new TerminalToolError("canvas_archived", "That Canvas was archived. Name another active Canvas from ATTACHED CANVASES in canvas, or report it in your final message.", { field: "canvas" });
       }
       if ((error as { code?: string }).code === "canvas_access_denied") {
         throw new TerminalToolError("canvas_access_denied",
@@ -166,23 +163,17 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
       }
       if ((error as { code?: string }).code === "canvas_not_attached_to_sidekick") {
         throw new TerminalToolError("canvas_not_attached_to_sidekick",
-          "That Canvas is not attached to this Sidekick. Omit canvas to publish into this run's own Canvas, or name a Canvas from ATTACHED CANVASES or one an earlier run of this Sidekick made.",
+          "That Canvas is not attached to this Sidekick. Name a Canvas from ATTACHED CANVASES in canvas, or omit canvas to publish into the Canvas this Sidekick was made in.",
+          { field: "canvas" });
+      }
+      if ((error as { code?: string }).code === "canvas_required") {
+        throw new TerminalToolError("canvas_required",
+          "This Sidekick was not made in a Canvas, and a Sidekick run never creates one. Name a Canvas from ATTACHED CANVASES in canvas; if none is attached, report it in your final message.",
           { field: "canvas" });
       }
       throw error;
     });
-    const creatorUserId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : found.authorUserId;
-    if (found.canvasId === null && creatorUserId === null) {
-      throw new TerminalToolError("canvas_creator_unavailable",
-        "This run has no Canvas of its own yet and nobody to create one as. Publish into a Canvas from ATTACHED CANVASES by naming it in canvas.",
-        { field: "canvas" });
-    }
-    const canvasId = found.canvasId ?? (await createCanvas(env, {
-      workspaceId: input.workspaceId, creatorUserId: creatorUserId!,
-      ...(request.title ? { title: request.title } : {}),
-      writer: { sidekickId: input.parentId, runId },
-    })).canvasId;
-    return { parentId: canvasId, substreamId: "0" };
+    return { parentId: found.canvasId, substreamId: "0" };
   }
   if (request.canvas) {
     throw new TerminalToolError("canvas_argument_unsupported", "Only a Sidekick run names a Canvas to publish into; omit canvas.", { field: "canvas" });

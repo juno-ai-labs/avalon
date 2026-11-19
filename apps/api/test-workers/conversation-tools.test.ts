@@ -929,9 +929,14 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     await seedSidekick("0");
     // The author's alone: the colleague cannot open it.
     await seedRoom(SIDE_ROOM(), "Side room");
-    // Made by one of the Sidekick's runs, which makes the Sidekick its writer.
-    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: WRITTEN(),
-      title: "Weekly agenda", writer: { sidekickId: AUTOMATION_ID, runId: crypto.randomUUID() } });
+    // Made by one of the Sidekick's runs before runs stopped making Canvases:
+    // the Sidekick is its writer, and it was attached as it was made.
+    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: WRITTEN(), title: "Weekly agenda" });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE canvas_directory SET writer_sidekick_id = ?, writer_run_id = ? WHERE canvas_id = ?`,
+        AUTOMATION_ID, crypto.randomUUID(), WRITTEN());
+    });
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, userId: AUTHOR_ID, reference: WRITTEN() });
   }
 
   it("lists the Sidekick's own conversation, the Canvas it writes and the Canvases attached to it, as each person may open them", async () => {
@@ -946,7 +951,7 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
       `SELECT parent_kind, parent_id, substream_id FROM sidekick_conversation_attachments
         WHERE automation_id = ? ORDER BY attached_at, parent_id`, AUTOMATION_ID,
     ).toArray())).toEqual([
-      // The run's own Canvas was attached as it was made.
+      // The run-made Canvas, attached as it was made.
       { parent_kind: "canvas", parent_id: WRITTEN(), substream_id: "0" },
       { parent_kind: "canvas", parent_id: ROOM_ID, substream_id: "0" },
       { parent_kind: "canvas", parent_id: SIDE_ROOM(), substream_id: "0" },

@@ -228,7 +228,7 @@ export function createTerminalResourceBridge(
    * resolve the live authorized resource scope independently of publication;
    * a publication target is not an access grant.
    */
-  publicationHome?: ((request: { canvas?: string | undefined; title?: string | undefined }) =>
+  publicationHome?: ((request: { canvas?: string | undefined }) =>
     Promise<{ parentId: string; substreamId: string } | null>) | null,
   /**
    * The conversation this run executes in, when it is not the one whose
@@ -270,12 +270,12 @@ export function createTerminalResourceBridge(
    * did not ask for and its delivered result deliberately excluded, so an
    * internal capture stays in the conversation that produced it.
    */
-  // One resolution per Canvas choice for this bridge's run: the first publish
-  // of a Sidekick run may create its Canvas, and every later one finds it.
+  // One resolution per Canvas choice for this bridge's run, so a run's later
+  // publishes skip the Organization object.
   const homes = new Map<string, Promise<{ parentId: string; substreamId: string } | null>>();
   const publicationAddress = async (
     context: { workstreamId: string },
-    input: { canvas?: string | undefined; displayName?: string | undefined } = {},
+    input: { canvas?: string | undefined } = {},
     internalProviderResourceId?: string,
   ) => {
     if (input.canvas !== undefined && !publicationHome && input.canvas !== context.workstreamId) {
@@ -287,7 +287,7 @@ export function createTerminalResourceBridge(
     const key = input.canvas ?? "";
     let home = homes.get(key);
     if (!home) {
-      home = publicationHome({ canvas: input.canvas, title: input.displayName });
+      home = publicationHome({ canvas: input.canvas });
       homes.set(key, home);
       // A failed resolution is not remembered, so the next publish asks again.
       home.catch(() => homes.delete(key));

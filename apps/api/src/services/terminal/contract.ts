@@ -292,7 +292,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       filePath: pathProperty("Path relative to AVALON_RESOURCE_DIR (/workspace/.rally-output), not to the workspace root. A file path publishes that file; a directory path publishes the whole tree beneath it."),
       displayName: { type: "string", minLength: 1, maxLength: 300, description: "Optional participant-visible resource title." },
       description: { type: "string", maxLength: 2_000, description: "Optional participant-visible description." },
-      canvas: { type: "string", format: "uuid", description: "Sidekick runs only: the id of a Canvas attached to this Sidekick (one in ATTACHED CANVASES, or one an earlier run made), to publish into it. Omit it to publish into the Canvas this run made, which the first publish creates." },
+      canvas: { type: "string", format: "uuid", description: "Sidekick runs only: the id of a Canvas attached to this Sidekick (one in ATTACHED CANVASES), to publish into it. Omit it to publish into the Canvas this Sidekick was made in. A run never creates a Canvas." },
       replaceCanvasArtifact: { type: "boolean", description: "A Canvas holds one artifact. Publishing a new filePath into a Canvas that already has one is refused unless this is true; true makes this publish the Canvas's artifact in place of the one it held, which stays at its URL but is no longer the Canvas's. Not needed to republish the artifact's own filePath." },
     }, ["filePath"]),
   },

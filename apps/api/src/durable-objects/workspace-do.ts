@@ -5525,48 +5525,44 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Which Canvas a Sidekick run publishes into: the one named, which must be
-   * attached to this Sidekick, or the one this run already made; `null` when
-   * the run has made none yet, and its caller creates it. A run's own Canvas
-   * is attached as it is made, so the attachment is the one publish grant.
+   * Which Canvas a Sidekick run publishes into: the one named, or else the
+   * Canvas the Sidekick was made in (its `made_here` attachment). Either must
+   * be attached to this Sidekick, which is the one publish grant. A run never
+   * makes a Canvas: with none named and none it was made in, it is refused
+   * `canvas_required`.
    */
   async canvasForSidekickRun(rawInput: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null; userId?: string | null }):
-    Promise<{ canvasId: string | null; authorUserId: string | null }> {
+    Promise<{ canvasId: string }> {
     await this.initialized;
     const input = parseRpcInput(CanvasForSidekickRunRequestSchema, rawInput, "canvas_for_sidekick_run");
     this.assertWorkspace(input.workspaceId);
-    // Who a run with nobody behind it creates its own Canvas as: the Sidekick's author.
-    const authorUserId = this.state.storage.sql.exec<{ author_user_id: string | null }>(
-      `SELECT author_user_id FROM automation_directory WHERE automation_id = ? AND workspace_id = ?`, input.sidekickId, input.workspaceId,
-    ).toArray()[0]?.author_user_id ?? null;
-    if (input.canvasId !== null) {
-      const sql = this.state.storage.sql;
-      const row = sql.exec<CanvasRow>(
-        `SELECT * FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
-      ).toArray()[0];
-      if (!row || !sidekickAttachedToCanvas(sql, input.sidekickId, input.canvasId)) {
-        throw new ApiError(404, "canvas_not_attached_to_sidekick", "This Sidekick is not attached to that Canvas");
-      }
-      if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
-      // The attachment is the Sidekick's own reach and is all a run a
-      // schedule or an event started needs. A run a person asked for, and a
-      // loop with no run row, are held to what their person can open
-      // (`sidekickReach`).
-      const reach = this.sidekickReach(input.sidekickId, input.runId, input.userId ?? null);
-      if (!reach.itself) {
-        const relationship = reach.userId === null ? null : await this.readRelationship(input.workspaceId, reach.userId);
-        const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
-        if (reach.userId === null || relationship?.status !== "active" || !canvasReaderAllows(row, { userId: reach.userId, actorRole }, sql)) {
-          throw new ApiError(403, "canvas_access_denied", "The person this run acts as cannot open that Canvas");
-        }
-      }
-      return { canvasId: input.canvasId, authorUserId };
-    }
-    const row = this.state.storage.sql.exec<{ canvas_id: string; archived_at: number | null }>(
-      `SELECT canvas_id, archived_at FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`, input.sidekickId, input.runId,
+    const sql = this.state.storage.sql;
+    const canvasId = input.canvasId ?? sql.exec<{ parent_id: string }>(
+      `SELECT parent_id FROM sidekick_conversation_attachments
+        WHERE automation_id = ? AND parent_kind = 'canvas' AND substream_id = '0' AND made_here = 1
+        ORDER BY attached_at LIMIT 1`, input.sidekickId,
+    ).toArray()[0]?.parent_id ?? null;
+    if (canvasId === null) throw new ApiError(409, "canvas_required", "This Sidekick was not made in a Canvas, so a run must name one");
+    const row = sql.exec<CanvasRow>(
+      `SELECT * FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, canvasId, input.workspaceId,
     ).toArray()[0];
-    if (row && row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
-    return { canvasId: row?.canvas_id ?? null, authorUserId };
+    if (!row || !sidekickAttachedToCanvas(sql, input.sidekickId, canvasId)) {
+      throw new ApiError(404, "canvas_not_attached_to_sidekick", "This Sidekick is not attached to that Canvas");
+    }
+    if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
+    // The attachment is the Sidekick's own reach and is all a run a
+    // schedule or an event started needs. A run a person asked for, and a
+    // loop with no run row, are held to what their person can open
+    // (`sidekickReach`).
+    const reach = this.sidekickReach(input.sidekickId, input.runId, input.userId ?? null);
+    if (!reach.itself) {
+      const relationship = reach.userId === null ? null : await this.readRelationship(input.workspaceId, reach.userId);
+      const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+      if (reach.userId === null || relationship?.status !== "active" || !canvasReaderAllows(row, { userId: reach.userId, actorRole }, sql)) {
+        throw new ApiError(403, "canvas_access_denied", "The person this run acts as cannot open that Canvas");
+      }
+    }
+    return { canvasId };
   }
 
   /**
@@ -5669,9 +5665,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * What a Sidekick's run is told about the Canvases it was attached to: each
    * one's title and artifacts, as `canvasContext` gives a Canvas's own Chat.
-   * Only Canvases somebody attached it to (the one it was made in, and any its
-   * wizard attached), never the Canvas each of its own runs made, which would
-   * grow by one per run; and only those the acting person may open now.
+   * Every Canvas attached to it, Canvases its runs made before runs stopped
+   * making them included, since a run names one of these to publish into;
+   * and only those the acting person may open now.
    */
   async sidekickCanvasContext(rawInput: { workspaceId: string; sidekickId: string; userId: string | null; runId?: string }) {
     await this.initialized;
@@ -5683,7 +5679,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
         WHERE attachment.automation_id = ?1 AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
           AND canvas.workspace_id = ?2 AND canvas.archived_at IS NULL
-          AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> ?1)
         ORDER BY attachment.attached_at, attachment.parent_id`,
       input.sidekickId, input.workspaceId,
     ).toArray();

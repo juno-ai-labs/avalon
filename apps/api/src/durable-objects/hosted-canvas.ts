@@ -58,7 +58,6 @@ import {
   settleCanvasAccessRequest,
   type CanvasAccessSubject,
 } from "./canvas-access-requests";
-import { attachSidekickConversation } from "./workspace-sidekick-conversation-storage";
 import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_DISCARD_ERASE_ALARM, CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
 import { CANVAS_ARTIFACT_ACCESS_ALARM } from "./canvas-artifact-access";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
@@ -89,11 +88,6 @@ export const CanvasCreateRequestSchema = z.strictObject({
   title: z.string().trim().max(300),
   createdByUserId: UserIdSchema,
   authorityGeneration: z.number().int().positive(),
-  /**
-   * A Canvas a Sidekick run makes: the Sidekick that writes it and the run
-   * that made it. It starts out open to whoever the Sidekick is shared with.
-   */
-  writer: z.strictObject({ sidekickId: IdSchema, runId: IdSchema }).optional(),
   /** `naming` for a Canvas made with no title, which its opening message titles. */
   titleStatus: z.enum(["naming", "settled"]).optional(),
   /**
@@ -530,9 +524,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   /**
    * Bring a Canvas into existence with no artifacts, open to the
    * Organization's default editor audience (`canvas-sharing-defaults.ts`),
-   * read in this transaction. One a Sidekick run makes also admits whoever
-   * the Sidekick is shared with, read live from the Sidekick, so nothing is
-   * copied. A replay answers `created: false`.
+   * read in this transaction. A replay answers `created: false`. Only a
+   * person makes one: a Sidekick run publishes into a Canvas it is attached
+   * to and never creates one (`docs/canvases.md#from-a-sidekick-run`).
    */
   create(input: z.input<typeof CanvasCreateRequestSchema>): { created: boolean; canvasId: string } {
     const request = parseRpcInput(CanvasCreateRequestSchema, input, "canvas_create");
@@ -548,27 +542,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         return { created: false, canvasId: this.canvasId };
       }
       if (request.anchored) throw idUnavailable();
-      // A run makes one Canvas: a second create for the same run, under any
-      // id, answers with the Canvas its first made.
-      const made = request.writer ? this.sql.exec<{ canvas_id: string; archived_at: number | null }>(
-        `SELECT canvas_id, archived_at FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`,
-        request.writer.sidekickId, request.writer.runId,
-      ).toArray()[0] : undefined;
-      if (made?.archived_at != null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
-      if (made) return { created: false, canvasId: made.canvas_id };
-      if (request.writer && !writerSidekick(this.sql, request.writer.sidekickId)) {
-        throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
-      }
       this.insertRow({
         workspaceId: request.workspaceId, title: request.title, createdByUserId: request.createdByUserId,
-        createdAt: now, updatedAt: now, writer: request.writer ?? null,
+        createdAt: now, updatedAt: now,
         visibility: readCanvasSharingDefaults(this.sql).editors,
         authorityGeneration: request.authorityGeneration, titleStatus: request.titleStatus ?? "settled",
       });
-      // A run's Canvas is attached to its Sidekick as it is made: the
-      // attachment is what lets later runs publish into it.
-      if (request.writer) attachSidekickConversation(this.sql, { automationId: request.writer.sidekickId,
-        address: { parentKind: "canvas", parentId: this.canvasId, substreamId: "0" }, userId: request.createdByUserId, now });
       return { created: true, canvasId: this.canvasId };
     });
   }
@@ -576,16 +555,16 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   /** The directory row `create` writes, inside its transaction. */
   private insertRow(row: {
     workspaceId: string; title: string; createdByUserId: string; createdAt: number; updatedAt: number;
-    writer: { sidekickId: string; runId: string } | null; visibility: CanvasRow["visibility"]; authorityGeneration: number;
+    visibility: CanvasRow["visibility"]; authorityGeneration: number;
     titleStatus: CanvasRow["title_status"];
   }): void {
     this.sql.exec(
       `INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
          last_editor_kind, last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation, title_status,
          artifact_visibility)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)`,
       this.canvasId, row.workspaceId, row.title, row.createdByUserId, row.createdAt, row.updatedAt,
-      row.writer?.sidekickId ?? null, row.writer?.runId ?? null, row.visibility, row.authorityGeneration, row.titleStatus,
+      row.visibility, row.authorityGeneration, row.titleStatus,
       canvasArtifactVisibilityFloor(row.visibility, "editors"),
     );
     this.host.noteCanvasDirectoryChanged(this.canvasId);
@@ -1315,9 +1294,9 @@ export function canvasSidebarRows(
 
 /**
  * The Canvases a Sidekick is attached to that this viewer may open, most
- * recently active first: "the Canvases it writes to". Each run's own Canvas
- * is attached as it is made, so this is those and every Canvas it was
- * attached to since.
+ * recently active first: "the Canvases it writes to". A Canvas a run made
+ * before runs stopped making them was attached as it was made, so this is
+ * those and every Canvas it was attached to since.
  */
 export function canvasesWrittenBy(
   sql: SqlStorage,
