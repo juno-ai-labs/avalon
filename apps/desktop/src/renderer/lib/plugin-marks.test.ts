@@ -14,7 +14,7 @@ describe('PLUGIN_BRAND_MARKS', () => {
     expect(isPluginBrandMark('ashby')).toBe(true);
     expect(isPluginBrandMark('fireflies')).toBe(true);
     expect(isPluginBrandMark('computer')).toBe(false);
-    expect(isPluginBrandMark('webhook')).toBe(false);
+    expect(isPluginBrandMark('plug')).toBe(false);
   });
 });
 

@@ -7,7 +7,7 @@ import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
  * A brand draws its own mark, from `plugin-marks.ts`. The rest are the shapes
  * no company owns: the two virtual groups, the mail mark an agent-to-agent
  * message wears and the two a worker's outcome does, multimodal generation,
- * automations, the public web, a webhook, and the plug a connector
+ * automations, the public web, and the plug a connector
  * with no mark of its own falls back to.
  */
 export type PluginGroupIcon =
@@ -21,8 +21,7 @@ export type PluginGroupIcon =
   | 'image-generation'
   | 'plug'
   | 'rally'
-  | 'web'
-  | 'webhook';
+  | 'web';
 
 /**
  * The glyph for one of the backend's own icon names.
@@ -41,7 +40,6 @@ export function pluginGroupIconForContract(icon: AutomationPluginIcon): PluginGr
     case 'brand-notion': return 'notion';
     case 'brand-slack': return 'slack';
     case 'linear': return 'linear';
-    case 'webhook': return 'webhook';
     case 'world-search': return 'web';
     case 'plug': return 'plug';
   }

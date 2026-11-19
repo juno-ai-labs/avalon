@@ -773,7 +773,7 @@ describe("a composed source binding key is enough on its own", () => {
   const MEETING_PLUGIN = {
     pluginId: "plugin_fireflies",
     displayName: "Fireflies",
-    icon: "webhook" as const,
+    icon: "plug" as const,
     description: "Meetings the notetaker recorded.",
     scope: "workspace" as const,
     searchAliases: [],

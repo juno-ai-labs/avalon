@@ -13,7 +13,6 @@ describe('SuggestedPromptList', () => {
       ['brand-slack', 'tabler-icon-brand-slack'],
       ['linear', 'tabler-icon-stack-2'],
       ['plug', 'tabler-icon-plug'],
-      ['webhook', 'tabler-icon-webhook'],
       ['world-search', 'tabler-icon-world-search'],
     ];
     render(

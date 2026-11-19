@@ -888,7 +888,6 @@ export const AutomationPluginIconSchema = deferredZodSchema(() => z.enum([
   "brand-slack",
   "linear",
   "plug",
-  "webhook",
   "world-search",
 ]));
 export type AutomationPluginIcon = z.infer<typeof AutomationPluginIconSchema>;
