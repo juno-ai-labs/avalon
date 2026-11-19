@@ -28,7 +28,10 @@ Never put any of the following into a pull request or its commits:
   addresses, or MAC addresses. Public service hostnames are fine.
 - **Resource IDs**: any real ID from production or staging (Rally entities,
   Cloudflare resources, provider objects such as Slack, Linear, or Stripe IDs),
-  and request or trace IDs.
+  and request or trace IDs. Config that already tracks such IDs because
+  deploys need them, such as `database_id` and KV `id` in the
+  `apps/api/wrangler*.jsonc` files, may carry them in commits; keep them out of
+  the PR text.
 - **Secrets**, as [`security.md`](security.md) already forbids.
 
 This is stricter than the logging policy. [`runbook.md`](runbook.md) keeps
