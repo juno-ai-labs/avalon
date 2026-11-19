@@ -1294,9 +1294,9 @@ export function canvasSidebarRows(
 
 /**
  * The Canvases a Sidekick is attached to that this viewer may open, most
- * recently active first: "the Canvases it writes to". Each run's own Canvas
- * is attached as it is made, so this is those and every Canvas it was
- * attached to since.
+ * recently active first: "the Canvases it writes to". A Canvas a run made
+ * before runs stopped making them was attached as it was made, so this is
+ * those and every Canvas it was attached to since.
  */
 export function canvasesWrittenBy(
   sql: SqlStorage,

@@ -951,7 +951,7 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
       `SELECT parent_kind, parent_id, substream_id FROM sidekick_conversation_attachments
         WHERE automation_id = ? ORDER BY attached_at, parent_id`, AUTOMATION_ID,
     ).toArray())).toEqual([
-      // The run's own Canvas was attached as it was made.
+      // The run-made Canvas, attached as it was made.
       { parent_kind: "canvas", parent_id: WRITTEN(), substream_id: "0" },
       { parent_kind: "canvas", parent_id: ROOM_ID, substream_id: "0" },
       { parent_kind: "canvas", parent_id: SIDE_ROOM(), substream_id: "0" },

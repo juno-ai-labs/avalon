@@ -39,7 +39,6 @@ function workspace(): DurableObjectStub<WorkspaceDO> {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(env.AVALON_REGION, WORKSPACE_ID)));
 }
 
-/** In the object rather than over RPC, so a refusal is the thrown error and not an unhandled remote rejection. */
 /**
  * A Canvas a Sidekick run made before runs stopped making Canvases: its
  * writer named on the row, and attached to the Sidekick as such a Canvas was.
@@ -55,6 +54,7 @@ async function runMadeCanvas(sidekickId: string, title: string): Promise<string>
   return canvasId;
 }
 
+/** In the object rather than over RPC, so a refusal is the thrown error and not an unhandled remote rejection. */
 async function refusal(run: (instance: WorkspaceDO) => Promise<unknown>): Promise<string | null> {
   return runInDurableObject(workspace(), async (instance: WorkspaceDO) => {
     try {
@@ -415,8 +415,8 @@ describe("where a Sidekick's run may publish", () => {
       expect(await workspace().sidekickCanvasContext({ workspaceId: WORKSPACE_ID, sidekickId: MADE_HERE, userId, runId: await seedRun(MADE_HERE) }))
         .toEqual([{ canvasId: CANVAS_ID, title: "Inbox", artifacts: [] }]);
     }
-    // A Canvas each of its own runs made is not repeated to every later run.
+    // A Canvas one of its runs made is listed too, so a later run can name it.
     await runMadeCanvas(MADE_HERE, "Run output");
-    expect((await told(CREATOR)).map((canvas) => canvas.title)).toEqual(["Inbox"]);
+    expect((await told(CREATOR)).map((canvas) => canvas.title)).toEqual(["Inbox", "Run output"]);
   });
 });

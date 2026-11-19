@@ -1421,17 +1421,27 @@ describe("a Canvas's artifacts", () => {
       madeInCanvasId: canvasId });
     const elsewhere = crypto.randomUUID();
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: elsewhere });
-    const itself = (parentId: string) => ({ workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId,
+    const runOf = (parentId: string) => ({ workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId,
       substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "user" as const, userId: CREATOR } });
     const before = await canvasCount();
-    expect(await resolveTerminalPublicationHome(TEST_ENV, itself(madeHere))).toEqual({ parentId: canvasId, substreamId: "0" });
+    expect(await resolveTerminalPublicationHome(TEST_ENV, runOf(madeHere))).toEqual({ parentId: canvasId, substreamId: "0" });
+    // A run a schedule started acts as the Sidekick itself and lands there too.
+    const scheduled = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
+          harness_run_id, state, run_as_user_id, coordinator_user_id, requester_user_id, created_at, updated_at)
+        VALUES (?, ?, ?, '{"kind":"schedule"}', 1, ?, 'running', ?, ?, NULL, 1, 1)`,
+      madeHere, scheduled, `run:${scheduled}`, `${scheduled}-harness`, CREATOR, CREATOR);
+    });
+    expect(await resolveTerminalPublicationHome(TEST_ENV, { ...runOf(madeHere), substreamId: asSubstreamId(scheduled),
+      executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID } })).toEqual({ parentId: canvasId, substreamId: "0" });
     // A Sidekick made outside any Canvas has nowhere implicit to publish.
-    await expect(resolveTerminalPublicationHome(TEST_ENV, itself(elsewhere)))
+    await expect(resolveTerminalPublicationHome(TEST_ENV, runOf(elsewhere)))
       .rejects.toMatchObject({ code: "canvas_required", details: { field: "canvas" } });
     expect(await canvasCount()).toBe(before);
     // Naming a Canvas attached to it still works.
     await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: elsewhere, userId: CREATOR, reference: canvasId });
-    expect(await resolveTerminalPublicationHome(TEST_ENV, itself(elsewhere), { canvas: canvasId })).toEqual({ parentId: canvasId, substreamId: "0" });
+    expect(await resolveTerminalPublicationHome(TEST_ENV, runOf(elsewhere), { canvas: canvasId })).toEqual({ parentId: canvasId, substreamId: "0" });
   });
 
   it("opens a Canvas a Sidekick writes to whoever the Sidekick is shared with, and publishes a run only into a Canvas attached to it", async () => {

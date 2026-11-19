@@ -5665,9 +5665,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * What a Sidekick's run is told about the Canvases it was attached to: each
    * one's title and artifacts, as `canvasContext` gives a Canvas's own Chat.
-   * Only Canvases somebody attached it to (the one it was made in, and any its
-   * wizard attached), never the Canvas each of its own runs made, which would
-   * grow by one per run; and only those the acting person may open now.
+   * Every Canvas attached to it, Canvases its runs made before runs stopped
+   * making them included, since a run names one of these to publish into;
+   * and only those the acting person may open now.
    */
   async sidekickCanvasContext(rawInput: { workspaceId: string; sidekickId: string; userId: string | null; runId?: string }) {
     await this.initialized;
@@ -5679,7 +5679,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
         WHERE attachment.automation_id = ?1 AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
           AND canvas.workspace_id = ?2 AND canvas.archived_at IS NULL
-          AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> ?1)
         ORDER BY attachment.attached_at, attachment.parent_id`,
       input.sidekickId, input.workspaceId,
     ).toArray();

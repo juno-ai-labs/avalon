@@ -108,8 +108,9 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
     parentKind: "automation", parentId: scope.automationId, substreamId: "0", conversationId: scope.automationId,
     kind: "sidekick", title, isOwn: scope.authoring === true, isParent: scope.authoring !== true,
   }];
-  // Each run's own Canvas is attached as it is made, so the attachments are
-  // the whole of it: there is no second list to merge.
+  // A Canvas a run made before runs stopped making them was attached as it
+  // was made, so the attachments are the whole of it: there is no second
+  // list to merge.
   for (const row of sql.exec<{ canvas_id: string; title: string }>(
     `SELECT canvas.canvas_id, canvas.title
        FROM sidekick_conversation_attachments attachment

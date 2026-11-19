@@ -1734,8 +1734,10 @@ to in a host-provided message, `ATTACHED CANVASES`
 (`sidekickCanvasContextMessage`, from `WorkspaceDO.sidekickCanvasContext`):
 each Canvas's id, title and artifacts with their `resourceId`, the `filePath`
 a publish names, and `storesData`, and the two ways to change one. It lists
-only Canvases somebody attached the Sidekick to, never the Canvas each of its
-own runs made, which would grow by one per run. A run a schedule or an event
+every Canvas attached to the Sidekick, those its runs made before runs stopped
+making Canvases (2026-11-19) included: a run names one of these to publish
+into, so hiding them would leave a Sidekick made outside a Canvas nothing to
+name. A run a schedule or an event
 started is told all of them; the wizard, a run a person asked for, and a loop
 whose run id has no run row, only those their person may open. A Sidekick attached to none is sent nothing. It is a derived
 user message for the reason `CANVAS CONTEXT` is one: the system prompt prefix
