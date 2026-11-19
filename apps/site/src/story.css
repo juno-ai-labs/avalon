@@ -239,8 +239,10 @@
   50% { box-shadow: 0 0 0 4px #53654700; }
 }
 
+/* A ring, not a colour swap: the words stay readable through the whole pulse. */
 @keyframes kit-live-flash {
-  0%, 35% { background: var(--green); color: var(--paper); }
+  0% { box-shadow: 0 0 0 0 #536547b3; }
+  100% { box-shadow: 0 0 0 10px #53654700; }
 }
 
 /* Where the page's rows come from: one inbox, or several. */
