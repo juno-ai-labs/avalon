@@ -12,8 +12,7 @@ import type {
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 
 import type { Env } from "../env";
-import { conversationObjectName } from "../durable-objects/names";
-import { substreamLoopId } from "../durable-objects/names";
+import { conversationObjectName, substreamLoopId } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
 import { loopActivationWasRecorded } from "../lib/loop-activation-signal";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
