@@ -469,7 +469,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
   }, ({ title }) => ask(renderStartCanvasPrompt(title)));
   server.registerPrompt("catch_up", {
     title: "Catch me up on a Canvas",
-    description: "Summarize what happened in a Rally Canvas: its Chat and its artifacts' latest versions.",
+    description: "Summarize what happened in a Rally Canvas: its Chat and its artifact's latest version.",
     argsSchema: { canvas: z.string().describe("The Canvas's title, or words from it.") },
   }, ({ canvas }) => ask(renderCatchUpPrompt(canvas)));
 
