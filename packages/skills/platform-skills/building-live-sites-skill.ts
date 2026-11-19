@@ -244,7 +244,7 @@ have not. Ask its entry-privacy question only when that skill requires it.
      false\` and the most open audience the Canvas's artifacts allow:
      - **\`public\`** (anyone with the link, signed in or not) is the
        default.
-     - **\`workspace\`** (the Organization's members) when this site, or
+     - **\`organization\`** (the Organization's members) when this site, or
        anything else this Canvas has published, shows the Organization's
        own data — figures from a connector, internal plans, people's
        details — or the request names the team or company as the audience.

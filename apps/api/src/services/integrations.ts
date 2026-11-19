@@ -155,6 +155,7 @@ import {
   type ConnectorProductState,
   CONNECTOR_LIST_TOOL_NAME,
   connectorConnectionCardSummary,
+  connectorScopesForModel,
   connectorProductStateSummary,
   connectorListSummary,
   foldConnectorProductStates,
@@ -8628,7 +8629,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         const result = await checkResourceAccess(
           env, input, resourceAccess.connections(), accessTypes, raw, context.signal,
         );
-        return { output: result, summary: resourceAccessSummary(result) };
+        return { output: connectorScopesForModel(result), summary: resourceAccessSummary(result) };
       },
     } satisfies HarnessTool] : []),
     ...createWorkstreamAttachmentTools(env, input),
@@ -8679,7 +8680,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         },
         execute: async (raw: unknown) => {
           const state = await readConnectorConnectionState(env, input, raw);
-          return { output: state, summary: connectorProductStateSummary(state) };
+          return { output: connectorScopesForModel(state), summary: connectorProductStateSummary(state) };
         },
       } satisfies HarnessTool,
       {
@@ -8690,7 +8691,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         },
         execute: async (raw: unknown) => {
           const list = await listConnectors(env, input, raw);
-          return { output: list, summary: connectorListSummary(list) };
+          return { output: connectorScopesForModel(list), summary: connectorListSummary(list) };
         },
       } satisfies HarnessTool,
       input.automationRun ? {
@@ -8722,7 +8723,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         execute: async (raw: unknown) => {
           const card = ConnectorConnectionCardInputSchema.parse(raw);
           const summary = connectorConnectionCardSummary(card);
-          return { output: card, summary };
+          return { output: connectorScopesForModel(card), summary };
         },
       } satisfies HarnessTool,
     ]),

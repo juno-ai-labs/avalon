@@ -186,8 +186,20 @@ describe("Avalon connector connection tools", () => {
         output: { connectorId: "slack", scope: "personal" },
         summary: "Presented the slack personal connection card",
       });
-    await expect(userTool!.execute({ connectorId: "granola", scope: "workspace" }, context()))
-      .rejects.toThrow("does not support a workspace connection card");
+    await expect(userTool!.execute({ connectorId: "granola", scope: "organization" }, context()))
+      .rejects.toThrow("granola has no organization connection card");
+    // The Organization's card is asked for and read back as organization, and
+    // its summary, which a client recovers the card from, keeps the stored scope.
+    expect((userTool!.definition.inputSchema as { properties: { scope: { enum: string[] } } }).properties.scope.enum)
+      .toEqual(["personal", "organization"]);
+    await expect(userTool!.execute({ connectorId: "slack", scope: "organization" }, context()))
+      .resolves.toEqual({
+        output: { connectorId: "slack", scope: "organization" },
+        summary: "Presented the slack workspace connection card",
+      });
+    // Instructions saved before the rename may still send the stored name.
+    await expect(userTool!.execute({ connectorId: "slack", scope: "workspace" }, context()))
+      .resolves.toMatchObject({ output: { connectorId: "slack", scope: "organization" } });
 
     // A turn acting for the Organization is offered all three, and each
     // refuses by name: there is no person whose connections they read.
@@ -255,7 +267,7 @@ describe("Avalon connector connection tools", () => {
     await expect(stateTool!.execute({ connectorId: "slack" }, context()))
       .resolves.toMatchObject({ output: {
         state: "connected",
-        connections: [{ scope: "personal", state: "not_connected" }, { scope: "workspace", state: "connected" }],
+        connections: [{ scope: "personal", state: "not_connected" }, { scope: "organization", state: "connected" }],
       } });
 
     objectDatabase.prepare(
@@ -297,7 +309,7 @@ describe("Avalon connector connection tools", () => {
           state: "connected",
           connections: [
             { scope: "personal", state: "connected", connectIn: "conversation" },
-            { scope: "workspace", state: "not_connected", connectIn: "conversation" },
+            { scope: "organization", state: "not_connected", connectIn: "conversation" },
           ],
           // The display name carries no account, so none is reported.
           accounts: [{ scope: "personal", state: "connected", account: null }],
@@ -390,7 +402,7 @@ describe("Avalon connector connection tools", () => {
     // A product only Settings connects is listed, and says so.
     expect(family("social_media")?.connectors).toEqual([expect.objectContaining({
       connectorId: "x",
-      connections: [{ scope: "workspace", state: expect.any(String), connectIn: "settings" }],
+      connections: [{ scope: "organization", state: expect.any(String), connectIn: "settings" }],
     })]);
     expect(summary).toBe("Listed connectors in 11 families; connected: google-mail-calendar, google-drive");
   });
@@ -423,7 +435,7 @@ describe("Avalon connector connection tools", () => {
           state: "connected",
           connections: [
             { scope: "personal", state: "connected", connectIn: "conversation" },
-            { scope: "workspace", state: "not_connected", connectIn: "conversation" },
+            { scope: "organization", state: "not_connected", connectIn: "conversation" },
           ],
           accounts: [{ scope: "personal", state: "connected", account: null }],
         },
@@ -457,7 +469,7 @@ describe("Avalon connector connection tools", () => {
           state: "reconnect_required",
           connections: [
             { scope: "personal", state: "not_connected" },
-            { scope: "workspace", state: "reconnect_required" },
+            { scope: "organization", state: "reconnect_required" },
           ],
         },
       });

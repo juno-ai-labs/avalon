@@ -977,6 +977,23 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect(detail.participantUserIds).toEqual([READER]);
   });
 
+  it("names the Organization audience organization to the model and stores it as workspace", async () => {
+    const tool = createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER });
+    expect((tool.definition.inputSchema as { properties: { audience: { enum: string[] } } }).properties.audience.enum)
+      .toEqual(["public", "organization", "editors"]);
+    expect((await tool.execute({ audience: "organization", personAsked: true }, {} as never)).output)
+      .toEqual({ audience: "organization", changed: true });
+    const detail = await workspace().canvasDetail({ workspaceId, canvasId: CANVAS, actor: { userId: OWNER, actorRole: "member" } });
+    expect(detail.artifactVisibility).toBe("workspace");
+    // A default after that leaves the stored choice, and reads it back under the model's name.
+    expect((await tool.execute({ audience: "public", personAsked: false }, {} as never)).output)
+      .toMatchObject({ audience: "organization", changed: false });
+    // Instructions saved before the rename may still send the stored name.
+    await share("editors");
+    expect((await tool.execute({ audience: "workspace", personAsked: true }, {} as never)).output)
+      .toEqual({ audience: "organization", changed: true });
+  });
+
   it("refuses set_artifact_audience from a creator who has left the Organization", async () => {
     await workspace().applyMemberStatus({
       workspaceId,

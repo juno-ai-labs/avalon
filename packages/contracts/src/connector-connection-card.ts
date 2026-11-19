@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ORGANIZATION_MODEL_NAMES, modelEnum, modelName, withModelNames } from "./model-names";
 import {
   ConnectorProductCatalog,
   ConnectorProductIds,
@@ -67,11 +68,13 @@ const personalOrWorkspaceConnectorIds = ConnectorConnectionCardIds.filter((conne
 
 const ConnectorConnectionCardShape = z.strictObject({
   connectorId: z.enum(ConnectorConnectionCardIds).describe(
-    `Connector to check or show. Personal only: ${personalOnlyConnectorIds.join(", ")}. Personal or workspace: ${personalOrWorkspaceConnectorIds.join(", ")}.`
+    `Connector to check or show. Personal only: ${personalOnlyConnectorIds.join(", ")}. Personal or organization: ${personalOrWorkspaceConnectorIds.join(", ")}.`
     + " google-drive is Google Drive, Docs and Sheets.",
   ),
-  scope: z.enum(ConnectorScopes).describe(
-    "Use personal for the current user's account. Use workspace only for an id described as personal or workspace.",
+  // The Organization's scope is stored as `workspace`. A model reads and
+  // writes `organization`; a stored event's input may hold either spelling.
+  scope: modelEnum(ConnectorScopes, ORGANIZATION_MODEL_NAMES).describe(
+    "Use personal for the current user's account. Use organization, the Organization's shared account, only for an id described as personal or organization.",
   ),
 });
 
@@ -81,7 +84,7 @@ export const ConnectorConnectionCardInputSchema = ConnectorConnectionCardShape.s
     context.addIssue({
       code: "custom",
       path: ["scope"],
-      message: `${input.connectorId} does not support a ${input.scope} connection card`,
+      message: `${input.connectorId} has no ${modelName(ORGANIZATION_MODEL_NAMES, input.scope)} connection card`,
     });
   },
 );
@@ -151,6 +154,15 @@ export const LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME = `core_${CONNECTOR_CON
 export function isConnectorConnectionCardWireName(name: string | undefined): boolean {
   return name === CONNECTOR_CONNECTION_CARD_WIRE_NAME
     || name === LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME;
+}
+
+/**
+ * A connector result as a model reads it: every `scope` that is the stored
+ * `workspace` reads `organization`. The states, the list and the card are
+ * built by code the product's screens share, so they hold stored scopes.
+ */
+export function connectorScopesForModel<T>(result: T): T {
+  return withModelNames(result, ORGANIZATION_MODEL_NAMES, ["scope"]);
 }
 
 export function connectorConnectionCardSummary(input: ConnectorConnectionCardInput): string {

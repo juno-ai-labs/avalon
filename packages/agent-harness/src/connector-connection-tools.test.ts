@@ -57,7 +57,7 @@ describe("connector connection tool guidance", () => {
     expect(connectorIds).toBe(
       "Connector to check or show."
       + " Personal only: google-mail-calendar, apollo, ashby, fireflies, granola."
-      + " Personal or workspace: google-drive, github, linear, slack, notion."
+      + " Personal or organization: google-drive, github, linear, slack, notion."
       + " google-drive is Google Drive, Docs and Sheets.",
     );
     // The second is that the sentence keeps naming every id the catalog holds,
@@ -67,7 +67,7 @@ describe("connector connection tool guidance", () => {
       expect(connectorIds, id).toContain(id);
     }
     expect(schema.properties?.scope?.description)
-      .toBe("Use personal for the current user's account. Use workspace only for an id described as personal or workspace.");
+      .toBe("Use personal for the current user's account. Use organization, the Organization's shared account, only for an id described as personal or organization.");
   });
 
   it("asks the state check for a connector alone", () => {

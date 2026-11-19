@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ORGANIZATION_MODEL_NAMES, withModelNames } from "@rally/contracts/model-names";
 
 import {
   AutomationSetEvaluatorRulesModelInputV1Schema,
@@ -422,7 +423,9 @@ function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): Har
       execute: async () => {
         if (!input.automationDirectoryPort) throw new Error("sidekick_directory_host_unavailable");
         return {
-          output: await input.automationDirectoryPort.listAutomations(),
+          // A Sidekick's scope and its definition's suggested scope are stored
+          // as `workspace` for the Organization, and read `organization`.
+          output: withModelNames(await input.automationDirectoryPort.listAutomations(), ORGANIZATION_MODEL_NAMES, ["scope", "suggestedScope"]),
           summary: "Listed editable and attachable Sidekicks",
         };
       },

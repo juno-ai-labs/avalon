@@ -13,6 +13,7 @@ import type {
   StructuredFailureDetail,
   ToolDefinition
 } from "@rally/contracts";
+import { ORGANIZATION_MODEL_NAMES, modelName, withModelNames } from "@rally/contracts/model-names";
 import { normalizedPluginSearchText } from "@rally/prompts/harness/plugin-catalog";
 import {
   AddressingClassificationSchema,
@@ -2806,8 +2807,8 @@ const automationDraftSubmissionJsonSchema = {
     },
     suggestedScope: {
       type: "string",
-      enum: ["personal", "workspace"],
-      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope cannot change. Scope decides who owns and manages the Sidekick, not whose connections its runs use: personal belongs to the requester, workspace to the Organization."
+      enum: ["personal", "organization"],
+      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and organization only when explicitly requested. Published scope cannot change. Scope decides who owns and manages the Sidekick, not whose connections its runs use: personal belongs to the requester, organization to the Organization."
     },
     ready: {
       type: "boolean",
@@ -2936,7 +2937,8 @@ export function activityTriggerScopeRefusal(
   plugin: Pick<AutomationCreatorPluginCatalogEntry, "displayName" | "scope" | "activityRequiresScope">,
 ): string | null {
   if (!plugin.activityRequiresScope || plugin.activityRequiresScope === plugin.scope) return null;
-  return `${plugin.displayName} events reach Rally only through a ${plugin.activityRequiresScope} connection, and this one is ${plugin.scope}, so no Sidekick can be triggered by it. Tell the person a ${plugin.activityRequiresScope} connection is required and stop; do not substitute a schedule or another plugin's events.`;
+  const required = modelName(ORGANIZATION_MODEL_NAMES, plugin.activityRequiresScope);
+  return `${plugin.displayName} events reach Rally only through ${required === "organization" ? "an" : "a"} ${required} connection, and this one is ${modelName(ORGANIZATION_MODEL_NAMES, plugin.scope)}, so no Sidekick can be triggered by it. Tell the person ${required === "organization" ? "an" : "a"} ${required} connection is required and stop; do not substitute a schedule or another plugin's events.`;
 }
 
 export function executeAutomationCreatorDiscoveryTool(
@@ -2952,7 +2954,7 @@ export function executeAutomationCreatorDiscoveryTool(
           pluginId: plugin.pluginId,
           displayName: plugin.displayName,
           description: plugin.description,
-          scope: plugin.scope,
+          scope: modelName(ORGANIZATION_MODEL_NAMES, plugin.scope),
           aliases: plugin.searchAliases,
           resourceRegistrationSupported: Boolean(plugin.registerResource),
           tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode, ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }) })),
@@ -2981,7 +2983,7 @@ export function executeAutomationCreatorDiscoveryTool(
           pluginId: plugin.pluginId,
           displayName: plugin.displayName,
           description: plugin.description,
-          scope: plugin.scope,
+          scope: modelName(ORGANIZATION_MODEL_NAMES, plugin.scope),
           aliases: plugin.searchAliases,
           resourceRegistrationSupported: Boolean(plugin.registerResource),
           tools: plugin.tools.map((tool) => ({
@@ -3005,7 +3007,7 @@ export function executeAutomationCreatorDiscoveryTool(
         pluginId: plugin.pluginId,
         displayName: plugin.displayName,
         description: plugin.description,
-        scope: plugin.scope,
+        scope: modelName(ORGANIZATION_MODEL_NAMES, plugin.scope),
         aliases: plugin.searchAliases,
         systemMessage: plugin.systemMessage,
         resourceRegistrationSupported: Boolean(plugin.registerResource),
@@ -3119,6 +3121,8 @@ function normalizeAutomationDraft(value: unknown): unknown {
   const ready = draft.ready !== false;
   return {
     ...draft,
+    // The model writes the Organization's scope as `organization`; a draft stores `workspace`.
+    suggestedScope: draft.suggestedScope === "organization" ? "workspace" : draft.suggestedScope,
     triggers,
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),

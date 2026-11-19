@@ -222,7 +222,9 @@ describe("the automations plugin", () => {
 
     // The two scopes, and what each one means for who can manage the result.
     expect(systemMessage).toContain('- "personal" belongs to the requester.');
-    expect(systemMessage).toContain('- "workspace" belongs to the Organization and is managed by its admins.');
+    expect(systemMessage).toContain('- "organization" belongs to the Organization and is managed by its admins.');
+    expect(systemMessage).toContain("personal and organization only when explicitly requested");
+    expect(systemMessage).not.toContain("workspace");
     // A Thread no longer owns a Sidekick, so the prompt offers no room scope.
     expect(systemMessage).not.toContain('"workstream"');
     expect(systemMessage).toContain("Published scope cannot change");
@@ -834,7 +836,8 @@ describe("a composed source binding key is enough on its own", () => {
     recommendedPlugins: [],
     memoryTables: [],
     customTools: [],
-    suggestedScope: "workspace",
+    // As the model writes the Organization's scope.
+    suggestedScope: "organization",
     followUpQuestion: null,
     elicitation: null,
     ready: true,
@@ -870,7 +873,12 @@ describe("a composed source binding key is enough on its own", () => {
     // and reported a configuration blocker instead of composing one.
     await expect(toolNamed(tools, "submit_draft").execute(composedDraft, toolContext))
       .resolves.toMatchObject({ output: { accepted: true } });
-    expect(state.draftState.submitted).not.toBeNull();
+    // The draft stores the Organization's scope under its stored name.
+    expect(state.draftState.submitted?.suggestedScope).toBe("workspace");
+    // The catalog names a connection's scope as the model names it.
+    const listed = await toolNamed(tools, "plugins_list").execute({}, toolContext);
+    expect((listed.output as { plugins: Array<{ pluginId: string; scope: string }> }).plugins.map((plugin) => [plugin.pluginId, plugin.scope]))
+      .toEqual([["plugin_fireflies", "organization"]]);
   });
 
   it("does not send the model looking a binding key up", () => {
@@ -923,12 +931,12 @@ describe("a connection whose scope cannot receive its connector's events", () =>
     // events", which is false and sends the drafting run to a timer. The
     // sentence is what it can relay to the person instead.
     expect(entry.activityTriggerCount).toBe(0);
-    expect(entry.activityTriggersUnavailable).toMatch(/workspace connection.*this one is personal/u);
+    expect(entry.activityTriggersUnavailable).toBe("Granola events reach Rally only through an organization connection, and this one is personal, so no Sidekick can be triggered by it. Tell the person an organization connection is required and stop; do not substitute a schedule or another plugin's events.");
 
     const inspected = await toolNamed(tools, "plugin_inspect")
       .execute({ pluginId: "plugin_granola" }, toolContext);
     expect((inspected.output as { plugin: { activityTriggersUnavailable?: string } }).plugin
-      .activityTriggersUnavailable).toMatch(/workspace connection/u);
+      .activityTriggersUnavailable).toMatch(/an organization connection/u);
   });
 
   it("refuses a rule on its events by naming the scope, not the event name", async () => {
@@ -948,7 +956,7 @@ describe("a connection whose scope cannot receive its connector's events", () =>
         },
         when: { kind: "always" },
       }],
-    }, toolContext)).rejects.toThrow(/Granola events reach Rally only through a workspace connection/u);
+    }, toolContext)).rejects.toThrow(/Granola events reach Rally only through an organization connection/u);
   });
 });
 

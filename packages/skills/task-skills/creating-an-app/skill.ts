@@ -55,7 +55,7 @@ does. The request's own words decide, in this order:
 everything else this Canvas has published. After publishing, set it with
 \`set_artifact_audience\` and \`personAsked: false\`, choosing the most open one
 those artifacts allow: \`public\` (anyone with the link) by default,
-\`workspace\` when the site or anything else here shows the Organization's own
+\`organization\` when the site or anything else here shows the Organization's own
 data (a dashboard of connected data, internal plans) or the request says it is
 for the team or company, and \`editors\` only when the request asks for it to
 stay private. When in doubt, choose the more open one. If someone already
