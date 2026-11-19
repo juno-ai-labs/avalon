@@ -48,6 +48,48 @@ export interface ReceivedChildEffects {
 // The same replay window `SidekickDO` kept: a fence, not history.
 const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
+/**
+ * WorkspaceDO migration 153: only the children that name a Terminal deadline,
+ * a few hundred rows in an Organization whose projections hold tens of
+ * thousands and tens of megabytes of JSON. The schedule re-derives these on
+ * every alarm, so the read has to stay inside this index.
+ */
+export const TERMINAL_DEADLINE_INDEX_STATEMENT = `CREATE INDEX sidekick_child_projections_terminal_deadline_idx
+  ON sidekick_child_projections(sidekick_id, json_extract(effect_json, '$.nextTerminalActionAt'))
+  WHERE json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL`;
+
+/**
+ * Each hosted parent's earliest Terminal deadline across its conversations,
+ * or one parent's when `parentId` is given: when the Organization object must
+ * next advance a sandbox it holds to a warm stop, an archive or an expiry.
+ *
+ * The deadlines are ISO strings in one format, so the text minimum is the
+ * earliest instant.
+ */
+export function hostedTerminalDeadlines(
+  sql: SqlStorage,
+  parentId?: string,
+): { parentId: string; dueAt: string }[] {
+  // Two statements, not one with `(?1 IS NULL OR sidekick_id = ?1)`: that
+  // optional predicate would plan once as a full scan of the index, and the
+  // per-parent read runs on every accepted projection.
+  const rows = parentId === undefined
+    ? sql.exec<{ parent_id: string; due_at: string }>(
+      `SELECT sidekick_id AS parent_id, MIN(json_extract(effect_json, '$.nextTerminalActionAt')) AS due_at
+         FROM sidekick_child_projections INDEXED BY sidekick_child_projections_terminal_deadline_idx
+        WHERE json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
+        GROUP BY sidekick_id`,
+    )
+    : sql.exec<{ parent_id: string; due_at: string }>(
+      `SELECT sidekick_id AS parent_id, MIN(json_extract(effect_json, '$.nextTerminalActionAt')) AS due_at
+         FROM sidekick_child_projections INDEXED BY sidekick_child_projections_terminal_deadline_idx
+        WHERE sidekick_id = ? AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
+        GROUP BY sidekick_id`,
+      parentId,
+    );
+  return rows.toArray().map((row) => ({ parentId: row.parent_id, dueAt: row.due_at }));
+}
+
 /** The kinds of parent this primitive hosts: a Sidekick (`automation`, its wire name) and a Canvas. */
 export type HostedConversationKind = "automation" | "canvas";
 
@@ -231,8 +273,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
       items: this.sql.exec<{ substream_id: string; next_terminal_action_at: string }>(
         `SELECT substream_id, json_extract(effect_json, '$.nextTerminalActionAt') AS next_terminal_action_at
            FROM sidekick_child_projections
-          WHERE sidekick_id = ? AND json_extract(effect_json, '$.kind') = 'directory_common'
-            AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
+          WHERE sidekick_id = ? AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
           ORDER BY next_terminal_action_at, substream_id`,
         this.parentId,
       ).toArray().map((row) => ({ substreamId: row.substream_id, nextTerminalActionAt: row.next_terminal_action_at })),
@@ -319,7 +360,10 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
       }
       if (envelope.effect.kind === "directory_common") {
         const accepted = this.acceptChildProjection(substreamId, envelope, now);
-        if (accepted) this.onChildProjection(substreamId, envelope.effect, accepted.prior, now);
+        if (accepted) {
+          this.onChildProjection(substreamId, envelope.effect, accepted.prior, now);
+          this.syncTerminalDeadlineAlarm(now);
+        }
       }
       if (envelope.effect.kind === "directory_user" && substreamId === "0") {
         this.acceptViewerRead(envelope.effect, envelope.sourceVersion, now);
@@ -368,6 +412,20 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
     }
     this.host.noteActivityReadMoved(effect.userId, this.parentId);
   }
+
+  /**
+   * Point this parent's Terminal alarm entry at its earliest deadline, or
+   * remove it when no conversation holds one. The full schedule reconcile at
+   * the end of every Organization alarm derives the same entries from the same
+   * query; this keeps one current in between, for an Organization with no
+   * other alarm to wake it. Rewriting an unchanged instant writes nothing.
+   */
+  private syncTerminalDeadlineAlarm(now: number): void {
+    const deadline = hostedTerminalDeadlines(this.sql, this.parentId)[0];
+    if (deadline) this.host.alarms.schedule({ kind: "terminal", key: this.parentId, dueAt: Date.parse(deadline.dueAt) }, now);
+    else this.host.alarms.cancel("terminal", this.parentId);
+  }
+
 
   /** Keep a child's newest common projection; `null` for one that is not newer. */
   private acceptChildProjection(substreamId: string, envelope: ConversationEffectEnvelope, now: number): { prior: PriorChildProjection | null } | null {

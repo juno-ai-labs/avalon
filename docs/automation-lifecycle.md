@@ -833,9 +833,10 @@ run.
 
 A run that loads Terminal reuses the sandbox owned by its Sidekick's wizard.
 All activations and background agents share its files and mutation lease, while
-run transcripts and resource permissions remain separate. The Sidekick projects
-no Terminal deadline for the workspace sweep, so the shared sandbox is created
-with Daytona's auto-delete set and retired by the provider alone;
+run transcripts and resource permissions remain separate. Its conversations
+project their Terminal deadlines into the Sidekick parent, so the workspace
+sweep warm-stops, archives and expires the shared sandbox; Daytona's
+auto-delete stays as the provider backstop.
 [`terminal-workspaces.md`](terminal-workspaces.md) owns that mechanism.
 
 The run reports its state the way every conversation does: its

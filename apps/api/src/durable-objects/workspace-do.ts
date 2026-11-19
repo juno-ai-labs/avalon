@@ -507,7 +507,11 @@ import {
 import type { CanvasSharingDefaults } from "@rally/contracts/canvases";
 import { HOSTED_PARENT_SCHEMA_STATEMENTS } from "./hosted-parent-schema";
 import { ReceiveChildEffectsRequestSchema, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
-import type { HostedConversation } from "./hosted-conversation";
+import {
+  hostedTerminalDeadlines,
+  TERMINAL_DEADLINE_INDEX_STATEMENT,
+  type HostedConversation,
+} from "./hosted-conversation";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   PARTICIPANT_MIGRATION_ALARM,
@@ -4507,7 +4511,27 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // backfill: a list is built from the Canvases themselves whenever a socket
   // subscribes, so nothing here has to catch up.
   statements: CANVAS_SHARE_FEDERATION_STATEMENTS,
-}, CANVA_RETIREMENT_MIGRATION];
+}, CANVA_RETIREMENT_MIGRATION, {
+  version: 153,
+  description: "index the conversations that hold a Terminal deadline, so the schedule can find every due sandbox",
+  // See hostedTerminalDeadlines and docs/terminal-workspaces.md. An object
+  // already holding deadlines may have nothing else to wake it, so it gets the
+  // one-shot reconcile migration 5 introduced; one with none pays no wake-up.
+  statements: [
+    TERMINAL_DEADLINE_INDEX_STATEMENT,
+    `INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
+        created_at, updated_at)
+     SELECT 'schedule_bootstrap', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)
+        AND EXISTS (SELECT 1 FROM sidekick_child_projections
+          WHERE json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL)
+     ON CONFLICT(kind, alarm_key) DO UPDATE SET
+       due_at = MIN(due_at, excluded.due_at), retry_at = 0, attempt = 0,
+       updated_at = excluded.updated_at`,
+  ],
+}];
 
 function conversationToolEntry(conversation: {
   conversationId: string; parentId: string; substreamId: string; kind: ConversationToolEntry["kind"];
@@ -7703,28 +7727,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { alarmAt: alarmAt === null ? null : new Date(alarmAt).toISOString() };
   }
 
-  /**
-   * Re-derive the Terminal deadlines alone.
-   *
-   * Only this kind: the other three read tables a directory effect never
-   * touches, and a full refresh on the hottest write path this object has
-   * would put ten queries behind every directory publish. The source is the
-   * same method the full reconcile reads, so there is still one derivation of
-   * when a sandbox is due.
-   */
-  private async refreshTerminalSchedule(): Promise<void> {
-    const workspaceId = this.workspaceId();
-    if (!workspaceId) return;
-    const targets = await this.workstreamScheduleTargets({ workspaceId });
-    await this.reconcileScheduledAlarms(
-      "terminal",
-      targets.items
-        .filter((target) => target.kind === "terminal")
-        .map((target) => ({ key: target.workstreamId, dueAt: Date.parse(target.dueAt) }))
-        .filter((target) => Number.isFinite(target.dueAt)),
-    );
-  }
-
   private scheduleContext(workspaceId: string): WorkspaceScheduleContext {
     return {
       env: this.env,
@@ -7732,9 +7734,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       directory: this,
       notificationIntents: this,
-      // The directory row carries one deadline per parent; which
-      // conversation it belongs to is the hosted parent's knowledge, read
-      // from its rows in this object. A retired Thread has none.
+      // The schedule carries one deadline per parent; which conversation it
+      // belongs to is the hosted parent's knowledge, read from its rows in
+      // this object. A retired Thread or a deleted Canvas has none.
       dueTerminalSubstreams: async (workstreamId, through) => {
         const parent = await this.hostedConversationParent(workstreamId, workspaceId);
         if (!parent) return [];
@@ -11293,13 +11295,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryScheduleTargetsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    // The only targets were a Thread's Terminal deadlines, read from its
-    // `channels` row. Threads are retired (plan step C-7) and their objects
-    // refuse to open, so nothing is due here. A Sidekick child's deadline
-    // (`HostedConversation.childTerminalDeadlines`) was never enumerated by
-    // this read, before or after; whether it should be is an open question
-    // recorded in docs/workspace-retirement.md, not a change made here.
-    return WorkspaceDirectoryScheduleTargetsResultSchema.parse({ items: [] });
+    // Every Canvas's and Sidekick's earliest Terminal deadline, from the
+    // projections its conversations report here. A Thread's `channels` row
+    // was the only source this read had, and with Threads retired it answered
+    // nothing, so no sandbox was ever warm-stopped, archived or expired by
+    // Rally, and each conversation kept observing Daytona every minute.
+    return WorkspaceDirectoryScheduleTargetsResultSchema.parse({
+      items: hostedTerminalDeadlines(this.state.storage.sql).map((deadline) => ({
+        kind: "terminal" as const, workstreamId: deadline.parentId, dueAt: deadline.dueAt,
+      })),
+    });
   }
 
   async readSearchAuthorizationSnapshots(input: unknown) {

@@ -521,11 +521,12 @@ whether or not anyone holds the lease at that instant, since a busy run holds
 nothing between two of its calls. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a bounded
 object-local claim that outlives the provider request limit and reconcile
-observed provider state after ambiguous calls. The workspace directory carries
-one Terminal deadline per conversation: the earliest across every conversation
-under it, which the conversation's parent in `WorkspaceDO` folds into the main
-conversation's projection (see
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md)). When that
+observed provider state after ambiguous calls. Each conversation reports its
+own Terminal deadline in its `directory_common` projection, which its Canvas or
+Sidekick parent in `WorkspaceDO` keeps in `sidekick_child_projections` (see
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md)). The
+Organization object schedules one `terminal` alarm entry per parent, at the
+earliest deadline across its conversations (`hostedTerminalDeadlines`). When that
 entry comes due the sweep asks the conversation's parent which
 conversations are due (`childTerminalDeadlines`) and reconciles each one's
 sandbox on its own row; a conversation that lists none is treated as the main
@@ -546,11 +547,12 @@ policy application, which now reach every conversation's row, refuse to act
 through it. The main conversation's derivation is unchanged, so its rows never
 match.
 
-None of that reaches a sandbox under a Sidekick. Its parent projects no
-Terminal deadline into the workspace directory, so the sweep and workspace
-policy-change walk do not reach its sandbox. The provider retires it instead:
-Daytona auto-stops it after fifteen idle minutes and deletes it thirty days
-after that stop. Later activations reopen the same sandbox while it is available;
+A sandbox under a Sidekick is reached the same way: the Sidekick parent keeps
+its conversations' deadlines beside a Canvas's, so the sweep advances it, and
+the workspace policy-change walk (`terminalSandboxParents`) lists Sidekicks
+beside Canvases. Daytona's own auto-stop after fifteen idle minutes, and, for a
+Sidekick's sandbox, deletion thirty days after that stop, remain the provider
+backstop. Later activations reopen the same sandbox while it is available;
 acquisition rechecks permissions and network policy before reuse. Existing
 per-activation sandboxes from before sharing retain their provider cleanup
 policy; they are not copied into the shared wizard sandbox. Published resources
@@ -884,12 +886,12 @@ personless; it is not duplicated into these product events.
   the holder having no unsettled task on the generation; a lease nobody held
   over a retained command would be one no successor could recover from, and
   the holder itself reattaches past its own unsettled task.
-- **A sandbox the workspace sweep cannot reach carries its retention from
-  creation.** The sweep finds sandboxes through the Terminal deadlines a work
-  stream's parent projects; an automation projects none, so a sandbox under
-  one is created with Daytona's auto-delete set, and a new kind of
-  conversation parent must either project a deadline or do the same. A
-  sandbox with neither is one Rally pays for until somebody finds it by hand.
+- **Every sandbox's deadline reaches the workspace sweep.** The sweep finds
+  sandboxes through the Terminal deadlines each conversation projects into its
+  Canvas or Sidekick parent. A new kind of conversation parent must keep its
+  children's `directory_common` projections in `sidekick_child_projections`, or
+  carry Daytona's auto-delete from creation. A sandbox with neither is one
+  Rally pays for until somebody finds it by hand.
 - **A stopped parent does not strand its in-flight tool receipt.** The live
   lease owner settles that receipt before terminalizing the run, retaining
   ambiguity for an interrupted command rather than guessing whether it ran.
@@ -1256,7 +1258,7 @@ extension, size, source) when a site file cannot be stored, and
 which every file of that publish streams.
 
 A sandbox's warm-stop, archive, and expiry deadlines are workspace alarm
-entries derived from `next_terminal_action_at` in the workspace directory
+entries of kind `terminal`, one per Canvas or Sidekick, as described above
 ([`durable-object-alarms.md`](durable-object-alarms.md)); its provider
 observation is its own conversation object's alarm, above. When the pass finds
 the sandbox held by a live run it is re-checked a minute later; after a
@@ -1523,6 +1525,54 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-19 — The schedule finds every Canvas's and Sidekick's sandbox deadline
+
+**What changed:** `WorkspaceDO.workstreamScheduleTargets` now returns one
+`terminal` target per Canvas or Sidekick: the earliest `nextTerminalActionAt`
+its conversations project into `sidekick_child_projections`. Accepting a newer
+projection moves that parent's alarm entry in the same transaction. WorkspaceDO
+migration 153 adds a partial expression index over the projections that name a
+deadline, and the read is pinned to it with `INDEXED BY`.
+
+**Why:** The read's only source was a Thread's `channels` row, and when
+Threads were retired it was left answering `[]`. From then on Rally never
+warm-stopped, archived or expired any Terminal sandbox. Each conversation's
+lifecycle intent stayed `running`, so its own `terminal_observation` entry
+asked Daytona for the sandbox every sixty seconds indefinitely. Expiry, which
+preserves the final diff, never ran. Daytona's own auto-stop hid the problem.
+
+This supersedes the 2026-09-19 decision not to teach the sweep about
+automations. That decision weighed new machinery (a `SidekickDO` deadline and
+an automation-directory column) against a sandbox used once. Neither premise
+holds any more: a Sidekick's conversations already project their deadlines
+into the same table a Canvas's do, so the sweep needs no new machinery, and the
+Sidekick's sandbox is now shared and reopened across runs.
+
+**Considered and rejected:** Scanning `sidekick_child_projections` without an
+index. The schedule re-derives this kind on every Organization alarm, and one
+Organization's projections were 13.7k rows and 48 MB of JSON. Only a few
+hundred rows carry a deadline. Also rejected: refreshing only from the
+projection hook. An Organization alarm's full reconcile replaces the whole
+kind, so it has to derive the same entries, or it clears what the hook wrote.
+
+Expiry now restores an archive once before deleting it when no final diff was
+ever recorded, and a capture that exits non-zero throws
+`terminal_final_diff_failed` instead of reading as nothing to save, so expiry
+keeps the sandbox and retries; a warm stop, which deletes nothing, still
+proceeds without the diff. Before this, expiry only deleted an archive, on the assumption
+that Rally's own warm stop had saved the diff. That holds when Rally stops the
+sandbox first, but it fails for every sandbox Daytona archived while the
+schedule was dark, and Canvas sandboxes are never deleted by Daytona
+(`autoDeleteInterval: -1`). Turning the sweep back on without this guard would
+have deleted their unsaved work. Adopting an archive at a warm-stop or archive
+deadline still makes no toolbox call, because nothing is lost there.
+
+**Consequences:** On the first alarm after deploy, every overdue deadline comes
+due. The drain's per-pass limit and the per-entry stall backoff bound that
+burst. A deadline the pass finds nothing to do for still republishes and backs
+off, as before. Any new source of a Terminal deadline has to project through
+`directory_common` into a hosted parent, or the schedule will not see it.
 
 ### 2026-11-16 — An import row records the run that made it
 

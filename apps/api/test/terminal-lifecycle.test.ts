@@ -379,13 +379,65 @@ describe("Terminal scheduled lifecycle", () => {
     const archived = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
     });
+    workstreamObjectRun(archived.objectStore, "UPDATE terminal_workspace SET final_diff_resource_id = 'final-diff' WHERE id = 1");
     const preserveFinalDiff = vi.fn(async () => undefined);
     await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(archived.objectStore), testTerminalPortFactory(archived.objectStore), archived.provider, W, S, NOW, preserveFinalDiff)).resolves.toEqual({ transition: "expired" });
     expect(preserveFinalDiff).not.toHaveBeenCalled();
+    expect(archived.provider.startSandbox).not.toHaveBeenCalled();
     expect(archived.provider.clearGitHubReadAccess).toHaveBeenCalledWith("provider-1");
     expect(archived.provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
     expect(workstreamObjectGet(archived.objectStore, "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1"))
       .toEqual({ lifecycle_state: "expired", sandbox_id: null });
+  });
+
+  it("restores an archive Daytona made before Rally saved its final diff, and saves it before expiry deletes it", async () => {
+    const { objectStore, provider } = fixture("archived", {
+      warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
+    });
+    const order: string[] = [];
+    vi.mocked(provider.startSandbox).mockImplementation(async () => { order.push("start"); });
+    vi.mocked(provider.deleteSandbox).mockImplementation(async () => { order.push("delete"); });
+    const preserveFinalDiff = vi.fn(async () => { order.push("preserve"); });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserveFinalDiff))
+      .resolves.toEqual({ transition: "expired" });
+    expect(order).toEqual(["start", "preserve", "delete"]);
+    expect(preserveFinalDiff).toHaveBeenCalledWith("provider-1", 1);
+  });
+
+  it("keeps an unsaved archive whose restore fails rather than deleting it", async () => {
+    const { objectStore, provider } = fixture("archived", {
+      warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
+    });
+    vi.mocked(provider.startSandbox).mockRejectedValue(new Error("restore failed"));
+    const preserveFinalDiff = vi.fn(async () => undefined);
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserveFinalDiff))
+      .rejects.toThrow();
+    expect(preserveFinalDiff).not.toHaveBeenCalled();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ sandbox_id: "provider-1" });
+  });
+
+  it("keeps an unsaved archive whose final-diff capture fails rather than deleting it", async () => {
+    const { objectStore, provider } = fixture("archived", {
+      warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
+    });
+    const preserveFinalDiff = vi.fn(async () => { throw new Error("terminal_final_diff_failed:exit_128"); });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserveFinalDiff))
+      .rejects.toThrow();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ sandbox_id: "provider-1" });
+  });
+
+  it("still warm-stops a sandbox whose final-diff capture fails, leaving the diff for expiry", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    const preserveFinalDiff = vi.fn(async () => { throw new Error("terminal_final_diff_failed:exit_128"); });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserveFinalDiff))
+      .resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
   });
 
   it("defers a yielded run's lifecycle until its retained command deadline", async () => {
