@@ -93,8 +93,8 @@ describe("local agent model configuration", () => {
   afterEach(() => { while (openDatabases.length) openDatabases.pop()?.close(); vi.restoreAllMocks(); });
 
   it.each([
-    ["canvas", "openai/gpt-6.1-terra"], ["memory_sweep", "openai/gpt-6.1-sol"],
-    ["sidekick_wizard", "openai/gpt-6.1-sol"], ["sidekick_run", "openai/gpt-6.1-terra"], ["resource_naming", "openai/gpt-6.1-terra"],
+    ["canvas", "openai/gpt-6.1-sol"], ["memory_sweep", "openai/gpt-6.1-sol"],
+    ["sidekick_wizard", "openai/gpt-6.1-sol"], ["sidekick_run", "openai/gpt-6.1-sol"], ["resource_naming", "openai/gpt-6.1-terra"],
   ] as const)("uses the checked-in default for %s without environment setup", async (role, model) => {
     await expect(resolveAgentModelRouting(createTestEnv({}), role)).resolves.toEqual({ model, fallbackModels: ["google/gemini-3.8-flash"] });
   });
@@ -125,7 +125,7 @@ describe("local agent model configuration", () => {
   it("defaults safely for invalid typed model and routing overrides", async () => {
     await expect(resolveAgentModelRouting(createTestEnv({ OPENROUTER_PRIMARY_MODEL: false,
       OPENROUTER_FALLBACK_MODEL: [], AGENT_MODEL_ROUTING_JSON: true }), "canvas"))
-      .resolves.toEqual({ model: "openai/gpt-6.1-terra", fallbackModels: ["google/gemini-3.8-flash"] });
+      .resolves.toEqual({ model: "openai/gpt-6.1-sol", fallbackModels: ["google/gemini-3.8-flash"] });
   });
 
   it.each(["resource_naming", "memory_sweep"] as const)("rejects Azure-only primary and fallback JSON routes atomically for %s", async (role) => {

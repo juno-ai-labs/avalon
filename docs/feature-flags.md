@@ -75,7 +75,7 @@ routing capability.
 
 | Roles | Default model | Shared override |
 | --- | --- | --- |
-| `canvas`, `sidekick_run` | `openai/gpt-6.1-terra` | `OPENROUTER_PRIMARY_MODEL` |
+| `canvas`, `sidekick_run` | `openai/gpt-6.1-sol` | `OPENROUTER_PRIMARY_MODEL` |
 | `sidekick_wizard`, `memory_sweep` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
 | `resource_naming` | `openai/gpt-6.1-terra` | `OPENROUTER_FASTER_MODEL` |
 
@@ -198,6 +198,25 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 `AGENT_MODEL_ENV_KEYS`; no service provisioning or admin editor is required.
 
 ## Changelog
+
+### 2026-11-19 — Move the primary default to GPT-6.1 Sol
+
+**What changed:** The primary model group now defaults to `openai/gpt-6.1-sol`.
+Canvas and Sidekick runs, and direct Canvas structured calls, inherit
+it. Resource naming stays on GPT-6.1 Terra through the faster group. An unpinned
+conversation with no deployment override switches on its next run.
+
+**Why:** The team chose Sol for the default agent loop. The quality, latency and
+cost reasons for leaving Terra were not recorded here.
+
+**Alternatives:** Terra stays reachable through `OPENROUTER_PRIMARY_MODEL`,
+`AGENT_MODEL_ROUTING_JSON` and pins. Any comparison between the two was not
+recorded.
+
+**What future changes must respect:** Explicit environment routes and
+conversation pins keep precedence. This is the OpenRouter GPT-6.1 Sol, not the
+Azure-only GPT-5.6 Sol, so direct OpenRouter Canvas structured calls stay
+allowed.
 
 ### 2026-11-10 — Organization-owned model selector visibility
 
