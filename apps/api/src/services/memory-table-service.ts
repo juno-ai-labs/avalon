@@ -28,10 +28,9 @@ import {
   type WorkspaceMemoryTableRow,
   type WorkspaceMemoryTableRowRecord,
 } from "../durable-objects/workspace-memory-protocol";
-import { memoryTableSchemaRecovery, publicMemoryTable } from "../durable-objects/memory-table-definition";
+import { MODEL_MEMORY_SCOPE_KINDS, memoryTableSchemaRecovery, modelMemoryScopeKind, publicMemoryTable, storedMemoryScopeKind } from "../durable-objects/memory-table-definition";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
-  MEMORY_SCOPE_KINDS,
   ensureScope,
   resolveMemoryAccess,
   writableScope,
@@ -71,7 +70,7 @@ const ColumnSchema = z.strictObject({
 });
 
 const CreateSchema = z.strictObject({
-  scopeKind: z.enum(MEMORY_SCOPE_KINDS),
+  scopeKind: z.enum(MODEL_MEMORY_SCOPE_KINDS).transform(storedMemoryScopeKind),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(1_200),
   usageInstructions: z.string().trim().min(1).max(4_000),
@@ -286,7 +285,7 @@ function compactTable(table: AuthorizedTable) {
   return {
     memoryTableId: table.table.memoryTableId,
     memoryScopeId: table.table.memoryScopeId,
-    scopeKind: table.table.scopeKind,
+    scopeKind: modelMemoryScopeKind(table.table.scopeKind),
     name: table.table.name,
     description: table.table.description,
     keyColumns: table.keyColumns.map((column) => column.name),
@@ -1182,8 +1181,8 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
           properties: {
             scopeKind: {
               type: "string",
-              enum: MEMORY_SCOPE_KINDS,
-              description: "How long the table should outlive this run, narrowest first: `workstream` for this conversation alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `workspace` for everyone in the organization. Not every run authorizes every kind; a refusal names the ones this run does have.",
+              enum: MODEL_MEMORY_SCOPE_KINDS,
+              description: "How long the table should outlive this run, narrowest first: `canvas` for this Canvas's Chat alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `workspace` for everyone in the organization. Not every run authorizes every kind; a refusal names the ones this run does have.",
             },
             name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already under this name in the chosen scope is reopened when its schema matches: column names, types, required/searchable flags, and ordered key columns. Reopening overwrites description, usage instructions, and column descriptions for every run sharing that table, without changing rows or IDs. On a schema conflict, call table_describe with the returned memoryTableId and reuse that schema, or choose a new name and explicitly migrate rows. Do not retry unchanged." },
             description: { type: "string", description: "What the table holds and why it exists, in a sentence or two. This is what table_search matches, so write the words someone would look for." },

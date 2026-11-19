@@ -27,13 +27,27 @@ export function memoryTableSchemaConflicts(
   return fields;
 }
 
+/**
+ * The scope kind a model reads and writes. A Canvas's scope is stored as
+ * `workstream`, the conversation's storage name, and named `canvas` to the
+ * model, which knows no work streams. The other kinds are their own names.
+ */
+export const MODEL_MEMORY_SCOPE_KINDS = ["canvas", "sidekick", "user", "workspace"] as const;
+export type ModelMemoryScopeKind = typeof MODEL_MEMORY_SCOPE_KINDS[number];
+export function modelMemoryScopeKind(kind: WorkspaceMemoryTableRow["scopeKind"]): ModelMemoryScopeKind {
+  return kind === "workstream" ? "canvas" : kind;
+}
+export function storedMemoryScopeKind(kind: ModelMemoryScopeKind): WorkspaceMemoryTableRow["scopeKind"] {
+  return kind === "canvas" ? "workstream" : kind;
+}
+
 /** One public projection for create, reopen, describe and persisted receipts. */
 export function publicMemoryTable(table: WorkspaceMemoryTableRow, columns: readonly WorkspaceMemoryTableColumn[]) {
   const keyIds = JSON.parse(table.keyColumnIdsJson) as string[];
   return {
     memoryTableId: table.memoryTableId,
     memoryScopeId: table.memoryScopeId,
-    scopeKind: table.scopeKind,
+    scopeKind: modelMemoryScopeKind(table.scopeKind),
     name: table.name,
     description: table.description,
     usageInstructions: table.usageInstructions,

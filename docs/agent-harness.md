@@ -1906,6 +1906,35 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-11-19 — The model is told what Rally is, and sees no work streams
+
+**What changed.** The standing system prompt opens with what Rally is: "a
+multi-player platform for self-updating artifacts: people and Rally build each
+Canvas's one artifact in its Chat, and Sidekicks keep it current." Its
+fixed-overhead ceiling went from 8,500 to 10,000 bytes. The addressing
+classifier now classifies a message "in a shared Rally conversation, where
+people and Rally work together on a Canvas or a Sidekick", not "in a
+collaborative workstream". The durable-table tools name a Canvas's scope
+`canvas` (`MODEL_MEMORY_SCOPE_KINDS`, mapped to the stored `workstream` by
+`modelMemoryScopeKind` and `storedMemoryScopeKind`), in their schema, outputs
+and refusals. `current_time` reports `canvas timezone` instead of `workspace
+timezone`.
+
+**Why.** After several pivots the model was never told what the product is
+for, only how its parts are stored, and "workstream" reached it as a word for a
+conversation and as a scope value. The opening line is the one place every run
+reads first.
+
+**Considered and rejected.** Keeping "collaborative workstream" because the
+addressing eval's baseline (`evals/addressing/baseline-2026-09-16.json`) was
+measured on it: the product decision outranks the baseline, which needs a
+re-run on the new wording. Fitting the opening line under 8,500 by trimming
+other rules: the cuts available removed instructions tests pin.
+
+**Consequences.** The addressing baseline is stale until re-measured. Stored
+rows and earlier receipts keep `workstream`; only what the model reads changed,
+the way the 2026-11 `automation` to `sidekick` rename was done.
+
 ### 2026-11-16 — A batch with one unsaved result finishes, and a failed run keeps its own code
 
 **What changed:** Three parts. A read whose result could not be saved is

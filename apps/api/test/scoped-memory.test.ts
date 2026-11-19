@@ -466,6 +466,28 @@ describe("memory scopes and durable tables", () => {
     });
   });
 
+  it("names a Canvas's table scope canvas to the model and stores it as the conversation's scope", async () => {
+    const { env, objectDatabase } = fixture();
+    const run = input("owner");
+    const declaration = {
+      scopeKind: "canvas", name: "Seen issues", description: "Issues this Canvas handled",
+      usageInstructions: "Insert one row per issue", rationale: "Track handled issues",
+      columns: [{ name: "issue", description: "Issue id", type: "string", required: true, searchable: false }],
+      keyColumns: ["issue"],
+    };
+    const created = await tableTool(env, run, "create").execute(declaration, toolContext(run, "canvas-create"));
+    expect(created.output).toMatchObject({ scopeKind: "canvas" });
+    const memoryTableId = (created.output as { memoryTableId: string }).memoryTableId;
+    expect(objectDatabase.prepare(`SELECT scope.kind FROM memory_tables tables
+      JOIN memory_scopes scope ON scope.memory_scope_id = tables.memory_scope_id
+      WHERE tables.memory_table_id = ?`).get(memoryTableId)).toEqual({ kind: "workstream" });
+    const described = await tableTool(env, run, "describe").execute({ memoryTableId }, toolContext(run, "canvas-describe"));
+    expect(described.output).toMatchObject({ scopeKind: "canvas" });
+    // The storage name is not a value the model may send.
+    await expect(tableTool(env, run, "create").execute({ ...declaration, scopeKind: "workstream" }, toolContext(run, "canvas-stored-name")))
+      .rejects.toThrow();
+  });
+
   it("shares workspace tables across runs and queries only matching projected rows", async () => {
     const { env } = fixture();
     // The owner's run creates and mutates; the member's run reads. Before the

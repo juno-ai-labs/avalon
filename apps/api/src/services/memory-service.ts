@@ -1,4 +1,5 @@
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { modelMemoryScopeKind } from "../durable-objects/memory-table-definition";
 import { asWorkspaceId, MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
@@ -86,7 +87,7 @@ function scopeList(scopes: readonly MemoryScope[]): string {
   return [...scopes]
     .sort((left, right) =>
       MEMORY_SCOPE_KINDS.indexOf(left.kind) - MEMORY_SCOPE_KINDS.indexOf(right.kind))
-    .map((scope) => scope.kind)
+    .map((scope) => modelMemoryScopeKind(scope.kind))
     .join(", ");
 }
 
@@ -122,7 +123,7 @@ export function unavailableScopeError(
 ): MemoryToolError {
   return new MemoryToolError(
     "memory_scope_not_available",
-    `This run cannot reach ${kind} memory. Its scopes are: ${scopeList(scopes)}.`,
+    `This run cannot reach ${modelMemoryScopeKind(kind)} memory. Its scopes are: ${scopeList(scopes)}.`,
     { reason: retryInstruction(scopes) },
   );
 }
@@ -135,8 +136,8 @@ export function unwritableScopeError(
   return new MemoryToolError(
     "memory_scope_not_writable",
     writable.length === 0
-      ? `This run may read ${kind} memory, and has no writable memory scope at all.`
-      : `This run may read ${kind} memory but not write it. It may write: ${scopeList(writable)}.`,
+      ? `This run may read ${modelMemoryScopeKind(kind)} memory, and has no writable memory scope at all.`
+      : `This run may read ${modelMemoryScopeKind(kind)} memory but not write it. It may write: ${scopeList(writable)}.`,
     { reason: retryInstruction(scopes) },
   );
 }
