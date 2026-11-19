@@ -6053,7 +6053,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const request = SearchConversationProjectionMessageSchema.parse(input);
     // An erased Chat has no identity and nothing left to display: answering
     // null lets the job settle instead of retrying into the dead-letter queue.
-    if (this.objectStore.identity() === null) return null;
+    if (!this.objectStore.identity()) return null;
     this.searchProjectionIdentity(request);
     return this.currentConversationDisplay();
   }

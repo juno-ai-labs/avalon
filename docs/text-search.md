@@ -365,8 +365,7 @@ Queue with unrelated jobs. Inspect and replay only the failed search messages;
 never purge the whole Queue. A display job can be replayed unchanged at any
 time: it carries only the conversation address and reads the current title and
 archive state when it runs. A display job for a Chat that has since been erased
-(a discarded blank Canvas) reads no display and is acknowledged; it does not
-retry. Malformed embedding jobs retry and eventually
+(a discarded blank Canvas) reads no display and is acknowledged. Malformed embedding jobs retry and eventually
 dead-letter rather than falling through to the legacy-message acknowledgment. Publish a replacement durably before acknowledging
 or removing its failed predecessor.
 
@@ -762,9 +761,8 @@ in the consumer. The same error marks a job routed to the wrong live
 conversation, which is a real fault and should keep failing loudly. Only the
 no-identity case is answered.
 
-**Consequences:** A display job for any never-created or erased conversation now
-settles silently. A live conversation whose identity disagrees with the job
-still throws.
+**Consequences:** A display job for a never-created or erased conversation now
+settles silently.
 
 ### 2026-11-15 — Back off a failed search delivery before redelivering it
 
