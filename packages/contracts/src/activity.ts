@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { IdSchema, SubstreamIdSchema } from "./identifiers";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * Activity: one person's feed of what happened to them in Canvases and
@@ -18,24 +19,24 @@ import { IdSchema, SubstreamIdSchema } from "./identifiers";
  * the person I asked approving or declining (`source_approved`,
  * `source_declined`).
  */
-export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted", "access_denied", "source_request", "source_approved", "source_declined", "canvas_notice"]);
+export const ActivityKindSchema = deferredZodSchema(() => z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted", "access_denied", "source_request", "source_approved", "source_declined", "canvas_notice"]));
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;
 
 /** Where it happened: a Canvas, or a Sidekick (`automation`, its storage name). */
-export const ActivityParentKindSchema = z.enum(["canvas", "automation"]);
+export const ActivityParentKindSchema = deferredZodSchema(() => z.enum(["canvas", "automation"]));
 export type ActivityParentKind = z.infer<typeof ActivityParentKindSchema>;
 
 /** Who did it: a person (their id), Rally, or a Sidekick (its id). */
-export const ActivityActorSchema = z.strictObject({
+export const ActivityActorSchema = deferredZodSchema(() => z.strictObject({
   kind: z.enum(["person", "rally", "sidekick"]),
   id: IdSchema.nullable(),
-});
+}));
 export type ActivityActor = z.infer<typeof ActivityActorSchema>;
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
 
 /** One Activity item as its recipient sees it. */
-export const ActivityItemSchema = z.object({
+export const ActivityItemSchema = deferredZodSchema(() => z.object({
   id: z.string().min(1).max(300),
   kind: ActivityKindSchema,
   parentKind: ActivityParentKindSchema,
@@ -100,7 +101,7 @@ export const ActivityItemSchema = z.object({
    * past what the item is about, or marked everything seen since it arrived.
    */
   seen: z.boolean(),
-});
+}));
 export type ActivityItem = z.infer<typeof ActivityItemSchema>;
 
 /**
@@ -108,11 +109,11 @@ export type ActivityItem = z.infer<typeof ActivityItemSchema>;
  * the newest page (the sidebar lists' bound); `unseenCount` counts every
  * unseen item, not only the page's.
  */
-export const ActivityPageSchema = z.strictObject({
+export const ActivityPageSchema = deferredZodSchema(() => z.strictObject({
   waterline: z.number().int().nonnegative(),
   unseenCount: z.number().int().nonnegative(),
   items: z.array(ActivityItemSchema).max(250),
-});
+}));
 export type ActivityPage = z.infer<typeof ActivityPageSchema>;
 
 /**
@@ -121,13 +122,13 @@ export type ActivityPage = z.infer<typeof ActivityPageSchema>;
  * person's sockets only. Its own event type, so a desktop that predates it
  * ignores it (`isUnknownSocketEvent`).
  */
-export const WorkspaceActivityListEventSchema = z.strictObject({
+export const WorkspaceActivityListEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_activity_list"),
   occurredAt: TimestampSchema,
   waterline: z.number().int().positive(),
   unseenCount: z.number().int().nonnegative(),
   items: z.array(ActivityItemSchema).max(250),
-});
+}));
 export type WorkspaceActivityListEvent = z.infer<typeof WorkspaceActivityListEventSchema>;
 
 /** The workspace socket command behind Mark all seen: everything recorded until now is seen. */

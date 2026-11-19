@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The card an agent shows to bring someone into the Organization: their
@@ -8,12 +9,12 @@ import { z } from "zod";
  * the card answers that question for the person who pressed it, so the agent
  * carries on with a member it can ask things of. `docs/workspace-member-roles.md`.
  */
-export const MemberCardInputSchema = z.strictObject({
+export const MemberCardInputSchema = deferredZodSchema(() => z.strictObject({
   email: z.string().trim().toLowerCase().email().max(254)
     .describe("The address to add them at, for example nancy@example.com."),
   name: z.string().trim().min(1).max(120).optional()
     .describe("Their name, when you know it, so the card says who they are."),
-});
+}));
 export type MemberCardInput = z.infer<typeof MemberCardInputSchema>;
 
 /** The answer the card sends once the person is a member. The values are what the model reads. */

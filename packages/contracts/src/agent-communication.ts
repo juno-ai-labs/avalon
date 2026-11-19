@@ -2,13 +2,14 @@ import { z } from "zod";
 import { ConversationParentKindSchema } from "./conversation-parent";
 import { IdSchema, SubstreamIdSchema } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /** A conversation address within the host's workspace, not a separately allocated agent identity. */
-export const AgentAddressSchema = z.strictObject({
+export const AgentAddressSchema = deferredZodSchema(() => z.strictObject({
   parentKind: ConversationParentKindSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
-});
+}));
 export type AgentAddress = z.infer<typeof AgentAddressSchema>;
 
 function parseAddress(value: string) {
@@ -18,9 +19,9 @@ function parseAddress(value: string) {
   return parsed.success ? parsed.data : null;
 }
 
-export const AgentIdSchema = z.string().refine((value) => parseAddress(value) !== null, {
+export const AgentIdSchema = deferredZodSchema(() => z.string().refine((value) => parseAddress(value) !== null, {
   message: "Use an exact agentId returned by agent or Sidekick discovery.",
-}).brand<"AgentId">();
+}).brand<"AgentId">());
 export type AgentId = z.infer<typeof AgentIdSchema>;
 
 /**
@@ -33,7 +34,7 @@ export type AgentId = z.infer<typeof AgentIdSchema>;
  * notice — "this worker is done and said nothing" is not a message, it is an
  * outcome the owner may need to act on — and the feed draws it as one.
  */
-export const AgentExchangeNoticeSchema = z.enum(["failed", "finished_without_reply"]);
+export const AgentExchangeNoticeSchema = deferredZodSchema(() => z.enum(["failed", "finished_without_reply"]));
 export type AgentExchangeNotice = z.infer<typeof AgentExchangeNoticeSchema>;
 
 /** Host routing context for the message that activated an execution. */
@@ -88,9 +89,9 @@ export function modelAgentId(agentId: string): string {
  * An agent id a model wrote, back in stored form. Both spellings are accepted
  * because tool results from before the translation still show `automation/…`.
  */
-export const ModelAgentIdSchema = z.string()
+export const ModelAgentIdSchema = deferredZodSchema(() => z.string()
   .transform((value) => value.startsWith("sidekick/") ? `automation/${value.slice("sidekick/".length)}` : value)
-  .pipe(AgentIdSchema);
+  .pipe(AgentIdSchema));
 
 const MessageFields = {
   message: z.string().max(MESSAGE_MAX_CHARACTERS).describe("Tell the recipient what to do or provide your response. Include the context it needs."),
@@ -102,26 +103,26 @@ const hasContent = (value: { message: string; attachmentIds: string[] }) =>
   value.message.trim().length > 0 || value.attachmentIds.length > 0;
 const contentError = { message: "Include a message or at least one attachment." };
 
-export const StartAgentInputSchema = z.strictObject({
+export const StartAgentInputSchema = deferredZodSchema(() => z.strictObject({
   name: z.string().trim().min(1).max(500).describe("Give the agent a short name so teammates can recognize it."),
   description: z.string().trim().min(1).max(4_000).describe("Describe the agent’s job for teammates. Put the full assignment in message."),
   ...MessageFields,
-}).refine(hasContent, contentError);
+}).refine(hasContent, contentError));
 // `next` is where the delivery contract lives: the reply arrives as a message
 // whether the model keeps working or finishes, and there is no tool to fetch
 // it. It is result text because a result is read at the moment the model
 // decides its next step.
-export const StartAgentResultSchema = z.strictObject({ agentId: AgentIdSchema, name: z.string(), next: z.string() });
-export const ListAgentsInputSchema = z.strictObject({});
-export const SendAgentMessageInputSchema = z.strictObject({
+export const StartAgentResultSchema = deferredZodSchema(() => z.strictObject({ agentId: AgentIdSchema, name: z.string(), next: z.string() }));
+export const ListAgentsInputSchema = deferredZodSchema(() => z.strictObject({}));
+export const SendAgentMessageInputSchema = deferredZodSchema(() => z.strictObject({
   agentId: ModelAgentIdSchema.describe("Copy the recipient’s agentId from creation or discovery. Do not use a Sidekick ID."),
   ...MessageFields,
-}).refine(hasContent, contentError);
-export const ReplyToAgentMessageInputSchema = z.strictObject({
+}).refine(hasContent, contentError));
+export const ReplyToAgentMessageInputSchema = deferredZodSchema(() => z.strictObject({
   messageId: IdSchema.describe("Copy Message ID from the message you received. The response goes to its sender."),
   ...MessageFields,
-}).refine(hasContent, contentError);
-export const AgentMessageResultSchema = z.strictObject({ messageId: IdSchema, next: z.string() });
+}).refine(hasContent, contentError));
+export const AgentMessageResultSchema = deferredZodSchema(() => z.strictObject({ messageId: IdSchema, next: z.string() }));
 /**
  * Room the host keeps for the frame it writes around a change request: fixed
  * sentences, a run id, a sender name bounded at 200 and a provider at 100. It
@@ -140,13 +141,13 @@ export const SIDEKICK_CHANGE_REQUEST_HEADER = "SIDEKICK CHANGE REQUEST FROM A RU
  * A Sidekick run asking its own Sidekick's wizard for a change. No recipient
  * field: the host names the wizard from the run, so a run reaches only its own.
  */
-export const RequestSidekickChangeInputSchema = z.strictObject({
+export const RequestSidekickChangeInputSchema = deferredZodSchema(() => z.strictObject({
   changes: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS - SIDEKICK_CHANGE_FRAME_RESERVE)
     .describe("The change in plain words: what to change, who asked for it, and their words, quoted, where they matter. Leave out ids; the wizard already knows this Sidekick."),
-});
-export const StopAgentInputSchema = z.strictObject({
+}));
+export const StopAgentInputSchema = deferredZodSchema(() => z.strictObject({
   agentId: ModelAgentIdSchema.describe("Copy the agentId of an agent you own. Its owned descendants also stop."),
-});
+}));
 
 export type StartAgentInput = z.infer<typeof StartAgentInputSchema>;
 export type StartAgentResult = z.infer<typeof StartAgentResultSchema>;

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The two kinds of thing a conversation can belong to: a Sidekick
@@ -16,13 +17,13 @@ import { WorkstreamAppearanceSchema } from "./workstream-appearance";
  * through `hostedConversationParentKind` (workstream-object-storage.ts) and
  * refused by name.
  */
-export const ConversationParentKindSchema = z.enum(["automation", "canvas"]);
+export const ConversationParentKindSchema = deferredZodSchema(() => z.enum(["automation", "canvas"]));
 export type ConversationParentKind = z.infer<typeof ConversationParentKindSchema>;
 
-export const ConversationParentRefSchema = z.strictObject({
+export const ConversationParentRefSchema = deferredZodSchema(() => z.strictObject({
   kind: ConversationParentKindSchema,
   id: IdSchema,
-});
+}));
 export type ConversationParentRef = z.infer<typeof ConversationParentRefSchema>;
 
 const ParentAddressed = {
@@ -31,14 +32,14 @@ const ParentAddressed = {
 } as const;
 
 /** May this person open the parent's conversations, and is the parent archived. */
-export const ConversationParentAuthorizeViewerRequestSchema = z.strictObject({
+export const ConversationParentAuthorizeViewerRequestSchema = deferredZodSchema(() => z.strictObject({
   ...ParentAddressed,
   userId: UserIdSchema,
   substreamId: SubstreamIdSchema.optional(),
   /** Require completed canonical grant authority; never fall back to a legacy roster. */
   requireGrantAuthority: z.boolean().optional(),
-});
-export const ConversationParentAuthorizeViewerResultSchema = z.strictObject({
+}));
+export const ConversationParentAuthorizeViewerResultSchema = deferredZodSchema(() => z.strictObject({
   authorized: z.boolean(),
   archived: z.boolean(),
   /**
@@ -49,15 +50,15 @@ export const ConversationParentAuthorizeViewerResultSchema = z.strictObject({
   refusal: z.literal("viewer_relationship_inactive").optional(),
   childStatus: z.enum(["reserved", "ready", "failed"]).nullable().optional(),
   membershipVersion: z.number().int().nonnegative().optional(),
-});
+}));
 
 /** Whether the parent exists, and the generation and archive state its children inherit. */
-export const ConversationParentAuthorityRequestSchema = z.strictObject(ParentAddressed);
-export const ConversationParentAuthorityResultSchema = z.strictObject({
+export const ConversationParentAuthorityRequestSchema = deferredZodSchema(() => z.strictObject(ParentAddressed));
+export const ConversationParentAuthorityResultSchema = deferredZodSchema(() => z.strictObject({
   exists: z.boolean(),
   authorityGeneration: z.number().int().nonnegative(),
   archived: z.boolean(),
-});
+}));
 
 /**
  * Record a child before it is addressed.
@@ -99,19 +100,19 @@ export const ConversationParentReserveChildRequestSchema = z.strictObject({
    */
   deferDirectoryDelivery: z.boolean().optional(),
 });
-export const ConversationParentReserveChildResultSchema = z.strictObject({
+export const ConversationParentReserveChildResultSchema = deferredZodSchema(() => z.strictObject({
   reserved: z.literal(true),
   authorityGeneration: z.number().int().nonnegative(),
-});
+}));
 
-export const ConversationParentListChildrenRequestSchema = z.strictObject(ParentAddressed);
-export const ConversationParentListChildrenResultSchema = z.strictObject({
+export const ConversationParentListChildrenRequestSchema = deferredZodSchema(() => z.strictObject(ParentAddressed));
+export const ConversationParentListChildrenResultSchema = deferredZodSchema(() => z.strictObject({
   children: z.array(z.strictObject({
     substreamId: SubstreamIdSchema,
     kind: z.enum(["main", "child"]),
     createdAt: z.number().int().nonnegative(),
   })),
-});
+}));
 
 /**
  * Every conversation of the parent that reports a Terminal deadline, with the
@@ -119,13 +120,13 @@ export const ConversationParentListChildrenResultSchema = z.strictObject({
  * retention alone gives it an expiry — so this is also the list of the
  * parent's conversations that own a sandbox.
  */
-export const ConversationParentTerminalDeadlinesRequestSchema = z.strictObject(ParentAddressed);
-export const ConversationParentTerminalDeadlinesResultSchema = z.strictObject({
+export const ConversationParentTerminalDeadlinesRequestSchema = deferredZodSchema(() => z.strictObject(ParentAddressed));
+export const ConversationParentTerminalDeadlinesResultSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({
     substreamId: SubstreamIdSchema,
     nextTerminalActionAt: z.string().datetime({ offset: true }),
   })),
-});
+}));
 export type ConversationParentTerminalDeadlinesRequest =
   z.infer<typeof ConversationParentTerminalDeadlinesRequestSchema>;
 export type ConversationParentTerminalDeadlinesResult =
@@ -139,7 +140,7 @@ export type ConversationParentTerminalDeadlinesResult =
  * comparing an error message across an RPC boundary is one rename away from
  * permanently tombstoning a parent without walking its children.
  */
-export const ConversationParentRetirementChildrenResultSchema = z.discriminatedUnion("status", [
+export const ConversationParentRetirementChildrenResultSchema = deferredZodSchema(() => z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("ok"),
     children: z.array(z.strictObject({
@@ -152,7 +153,7 @@ export const ConversationParentRetirementChildrenResultSchema = z.discriminatedU
   z.strictObject({ status: z.literal("missing") }),
   /** Built, and holding a different identity than the directory row that named it. */
   z.strictObject({ status: z.literal("identity_mismatch") }),
-]);
+]));
 export type ConversationParentRetirementChildrenResult =
   z.infer<typeof ConversationParentRetirementChildrenResultSchema>;
 

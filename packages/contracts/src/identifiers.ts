@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
-export const IdSchema = z.string().uuid();
+export const IdSchema = deferredZodSchema(() => z.string().uuid());
 export const WorkspaceIdSchema = IdSchema.brand<"WorkspaceId">();
 export type WorkspaceId = z.infer<typeof WorkspaceIdSchema>;
 export const WorkstreamIdSchema = IdSchema.brand<"WorkstreamId">();
@@ -9,7 +10,7 @@ export const HarnessRunIdSchema = IdSchema.brand<"HarnessRunId">();
 export type HarnessRunId = z.infer<typeof HarnessRunIdSchema>;
 export const UserIdSchema = IdSchema.brand<"UserId">();
 export type UserId = z.infer<typeof UserIdSchema>;
-export const SubstreamIdSchema = z.union([z.literal("0"), IdSchema]).brand<"SubstreamId">();
+export const SubstreamIdSchema = deferredZodSchema(() => z.union([z.literal("0"), IdSchema]).brand<"SubstreamId">());
 export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
 /**
  * A reactive web artifact's id.
@@ -30,5 +31,5 @@ export const asUserId = (value: string): UserId => UserIdSchema.parse(value);
 export const asSubstreamId = (value: string): SubstreamId => SubstreamIdSchema.parse(value);
 export const asArtifactId = (value: string): ArtifactId => ArtifactIdSchema.parse(value);
 
-export const ModelPluginIdSchema = z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u);
-export const ActivitySourceBindingKeySchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/u);
+export const ModelPluginIdSchema = deferredZodSchema(() => z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u));
+export const ActivitySourceBindingKeySchema = deferredZodSchema(() => z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/u));

@@ -18,11 +18,11 @@ import { ReadTranscriptRequestSchema } from "./workstream-transcript";
 import { WorkspaceRetirementResultSchema } from "./workspace-retirement";
 
 /** Trusted Access identity supplied by the MCP Worker, never a tool argument. */
-export const EngineeringOperatorSchema = z.strictObject({
+export const EngineeringOperatorSchema = deferredZodSchema(() => z.strictObject({
   subject: z.string().min(1),
   email: z.string().nullable(),
   audience: z.string().min(1),
-});
+}));
 export type EngineeringOperator = z.infer<typeof EngineeringOperatorSchema>;
 
 export const EngineeringPasswordUserInputSchema = deferredZodSchema(() => z.strictObject({
@@ -104,11 +104,11 @@ export type ArchiveEngineeringSidekickResult = z.infer<typeof ArchiveEngineering
 export const AddEngineeringOrgMemberInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema,
   adminUserId: UserIdSchema.describe("An active owner or admin of the Organization to act as (use search_users). The email names them as the one who added the person."),
-  email: AddWorkspaceMemberRequestSchema.shape.email.describe("The address to add. A person with no account gets one their first email sign-in lands on."),
+  email: AddWorkspaceMemberRequestSchema.unwrap().shape.email.describe("The address to add. A person with no account gets one their first email sign-in lands on."),
   role: MemberRoleSchema.default("member").describe("owner needs adminUserId to be an owner."),
 }));
 export type AddEngineeringOrgMemberInput = z.infer<typeof AddEngineeringOrgMemberInputSchema>;
-export const AddEngineeringOrgMemberResultSchema = deferredZodSchema(() => AddWorkspaceMemberResponseSchema.extend({
+export const AddEngineeringOrgMemberResultSchema = deferredZodSchema(() => AddWorkspaceMemberResponseSchema.unwrap().extend({
   region: RegionSchema,
   orgId: WorkspaceIdSchema,
 }));
@@ -251,7 +251,7 @@ export const EngineeringArtifactSchema = deferredZodSchema(() => z.strictObject(
 export type EngineeringArtifact = z.infer<typeof EngineeringArtifactSchema>;
 
 
-export const ListEngineeringWorkspacesInputSchema = z.strictObject({});
+export const ListEngineeringWorkspacesInputSchema = deferredZodSchema(() => z.strictObject({}));
 export type ListEngineeringWorkspacesInput = z.infer<typeof ListEngineeringWorkspacesInputSchema>;
 
 export const ListEngineeringWorkspacesResultSchema = deferredZodSchema(() => z.strictObject({
@@ -490,7 +490,7 @@ export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
  * its place, and the console's own log never records the SQL it ran.
  */
 export const ENGINEERING_D1_DATABASES = ["DB", "TELEMETRY_DB", "USAGE_DB", "PLATFORM_DB", "MESSAGE_ISSUES_DB"] as const;
-export const EngineeringD1DatabaseSchema = z.enum(ENGINEERING_D1_DATABASES);
+export const EngineeringD1DatabaseSchema = deferredZodSchema(() => z.enum(ENGINEERING_D1_DATABASES));
 export type EngineeringD1Database = z.infer<typeof EngineeringD1DatabaseSchema>;
 
 export const D1SqlInspectionInputSchema = deferredZodSchema(() => z.strictObject({
@@ -510,18 +510,18 @@ export const InspectEngineeringOrgSettingsInputSchema = z.strictObject({ orgId: 
 export const UpdateEngineeringOrgSettingsInputSchema = InspectEngineeringOrgSettingsInputSchema.extend({
   modelSelectorVisible: z.boolean(),
 });
-export const EngineeringOrgSettingsResultSchema = z.strictObject({
+export const EngineeringOrgSettingsResultSchema = deferredZodSchema(() => z.strictObject({
   region: RegionSchema,
   orgId: WorkspaceIdSchema,
   modelSelectorVisible: z.boolean(),
-});
+}));
 export type InspectEngineeringOrgSettingsInput = z.infer<typeof InspectEngineeringOrgSettingsInputSchema>;
 export type UpdateEngineeringOrgSettingsInput = z.infer<typeof UpdateEngineeringOrgSettingsInputSchema>;
 export type EngineeringOrgSettingsResult = z.infer<typeof EngineeringOrgSettingsResultSchema>;
 
 export const InspectEngineeringUsageInputSchema = z.strictObject({ orgId: WorkspaceIdSchema });
 export const ChangeEngineeringPlanInputSchema = InspectEngineeringUsageInputSchema.extend({ plan: PlanIdSchema });
-export const EngineeringUsageResultSchema = z.strictObject({ region: RegionSchema, orgId: WorkspaceIdSchema, usage: OrganizationUsageSchema });
+export const EngineeringUsageResultSchema = deferredZodSchema(() => z.strictObject({ region: RegionSchema, orgId: WorkspaceIdSchema, usage: OrganizationUsageSchema }));
 export type InspectEngineeringUsageInput = z.infer<typeof InspectEngineeringUsageInputSchema>;
 export type ChangeEngineeringPlanInput = z.infer<typeof ChangeEngineeringPlanInputSchema>;
 export type EngineeringUsageResult = z.infer<typeof EngineeringUsageResultSchema>;
@@ -534,7 +534,7 @@ export const InspectEngineeringCreditsInputSchema = z.strictObject({
   operationId: z.uuid().optional().describe('Look up only the grant for this previously accepted operation, including legacy grants without an expiration. Never issues credit; an empty grants list means no matching Stripe receipt was found.'),
 });
 export const GrantEngineeringCreditInputSchema = GrantOverageCreditSchema.extend({ orgId: WorkspaceIdSchema });
-export const ExpireEngineeringCreditInputSchema = z.strictObject({ orgId: WorkspaceIdSchema, grantId: z.string().startsWith("credgr_") });
+export const ExpireEngineeringCreditInputSchema = deferredZodSchema(() => z.strictObject({ orgId: WorkspaceIdSchema, grantId: z.string().startsWith("credgr_") }));
 export type GrantEngineeringCreditInput = z.infer<typeof GrantEngineeringCreditInputSchema>;
 export type ExpireEngineeringCreditInput = z.infer<typeof ExpireEngineeringCreditInputSchema>;
 

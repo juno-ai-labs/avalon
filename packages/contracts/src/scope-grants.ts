@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /** Guest is a workspace relationship, never a different kind of user identity. */
-export const WorkspaceAccessClassSchema = z.enum(["member", "guest"]);
+export const WorkspaceAccessClassSchema = deferredZodSchema(() => z.enum(["member", "guest"]));
 export type WorkspaceAccessClass = z.infer<typeof WorkspaceAccessClassSchema>;
 
 export const WorkspaceRelationshipSchema = z.strictObject({
@@ -16,10 +17,10 @@ export const WorkspaceRelationshipSchema = z.strictObject({
 });
 export type WorkspaceRelationship = z.infer<typeof WorkspaceRelationshipSchema>;
 
-export const PromoteWorkspaceGuestSchema = z.strictObject({
+export const PromoteWorkspaceGuestSchema = deferredZodSchema(() => z.strictObject({
   incarnation: z.string().min(1),
   expectedRevision: z.number().int().positive(),
-});
+}));
 
 export const ScopeGrantTargetSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("workstream"), workspaceId: WorkspaceIdSchema, parentId: IdSchema }),
@@ -28,18 +29,18 @@ export const ScopeGrantTargetSchema = z.discriminatedUnion("kind", [
 ]);
 export type ScopeGrantTarget = z.infer<typeof ScopeGrantTargetSchema>;
 
-export const ChildAudienceSchema = z.enum(["restricted", "inherits_workstream"]);
+export const ChildAudienceSchema = deferredZodSchema(() => z.enum(["restricted", "inherits_workstream"]));
 export type ChildAudience = z.infer<typeof ChildAudienceSchema>;
 
 /** A revocation retains its revision; deleting a row would allow stale delivery to resurrect it. */
-export const ScopeGrantSchema = z.strictObject({
+export const ScopeGrantSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   userId: UserIdSchema,
   target: ScopeGrantTargetSchema,
   membershipIncarnation: z.string().min(1).nullable().default(null),
   active: z.boolean(),
   revision: z.number().int().positive(),
-});
+}));
 export type ScopeGrant = z.infer<typeof ScopeGrantSchema>;
 
 export const ScopeGrantMutationSchema = z.strictObject({
@@ -60,31 +61,31 @@ export const ParticipantGrantMutationSchema = ScopeGrantMutationSchema.omit({ ex
 export type ParticipantGrantMutation = z.infer<typeof ParticipantGrantMutationSchema>;
 
 /** One conversation admission, retaining one durable operation receipt per person. */
-export const ParticipantAdmissionBatchSchema = z.strictObject({
+export const ParticipantAdmissionBatchSchema = deferredZodSchema(() => z.strictObject({
   target: ScopeGrantTargetSchema.options[1],
   actorUserId: UserIdSchema,
   participants: z.array(z.strictObject({ userId: UserIdSchema, operationId: IdSchema })),
   participationReason: z.literal("message").optional(),
-});
+}));
 
 
-export const ScopeGrantMutationResultSchema = z.discriminatedUnion("status", [
+export const ScopeGrantMutationResultSchema = deferredZodSchema(() => z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("denied"), reason: z.enum(["sharing_required", "recipient_relationship_required", "migration_pending", "participant_required", "inherited_access"]) }),
   z.strictObject({ status: z.literal("committed"), grant: ScopeGrantSchema }),
   z.strictObject({ status: z.literal("conflict"), current: ScopeGrantSchema.nullable() }),
-]);
+]));
 export type ScopeGrantMutationResult = z.infer<typeof ScopeGrantMutationResultSchema>;
 
-export const ScopeAccessRequestSchema = z.strictObject({
+export const ScopeAccessRequestSchema = deferredZodSchema(() => z.strictObject({
   userId: UserIdSchema,
   target: ScopeGrantTargetSchema,
-});
+}));
 export type ScopeAccessRequest = z.infer<typeof ScopeAccessRequestSchema>;
 
-export const ScopeAccessResultSchema = z.discriminatedUnion("allowed", [
+export const ScopeAccessResultSchema = deferredZodSchema(() => z.discriminatedUnion("allowed", [
   z.strictObject({ allowed: z.literal(false), reason: z.enum(["relationship_required", "not_found", "not_ready", "grant_required"]) }),
   z.strictObject({ allowed: z.literal(true), writable: z.boolean(), grantIds: z.array(IdSchema), workspaceMemberAccess: z.boolean() }),
-]);
+]));
 export type ScopeAccessResult = z.infer<typeof ScopeAccessResultSchema>;
 
 /** ECMAScript's time-value range, the point past which an instant has no `Date` and no ISO string. */
@@ -109,7 +110,7 @@ export const CreateScopeInvitationsSchema = z.strictObject({
 { message: "An invitation operation belongs to one workstream" });
 export type CreateScopeInvitations = z.infer<typeof CreateScopeInvitationsSchema>;
 
-export const ScopeInvitationSummarySchema = z.strictObject({
+export const ScopeInvitationSummarySchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   email: z.string().email(),
   targets: z.array(ScopeGrantTargetSchema),
@@ -119,60 +120,60 @@ export const ScopeInvitationSummarySchema = z.strictObject({
   status: z.enum(["pending", "accepted", "revoked"]),
   revision: z.number().int().positive(),
   acceptedByUserId: UserIdSchema.nullable(),
-});
+}));
 export type ScopeInvitationSummary = z.infer<typeof ScopeInvitationSummarySchema>;
 
 /** Server-internal: every address in `emails` is already verified for `userId`. */
-export const ClaimScopeInvitationsSchema = z.strictObject({
+export const ClaimScopeInvitationsSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, userId: UserIdSchema,
   emails: z.array(z.string().trim().email().transform((email) => email.toLowerCase())).min(1),
-});
+}));
 
 export const RevokeScopeInvitationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
   actorUserId: UserIdSchema, expectedRevision: z.number().int().positive(),
 });
-export const ScopeInvitationResultSchema = z.discriminatedUnion("status", [
+export const ScopeInvitationResultSchema = deferredZodSchema(() => z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("created"), invitations: z.array(ScopeInvitationSummarySchema) }),
   z.strictObject({ status: z.literal("revoked"), invitation: ScopeInvitationSummarySchema }),
   z.strictObject({ status: z.literal("denied"), reason: z.enum([
     "sharing_required", "invitation_unavailable", "relationship_required", "operation_conflict", "revision_conflict", "configuration_required", "migration_pending", "scope_changed",
   ]) }),
-]);
+]));
 export type ScopeInvitationResult = z.infer<typeof ScopeInvitationResultSchema>;
 
 
-export const ListScopeInvitationsSchema = z.strictObject({
+export const ListScopeInvitationsSchema = deferredZodSchema(() => z.strictObject({
   actorUserId: UserIdSchema, target: ScopeGrantTargetSchema,
-});
-export const ScopeInvitationsListSchema = z.discriminatedUnion("status", [
+}));
+export const ScopeInvitationsListSchema = deferredZodSchema(() => z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("ready"), invitations: z.array(ScopeInvitationSummarySchema) }),
   z.strictObject({ status: z.literal("denied"), reason: z.literal("sharing_required") }),
-]);
+]));
 
 
-export const ScopeSharingOptionsRequestSchema = z.strictObject({
+export const ScopeSharingOptionsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, actorUserId: UserIdSchema,
-});
-export const ScopeSharingOptionsSchema = z.strictObject({
+}));
+export const ScopeSharingOptionsSchema = deferredZodSchema(() => z.strictObject({
   scopes: z.array(z.strictObject({ target: ScopeGrantTargetSchema, title: z.string() })),
   completeWorkstreamTargets: z.array(ScopeGrantTargetSchema).nullable(),
-});
+}));
 
 
-export const ScopeGrantManagementRequestSchema = z.strictObject({ actorUserId: UserIdSchema, target: ScopeGrantTargetSchema });
-export const ManagedScopeGrantSchema = z.strictObject({ grant: ScopeGrantSchema, name: z.string().nullable(), email: z.string().nullable() });
-export const ManagedScopeGrantsSchema = z.discriminatedUnion("status", [
+export const ScopeGrantManagementRequestSchema = deferredZodSchema(() => z.strictObject({ actorUserId: UserIdSchema, target: ScopeGrantTargetSchema }));
+export const ManagedScopeGrantSchema = deferredZodSchema(() => z.strictObject({ grant: ScopeGrantSchema, name: z.string().nullable(), email: z.string().nullable() }));
+export const ManagedScopeGrantsSchema = deferredZodSchema(() => z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("ready"), grants: z.array(ManagedScopeGrantSchema) }),
   z.strictObject({ status: z.literal("denied"), reason: z.literal("sharing_required") }),
-]);
+]));
 export const RevokeScopeGrantSchema = ScopeGrantMutationSchema.omit({ actorUserId: true, active: true, participationReason: true });
 
 /** Trusted connector ingress, never an end-user sharing command. */
-export const ConnectorParticipantAdmissionSchema = z.strictObject({
+export const ConnectorParticipantAdmissionSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
   parentId: IdSchema,
   eventId: z.string().min(1),
   userIds: z.array(UserIdSchema),
   addedByUserId: UserIdSchema.nullable(),
-});
+}));

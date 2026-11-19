@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { SITE_MANIFEST_MIME_TYPE } from "./artifacts";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * How long a derivative conversion may hold its claim before it is abandoned.
@@ -218,25 +219,25 @@ export function classifyAttachmentKind(input: {
   return extension ? (EXTENSION_KINDS[extension] ?? "other") : "other";
 }
 
-const CanonicalUuidSchema = z.string().uuid().refine((value) => value === value.toLowerCase(), {
+const CanonicalUuidSchema = deferredZodSchema(() => z.string().uuid().refine((value) => value === value.toLowerCase(), {
   message: "UUIDs must use canonical lowercase form",
-});
+}));
 const CursorSchema = z.string().min(1).max(2_048);
 const MimeTypeSchema = z.string().max(160).nullable();
 const NonNegativeIntegerSchema = z.number().int().nonnegative();
 
-export const ContentModeSchema = z.enum(["read", "view", "unsupported"]);
+export const ContentModeSchema = deferredZodSchema(() => z.enum(["read", "view", "unsupported"]));
 export type ContentMode = z.infer<typeof ContentModeSchema>;
-export const DerivativeStatusSchema = z.enum([
+export const DerivativeStatusSchema = deferredZodSchema(() => z.enum([
   "pending",
   "processing",
   "ready",
   "failed",
   "unsupported",
-]).nullable();
+]).nullable());
 export type DerivativeStatus = z.infer<typeof DerivativeStatusSchema>;
 
-export const AttachmentManifestEntrySchema = z.strictObject({
+export const AttachmentManifestEntrySchema = deferredZodSchema(() => z.strictObject({
   resourceId: CanonicalUuidSchema,
   fileName: z.string().max(300),
   mimeType: z.string().max(160),
@@ -246,22 +247,22 @@ export const AttachmentManifestEntrySchema = z.strictObject({
   derivativeStatus: DerivativeStatusSchema,
   errorCode: z.string().min(1).max(160).nullable(),
   inlined: z.boolean(),
-});
+}));
 export type AttachmentManifestEntry = z.infer<typeof AttachmentManifestEntrySchema>;
 
-export const ResourceVersionSchema = z.strictObject({
+export const ResourceVersionSchema = deferredZodSchema(() => z.strictObject({
   sha256: z.string().min(1).max(128),
   extractorVersion: z.string().min(1).max(160),
-});
+}));
 export type ResourceVersion = z.infer<typeof ResourceVersionSchema>;
 
-export const CharacterRangeSchema = z.strictObject({
+export const CharacterRangeSchema = deferredZodSchema(() => z.strictObject({
   start: NonNegativeIntegerSchema,
   end: NonNegativeIntegerSchema,
-}).refine((range) => range.end >= range.start, "Range end must not precede its start");
+}).refine((range) => range.end >= range.start, "Range end must not precede its start"));
 export type CharacterRange = z.infer<typeof CharacterRangeSchema>;
 
-export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
+export const SuggestedAttachmentToolCallSchema = deferredZodSchema(() => z.discriminatedUnion("tool", [
   // `startCharacter` is no longer suggested, but receipts written while it was
   // carry it in their stored `errorJson`, and an invalid field discards the
   // whole failure detail on reprojection, `resourceId` included.
@@ -303,7 +304,7 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
     tool: z.literal("import_resource"),
     arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
   }),
-]);
+]));
 export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentToolCallSchema>;
 
 /**
@@ -371,7 +372,7 @@ export function parseStoredSuggestedAttachmentToolCall(
  * the executor's parse. Both descriptions say to send a returned cursor by
  * itself, and the messages here repeat it in the rejection.
  */
-export const AttachmentListResourcesArgumentsSchema = z.strictObject({
+export const AttachmentListResourcesArgumentsSchema = deferredZodSchema(() => z.strictObject({
   limit: z.number().int().min(1).max(50)
     .describe("Maximum resources to return in one page. Defaults to 25. Set it on the first call; list_resources_next retains it automatically.")
     .optional(),
@@ -391,8 +392,8 @@ export const AttachmentListResourcesArgumentsSchema = z.strictObject({
       message: "Send a returned cursor by itself; limit and attachmentKind belong to the first page and are carried by the cursor",
     });
   }
-});
-export const AttachmentReadResourceArgumentsSchema = z.strictObject({
+}));
+export const AttachmentReadResourceArgumentsSchema = deferredZodSchema(() => z.strictObject({
   resourceId: CanonicalUuidSchema
     .describe("The resource to start reading, as a Rally `resourceId` from list_resources or another known reference, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Its `slug` is a short alias for writing about the resource and is not accepted here.")
     .optional(),
@@ -418,8 +419,8 @@ export const AttachmentReadResourceArgumentsSchema = z.strictObject({
       message: "startCharacter belongs with resourceId; a cursor already carries its position",
     });
   }
-});
-export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
+}));
+export const AttachmentSearchResourceArgumentsSchema = deferredZodSchema(() => z.strictObject({
   resourceId: CanonicalUuidSchema
     .describe("The one resource to search inside, as a Rally `resourceId` from list_resources or another known reference. This searches that resource alone, never the whole thread, so searching several means one call each."),
   query: z.string().min(1).max(1_000)
@@ -430,8 +431,8 @@ export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
   maxPassageCharacters: z.number().int().min(500).max(4_000)
     .describe("Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or pass the passage's readPageId to read_resource_next to read further.")
     .optional(),
-});
-export const AttachmentViewResourceArgumentsSchema = z.strictObject({
+}));
+export const AttachmentViewResourceArgumentsSchema = deferredZodSchema(() => z.strictObject({
   resourceIds: z.array(CanonicalUuidSchema).min(1).max(8)
     .describe("The image resources to look at, as Rally `resourceId` values, one to eight of them and each at most once. A text, PDF, document, spreadsheet, or presentation resource is not viewable and comes back with an exact read suggestion instead."),
   maxDimension: z.number().int().min(64).max(2_048)
@@ -441,8 +442,8 @@ export const AttachmentViewResourceArgumentsSchema = z.strictObject({
   if (new Set(value.resourceIds).size !== value.resourceIds.length) {
     context.addIssue({ code: "custom", message: "resourceIds must be unique", path: ["resourceIds"] });
   }
-});
-export const AttachmentSummarizeResourceArgumentsSchema = z.strictObject({
+}));
+export const AttachmentSummarizeResourceArgumentsSchema = deferredZodSchema(() => z.strictObject({
   resourceId: CanonicalUuidSchema
     .describe("The resource to summarize, as a Rally `resourceId` from list_resources or another known reference."),
   prompt: z.string().min(1).max(2_000)
@@ -451,7 +452,7 @@ export const AttachmentSummarizeResourceArgumentsSchema = z.strictObject({
   maxOutputCharacters: z.number().int().min(2_000).max(20_000)
     .describe("Maximum characters in the summary. Defaults to 12,000. The result says whether it covered the whole resource or only part of it, so read that rather than assuming a longer limit covered more.")
     .optional(),
-});
+}));
 
 export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {
   listResources: AttachmentListResourcesArgumentsSchema,
@@ -470,7 +471,7 @@ export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {
  */
 export const ResourceSlugSchema = z.string().min(3).max(80);
 
-const ResourceListItemSchema = z.strictObject({
+const ResourceListItemSchema = deferredZodSchema(() => z.strictObject({
   resourceId: CanonicalUuidSchema,
   /**
    * The resource's short alias, cheaper for a model to read back and to write
@@ -490,9 +491,9 @@ const ResourceListItemSchema = z.strictObject({
   attachmentKind: AttachmentKindSchema,
   contentMode: ContentModeSchema,
   derivativeStatus: DerivativeStatusSchema,
-});
+}));
 
-export const WorkstreamListResourcesOutputSchema = z.strictObject({
+export const WorkstreamListResourcesOutputSchema = deferredZodSchema(() => z.strictObject({
   workstreamId: CanonicalUuidSchema,
   asOf: z.string().datetime({ offset: true }),
   totalVisibleResources: NonNegativeIntegerSchema,
@@ -500,7 +501,7 @@ export const WorkstreamListResourcesOutputSchema = z.strictObject({
   filters: z.strictObject({ attachmentKind: AttachmentKindSchema.nullable() }),
   items: z.array(ResourceListItemSchema),
   nextCursor: CursorSchema.nullable(),
-});
+}));
 
 export const WorkstreamReadResourceOutputSchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
@@ -524,7 +525,7 @@ export const WorkstreamReadResourceOutputSchema = z.strictObject({
   }
 });
 
-export const WorkstreamSearchResourceOutputSchema = z.strictObject({
+export const WorkstreamSearchResourceOutputSchema = deferredZodSchema(() => z.strictObject({
   resourceId: CanonicalUuidSchema,
   title: z.string(),
   sourceMimeType: MimeTypeSchema,
@@ -541,17 +542,17 @@ export const WorkstreamSearchResourceOutputSchema = z.strictObject({
     readCursor: CursorSchema,
   })).max(5),
   truncated: z.boolean(),
-});
+}));
 
-const ViewReasonCodeSchema = z.enum([
+const ViewReasonCodeSchema = deferredZodSchema(() => z.enum([
   "resource_not_found",
   "resource_processing",
   "resource_conversion_failed",
   "resource_format_unsupported",
   "resource_tool_mismatch",
-]).nullable();
+]).nullable());
 
-export const WorkstreamViewResourceOutputSchema = z.strictObject({
+export const WorkstreamViewResourceOutputSchema = deferredZodSchema(() => z.strictObject({
   requested: z.number().int().min(1).max(8),
   returned: z.number().int().min(0).max(8),
   items: z.array(z.strictObject({
@@ -570,9 +571,9 @@ export const WorkstreamViewResourceOutputSchema = z.strictObject({
     suggestedCall: SuggestedAttachmentToolCallSchema.nullable(),
     visualPartIndex: NonNegativeIntegerSchema.nullable(),
   })).min(1).max(8),
-});
+}));
 
-export const WorkstreamSummarizeResourceOutputSchema = z.strictObject({
+export const WorkstreamSummarizeResourceOutputSchema = deferredZodSchema(() => z.strictObject({
   resourceId: CanonicalUuidSchema,
   title: z.string(),
   sourceMimeType: MimeTypeSchema,
@@ -592,7 +593,7 @@ export const WorkstreamSummarizeResourceOutputSchema = z.strictObject({
     consideredCharacters: NonNegativeIntegerSchema,
     limitations: z.array(z.string()).max(20),
   }),
-});
+}));
 
 export type AttachmentListResourcesArguments = z.infer<typeof AttachmentListResourcesArgumentsSchema>;
 export type AttachmentReadResourceArguments = z.infer<typeof AttachmentReadResourceArgumentsSchema>;
