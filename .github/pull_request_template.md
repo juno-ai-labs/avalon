@@ -1,6 +1,11 @@
 <!--
 The full specification is docs/pull-requests.md. Read it before filling this in.
 
+This repository is public. Do not put personal information, device
+identifiers, real resource IDs, or secrets anywhere in this pull request, its
+commits, or its screenshots (tracked Wrangler config excepted): see
+docs/pull-requests.md#this-repository-is-public.
+
 Open this pull request ready for review — this repository does not use draft
 pull requests. If the change isn't ready for a reviewer, leave it on the branch.
 
