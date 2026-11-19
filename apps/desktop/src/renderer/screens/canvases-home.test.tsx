@@ -19,9 +19,7 @@ vi.mock('../lib/collaboration-session', () => ({
 }));
 
 const elsewhere = vi.hoisted(() => ({ items: [] as unknown[] }));
-const openWorkspaceCanvas = vi.hoisted(() => vi.fn());
 vi.mock('../lib/shared-canvases', () => ({ useOtherOrganizationCanvases: () => elsewhere.items }));
-vi.mock('../lib/app-session', () => ({ useOptionalAppSession: () => ({ openWorkspaceCanvas }) }));
 
 const ME = asUserId('00000000-0000-7000-8000-0000000000a1');
 const MAYA = asUserId('00000000-0000-7000-8000-0000000000a2');
@@ -54,7 +52,6 @@ function renderHome(client: QueryClient): void {
 beforeEach(() => {
   shell.guest = false;
   elsewhere.items = [];
-  openWorkspaceCanvas.mockReset();
   createCanvas.mockReset().mockResolvedValue({ canvasId: '00000000-0000-7000-8000-0000000000c9', turnId: null });
   getWorkspaceMembers.mockReset().mockResolvedValue([
     { id: ME, name: 'Adam Jones', email: 'adam@example.test', timezone: 'UTC' },
@@ -64,18 +61,18 @@ beforeEach(() => {
 });
 
 describe('CanvasesHomeScreen', () => {
-  it("lists a Canvas shared from another Organization by date, names that Organization, and opens it there", () => {
+  it("lists a Canvas shared from another Organization by date, names that Organization, and opens it here", () => {
     const organization = { id: '00000000-0000-7000-8000-0000000000e1', name: 'Acme', region: 'global' as const };
     elsewhere.items = [{ organization, canvas: { id: '00000000-0000-7000-8000-0000000000d1', title: 'Partner roadmap', updatedAt: '2026-11-08T09:00:00.000Z' } }];
     renderHome(clientWith([canvas('00000000-0000-7000-8000-0000000000c1', 'Our plan')]));
     const recent = screen.getByRole('region', { name: 'Recent' });
     // The newer one first, whichever Organization it is from.
     expect(within(recent).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Partner roadmap', 'Our plan']);
-    const shared = within(recent).getByRole('button', { name: 'Partner roadmap' });
+    const shared = within(recent).getByRole('link', { name: 'Partner roadmap' });
     expect(shared).toHaveAccessibleDescription('Shared from Acme');
     expect(shared.closest('li')!.querySelector('.canvas-card-organization')).toHaveTextContent('A');
-    fireEvent.click(shared);
-    expect(openWorkspaceCanvas).toHaveBeenCalledWith({ region: 'global', workspaceId: organization.id, canvasId: '00000000-0000-7000-8000-0000000000d1' });
+    // In place, on that Organization's own client: the one in front stays in front.
+    expect(shared).toHaveAttribute('href', `/organizations/global/${organization.id}/canvases/00000000-0000-7000-8000-0000000000d1`);
 
     fireEvent.click(screen.getByRole('button', { name: 'Shared with me' }));
     expect(within(recent).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Partner roadmap']);

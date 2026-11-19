@@ -54,6 +54,8 @@ import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/gui
 import { ErrorNotice } from './components/primitives';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { SidekicksLibraryRoute } from './screens/sidekicks-library';
+import { OtherOrganizationCanvasScreen } from './screens/other-organization-canvas';
+import { ORGANIZATION_CANVAS_ROUTE } from './lib/organization-scope';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { SidekickMentionProvider } from './lib/sidekick-mentions';
 import { useDocumentTitle } from './lib/document-title';
@@ -404,6 +406,8 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
             <Route element={<ActivityHomeScreen />} path="/activity" />
             <Route element={<CanvasesHomeScreen />} path="/canvases" />
             <Route element={<CanvasScreen />} path="/canvases/:id" />
+            {/* A Canvas shared from another Organization, opened without switching to it. */}
+            <Route element={<OtherOrganizationCanvasScreen />} path={ORGANIZATION_CANVAS_ROUTE} />
             <Route element={<TemplateStartScreen />} path="/marketplace/:slug" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksLibraryRoute />} path="/sidekicks" />

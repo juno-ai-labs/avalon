@@ -690,7 +690,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   }, [shownDirectory?.pins, open, sendHome, rememberedSite]);
   const createFromDashboard = useCallback(() => { setOpening('create'); sendHome({ type: 'create' }); }, [sendHome]);
   const marketplaceFromDashboard = useCallback(() => { setOpening('create'); sendHome({ type: 'create', marketplace: true }); }, [sendHome]);
-  // Home switches Organization and opens it there, as for a notification's link.
+  // Home opens it in place, on its own Organization's client, without switching.
   const openElsewhereFromDashboard = useCallback((canvas: SharedElsewhereSummary) => {
     setOpening(canvas.id);
     sendHome({ type: 'open-elsewhere', region: canvas.organization.region, workspaceId: canvas.organization.id, canvasId: canvas.id });

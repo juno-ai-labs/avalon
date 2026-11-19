@@ -17,7 +17,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceAttention, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
-import { canvasDeepLink, type CanvasLinkTarget } from '@rally/contracts/links';
 import {
   workspaceTargetsEqual,
   type WorkspaceTarget,
@@ -36,6 +35,7 @@ import { CollaborationSessionProvider, shellCapabilities, type ConnectorSetupCap
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { workspaceFromSession } from './session-workspace';
+import type { OrganizationSession, OrganizationTarget } from './organization-scope';
 import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
 import { canvasLinkRoute } from './canvases';
@@ -138,10 +138,12 @@ export interface AppSessionValue {
    */
   getWorkspaceAttention: (input: { region: Region; workspaceId: string }) => Promise<WorkspaceAttention>;
   /**
-   * Opens a Canvas in any of this person's Organizations, switching to it
-   * first when it is not the one in front, as a link to it would.
+   * A client for another of this person's Organizations that leaves the active
+   * one in front (`organization-scope.tsx`): on the Mac from that
+   * Organization's stored credential, minted and stored if this device has
+   * none; in the browser through the cookie adapter's path for it.
    */
-  openWorkspaceCanvas: (target: CanvasLinkTarget) => void;
+  openOrganizationSession: (target: OrganizationTarget) => Promise<OrganizationSession>;
   activateWorkspace: (
     region: Region,
     workspaceId: string,
@@ -204,6 +206,8 @@ export type AppSessionDesktopBridge = Pick<
   | 'exchangeDesktopTicket'
   | 'getOnboardingState'
   | 'getWorkspaceAttention'
+  | 'getWorkspaceSession'
+  | 'refreshWorkspaceSession'
   | 'getAccountOnboarding'
   | 'updateAccountOnboarding'
   | 'getOrganizationNameSuggestion'
@@ -498,12 +502,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     (input: { region: Region; workspaceId: string }) => bridge.getWorkspaceAttention(input),
     [bridge],
   );
-  // Set by the deep-link queue below, so an in-app open takes the same path,
-  // in the same order, as a link from outside the window.
-  const openDeepLinkRef = useRef<((navigation: DesktopDeepLinkNavigation) => void) | null>(null);
-  const openWorkspaceCanvas = useCallback((target: CanvasLinkTarget) => {
-    openDeepLinkRef.current?.({ url: canvasDeepLink(target), entrypoint: 'in_app_link' });
-  }, []);
+  const openOrganizationSession = useCallback(async (target: OrganizationTarget): Promise<OrganizationSession> => {
+    const opened = await bridge.getWorkspaceSession(target);
+    const client = new RallyApi(opened.apiBaseUrl, opened);
+    // Its own credential renews on its own: the active one is never touched.
+    client.setCredentialRenewal(() => bridge.refreshWorkspaceSession(target));
+    return { api: client, session: opened };
+  }, [bridge]);
 
   /**
    * Hand a sign-in's outcome to the action waiting on that attempt. A callback
@@ -1373,7 +1378,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (pendingDrained) enqueue(navigation);
       else liveDeepLinks.push(navigation);
     };
-    openDeepLinkRef.current = deliver;
     const unsubscribe = bridge.onDeepLink(deliver);
     void bridge.consumePendingDeepLinks()
       .then((deepLinks) => {
@@ -1389,7 +1393,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       });
     return () => {
       active = false;
-      if (openDeepLinkRef.current === deliver) openDeepLinkRef.current = null;
       unsubscribe();
     };
   }, [applySession, bridge, queryClient, reconnectAccountIdentity, runtime, settleAccountSignIn]);
@@ -1471,7 +1474,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       },
       getOnboardingState,
       getWorkspaceAttention,
-      openWorkspaceCanvas,
+      openOrganizationSession,
       activateWorkspace,
       acceptInvitation,
       declineInvitation,
@@ -1512,7 +1515,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       finishWorkspaceSetup,
       getOnboardingState,
       getWorkspaceAttention,
-      openWorkspaceCanvas,
+      openOrganizationSession,
       pendingInvitation,
       pendingAccessRequestId,
       pendingConnectorOAuth,

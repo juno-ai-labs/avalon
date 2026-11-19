@@ -478,6 +478,13 @@ export interface RallyDesktopBridge {
   getOrganizationNameSuggestion: () => Promise<OrganizationNameSuggestion>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
   getWorkspaceAttention: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceAttention>;
+  /**
+   * Another Organization's session without making it active, for a screen
+   * that shows one of its Canvases in place (`docs/canvas-share-federation.md`).
+   */
+  getWorkspaceSession: (input: { region: RallyRegion; workspaceId: string }) => Promise<DesktopSession>;
+  /** Renews a session `getWorkspaceSession` handed out; the active one is untouched. */
+  refreshWorkspaceSession: (input: { region: RallyRegion; workspaceId: string }) => Promise<DesktopSession>;
   leaveWorkspace: (input: {
     expectedOutcome: WorkspaceDepartureOutcome;
     region: RallyRegion;

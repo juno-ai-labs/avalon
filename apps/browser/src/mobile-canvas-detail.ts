@@ -1,15 +1,15 @@
 import type { CanvasDetail } from '@rally/contracts/canvases';
 import { useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
+import { useCollaborationSession } from '../../desktop/src/renderer/lib/collaboration-session';
 import { canvasDetailQueryKey, useCanvasList } from '../../desktop/src/renderer/lib/canvases';
-import { useWorkspaceSocket } from '../../desktop/src/renderer/lib/workspace-socket';
+import { useOptionalWorkspaceSocket } from '../../desktop/src/renderer/lib/workspace-socket';
 
 /** One owner invalidates detail queries, even when a pin and its view both observe them. */
 export function useMobileCanvasUpdates() {
   const queryClient = useQueryClient();
   const rows = useCanvasList();
-  const { sidebarConnect } = useWorkspaceSocket();
+  const sidebarConnect = useOptionalWorkspaceSocket()?.sidebarConnect;
   const previous = useRef<{ rows: Map<string, string>; generation: number | undefined } | null>(null);
   useEffect(() => {
     if (!rows) return;
@@ -37,6 +37,7 @@ export function useMobileCanvasUpdates() {
 
 /** Publication rows discover new artifacts; resource heads advance existing versions. */
 export function useMobileCanvasDetail(id: string, active = true) {
-  const { api } = useAppSession();
+  // The collaboration session, so a Canvas from another Organization reads on that Organization's client.
+  const { api } = useCollaborationSession();
   return useQuery({ queryKey: canvasDetailQueryKey(id), queryFn: ({ signal }) => api!.getCanvas(id, signal), enabled: Boolean(api && active), staleTime: Infinity });
 }

@@ -22,7 +22,7 @@ type Props = {
   topInset: number;
   bottomInset: number;
   open: (id: string) => void;
-  /** Opens a Canvas from another Organization there, switching to it. */
+  /** Opens a Canvas from another Organization in place, without switching to it. */
   openElsewhere: (canvas: SharedElsewhereSummary) => void;
   create: () => void;
   /** Opens the Marketplace, the create flow on its templates, in Home's page. */

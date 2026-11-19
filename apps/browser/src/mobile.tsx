@@ -2,13 +2,13 @@ import { AppErrorBoundary } from '@rally/ui/components/app-error-boundary';
 import { inPlaceHash } from './session';
 import { PinPlacementError, writeMobilePins } from './mobile-pins';
 import { MobileWrites, uploadMobileReport } from './mobile-writes';
-import { canvasCanonicalUrl, parseLinkTarget } from '@rally/contracts/links';
+import { parseLinkTarget } from '@rally/contracts/links';
 import { ConfiguredRegionSchema } from '@rally/contracts/regions';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
 import { canvasNeedsConversation, mobileStorage, rememberMobileWorkspace } from './mobile-session';
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
+import { HashRouter, matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles, Store } from 'lucide-react';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { CANVAS_FILTERS, ELSEWHERE_CANVAS_FACTS, canvasFilterFacts, matchesCanvasFilter, type CanvasFilter, type CanvasFilterFacts } from '@rally/contracts/canvas-filters';
@@ -16,6 +16,8 @@ import { ARTIFACT_PICKER_CAPABILITY, CONNECTOR_AUTH_SESSION_CAPABILITY, MOBILE_C
 import { GUEST_SETTINGS_SECTIONS } from '../../desktop/src/common/settings';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
+import { useCollaborationSession } from '../../desktop/src/renderer/lib/collaboration-session';
+import { ORGANIZATION_CANVAS_ROUTE, OrganizationScope, organizationCanvasRoute, useOrganizationSession, type OrganizationTarget } from '../../desktop/src/renderer/lib/organization-scope';
 import { LocalCacheScopeProvider } from '../../desktop/src/renderer/lib/local-cache-scope';
 import { localCacheScope } from '../../desktop/src/renderer/lib/local-cache';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from '../../desktop/src/renderer/lib/workspace-socket';
@@ -83,7 +85,21 @@ function MobileContent(): React.JSX.Element {
   useEffect(() => {
     if (session?.workspace) rememberMobileWorkspace(mobileStorage(), session.user.id, session.workspace);
   }, [session?.user.id, session?.workspace]);
-  const canvasId = openCanvasId(location.pathname);
+  // A Canvas shared from another Organization opens here too, on a route that
+  // names its Organization; the one in front stays in front.
+  const elsewhereRoute = matchPath(ORGANIZATION_CANVAS_ROUTE, location.pathname)?.params;
+  const elsewhereRegion = ConfiguredRegionSchema.safeParse(elsewhereRoute?.region);
+  const canvasId = openCanvasId(location.pathname) ?? (elsewhereRegion.success ? elsewhereRoute?.id ?? null : null);
+  // Which Organization each Canvas opened from elsewhere belongs to, so the
+  // shell's commands, which name a Canvas by id alone, keep it there.
+  const elsewhereTargets = useRef(new Map<string, OrganizationTarget>());
+  if (canvasId && elsewhereRegion.success && elsewhereRoute?.workspaceId) {
+    elsewhereTargets.current.set(canvasId, { region: elsewhereRegion.data, workspaceId: elsewhereRoute.workspaceId });
+  }
+  const canvasPath = useCallback((id: string) => {
+    const target = elsewhereTargets.current.get(id);
+    return target ? organizationCanvasRoute(target, id) : canvasRoute(id);
+  }, []);
   const params = new URLSearchParams(location.search);
   const returnLocation = useRef<{ pathname: string; search: string; state: unknown } | null>(null);
   const conversation = Boolean(canvasId && (params.get('view') === 'chat' || params.has('turn')));
@@ -120,7 +136,12 @@ function MobileContent(): React.JSX.Element {
   const describe = useCallback((id: string, descriptor: Descriptor) => {
     setDescriptors((current) => JSON.stringify(current[id]) === JSON.stringify(descriptor) ? current : { ...current, [id]: descriptor });
   }, []);
-  const open = useCallback((id: string, pinned = false) => { returnLocation.current = null; void navigate(`${canvasRoute(id)}${pinned ? '?tab=1' : ''}`); }, [navigate]);
+  const open = useCallback((id: string, pinned = false) => { returnLocation.current = null; void navigate(`${canvasPath(id)}${pinned ? '?tab=1' : ''}`); }, [canvasPath, navigate]);
+  const openElsewhere = useCallback((target: OrganizationTarget, id: string) => {
+    elsewhereTargets.current.set(id, target);
+    returnLocation.current = null;
+    void navigate(organizationCanvasRoute(target, id));
+  }, [navigate]);
   const currentPushScope = useRef({ userId: session?.user.id, workspaceId: session?.workspace?.id });
   currentPushScope.current = { userId: session?.user.id, workspaceId: session?.workspace?.id };
   const pushWrite = useRef<MobileWrites | null>(null);
@@ -158,7 +179,7 @@ function MobileContent(): React.JSX.Element {
       }
       case 'open-chat':
         if (!returnLocation.current) returnLocation.current = { pathname: location.pathname, search: location.search, state: location.state };
-        void navigate(`${canvasRoute(message.id)}?view=chat`);
+        void navigate(`${canvasPath(message.id)}?view=chat`);
         break;
       case 'close-chat': {
         const previous = returnLocation.current;
@@ -174,7 +195,7 @@ function MobileContent(): React.JSX.Element {
       case 'open': open(message.id, message.pinned); break;
       case 'open-elsewhere': {
         const region = ConfiguredRegionSchema.safeParse(message.region);
-        if (region.success) openElsewhere({ region: region.data, workspaceId: message.workspaceId, canvasId: message.canvasId });
+        if (region.success) openElsewhere({ region: region.data, workspaceId: message.workspaceId }, message.canvasId);
         break;
       }
       case 'load-more': break; // The current Canvas directory is pushed as one list.
@@ -280,9 +301,9 @@ function MobileContent(): React.JSX.Element {
   }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, marketplace, conversation, descriptors, settingsSection, settingsSections]);
   return <main className="mobile-canvas-app">
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
-    <section hidden={Boolean(canvasId || creating || settingsSection)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={session?.workspace?.accessClass === 'guest' ? undefined : () => create(true)} userId={session?.user.id} /></section>
-    {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
-    {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
+    <section hidden={Boolean(canvasId || creating || settingsSection)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id }, item.canvas.id); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={session?.workspace?.accessClass === 'guest' ? undefined : () => create(true)} userId={session?.user.id} /></section>
+    {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Elsewhere target={elsewhereTargets.current.get(id)}><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></Elsewhere></section>)}
+    {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><Elsewhere target={elsewhereTargets.current.get((conversation ? canvasId : lastConversation)!)}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Elsewhere></Suspense></AppErrorBoundary></section>}
     {settingsSection && <section key={location.key} className="mobile-page mobile-settings"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileSettings /></Suspense></AppErrorBoundary></section>}
     {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas marketplace={marketplace} created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
   </main>;
@@ -291,20 +312,22 @@ function MobileContent(): React.JSX.Element {
 const SETTINGS_ROUTE = '/settings';
 
 /**
- * A Canvas in another of this person's Organizations: its canonical page, which
- * opens that Organization, kept in the mobile presentation as a notification's
- * link is (`open-notification`), in the same native or preview host.
+ * What a Canvas from another of this person's Organizations draws in: that
+ * Organization's own client (`OrganizationScope`), with this one still in
+ * front. A Canvas of this Organization draws as it is.
  */
-function openElsewhere(target: { region: Parameters<typeof canvasCanonicalUrl>[1]['region']; workspaceId: string; canvasId: string }): void {
-  const destination = new URL(canvasCanonicalUrl(window.location.origin, target));
-  destination.searchParams.set('mobile', '1');
-  // The browser preview's own parameter, which the entry carries through (`shellLocation`).
-  const preview = new URLSearchParams(window.location.search).get('mobilePreviewOrigin');
-  if (preview) destination.searchParams.set('mobilePreviewOrigin', preview);
-  window.location.assign(destination.href);
+function Elsewhere({ target, children }: { target: OrganizationTarget | undefined; children: React.ReactNode }): React.JSX.Element {
+  if (!target) return <>{children}</>;
+  return <ElsewhereScope target={target}>{children}</ElsewhereScope>;
 }
 
-/** The browser preview's dashboard; a native shell draws its own from the snapshot. */
+function ElsewhereScope({ target, children }: { target: OrganizationTarget; children: React.ReactNode }): React.JSX.Element {
+  const organization = useOrganizationSession(target);
+  if (organization.error) return <Recovery title="This canvas’s organization couldn’t open" retry={() => void organization.refetch()} />;
+  if (!organization.data) return opening;
+  return <OrganizationScope organization={organization.data}>{children}</OrganizationScope>;
+}
+
 function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed, retry, hasMore, more, open, create, openMarketplace, userId }: {
   rows: CanvasSidebarRow[];
   elsewhere: OtherOrganizationCanvas[];
@@ -373,7 +396,7 @@ function PrepareCanvas({ id }: { id: string }) {
 function Canvas({ id, active, describe }: { id: string; active: boolean; describe: (id: string, descriptor: Descriptor) => void }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { api } = useAppSession();
+  const { api } = useCollaborationSession();
   const query = useMobileCanvasDetail(id, active);
   const heads = useResourceHeads();
   const artifacts = query.data?.artifacts ?? [];
@@ -382,9 +405,9 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
     if (canvasNeedsConversation({ active, loaded: Boolean(query.data), fetching: query.isFetching, failed: query.isError, artifactCount: artifacts.length })) {
       const params = new URLSearchParams(location.search);
       params.set('view', 'chat');
-      void navigate(`${canvasRoute(id)}?${params}`, { replace: true });
+      void navigate(`${location.pathname}?${params}`, { replace: true });
     }
-  }, [active, artifacts.length, id, location.search, navigate, query.data, query.isError, query.isFetching]);
+  }, [active, artifacts.length, location.pathname, location.search, navigate, query.data, query.isError, query.isFetching]);
   const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
     const requested = new URLSearchParams(location.search).get('artifact');
@@ -393,7 +416,7 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
   const selectArtifact = (resourceId: string) => {
     const params = new URLSearchParams(location.search);
     params.set('artifact', resourceId);
-    void navigate(`${canvasRoute(id)}?${params}`, { replace: true });
+    void navigate(`${location.pathname}?${params}`, { replace: true });
   };
   const resource = artifacts.find((item) => item.resourceId === selected) ?? artifacts.find((item) => item.kind === 'site') ?? artifacts[0];
   useEffect(() => {
@@ -422,7 +445,7 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
 }
 
 function HostedSite({ canvasId, resourceId, version, title, active }: { canvasId: string; resourceId: string; version: number; title: string; active: boolean }) {
-  const { api } = useAppSession();
+  const { api } = useCollaborationSession();
   const native = Boolean(Reflect.get(window, 'ReactNativeWebView'));
   const instance = useId();
   const access = useQuery({ queryKey: ['mobile-site-access', canvasId, resourceId, version, instance], queryFn: () => api!.openArtifact(resourceId), enabled: active && Boolean(api), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false });

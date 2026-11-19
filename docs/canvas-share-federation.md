@@ -36,8 +36,12 @@ for the person in the regional D1, so it covers every Organization and device.
 | `packages/db/migrations/0135_shared_canvases_settings.sql` | The switch. |
 | `apps/api/src/routes/shared-canvases.ts` | `GET` and `PUT /workspace/me/shared-canvases`. |
 | `apps/desktop/src/renderer/lib/shared-canvases.ts`, `lib/workspace-socket.tsx` | The socket-owned list and the switch's read and save. |
-| `apps/desktop/src/renderer/components/other-organization-canvas.tsx` | The badged sidebar row, the card badge, and opening a Canvas in its Organization. |
-| `apps/browser/src/mobile.tsx`, `apps/mobile/src/Dashboard.tsx` | The Expo snapshot's `sharedElsewhere` and the native card ([`mobile-canvas-client.md`](mobile-canvas-client.md)). |
+| `apps/desktop/src/renderer/components/other-organization-canvas.tsx` | The badged sidebar row, the card badge, and the in-place route a shared Canvas opens on. |
+| `apps/desktop/src/renderer/lib/organization-scope.tsx` | `OrganizationScope`: re-roots one screen onto another Organization's client, query cache and local-cache scope, with no Organization socket; `useOrganizationSession` makes and keeps that client. |
+| `apps/desktop/src/renderer/screens/other-organization-canvas.tsx` | `/organizations/:region/:workspaceId/canvases/:id`: the Canvas screen inside that scope. |
+| `apps/desktop/src/main/index.ts` (`workspace:get-session`, `workspace:refresh-session`) | The Mac app's other-Organization credential: the stored one, or one minted through activation and stored without making it active. |
+| `apps/browser/src/shell.tsx` (`openOrganizationSession`) | The browser's: `/workspace/select` maps the Organization to the cookie, and requests name it in their path. |
+| `apps/browser/src/mobile.tsx`, `apps/mobile/src/Dashboard.tsx` | The Expo snapshot's `sharedElsewhere`, the native card, and the web view opening one in place ([`mobile-canvas-client.md`](mobile-canvas-client.md)). |
 
 ## How it works
 
@@ -90,10 +94,24 @@ for the person in the regional D1, so it covers every Organization and device.
    every Organization the person is in.
 8. **The clients** apply the event to one query and merge it into the home
    grid and the sidebar by date (or name). A shared row has no menu, drag or
-   pin and never shows unread. Choosing one opens it in its Organization: on
-   the Mac through the deep-link queue, in the browser and Expo through its
-   canonical page. Turning the switch off clears the list at once, before the
-   server's empty list arrives.
+   pin and never shows unread. Turning the switch off clears the list at
+   once, before the server's empty list arrives.
+9. **Opening one.** Choosing a shared row opens it in place, on
+   `/organizations/:region/:workspaceId/canvases/:id`, and the Organization in
+   front stays in front: its sidebar, socket and account tile do not move.
+   The Canvas screen inside runs in an `OrganizationScope`: the Canvas's
+   Organization's own client and session (so its guest rules apply), a query
+   cache of its own, its own local-cache scope, and no Organization socket.
+   The client comes from the host's `openOrganizationSession`: on the Mac,
+   main hands out the credential it stores for that Organization, or mints one
+   through `/onboarding/workspace/activate` and stores it without activating
+   it, and renews it on its own; in the browser, `/workspace/select` maps the
+   Organization to the cookie and the client calls
+   `/browser/api/<that Organization>/…`. The client is made once per
+   Organization and kept for the shell's life. The Expo web view does the
+   same on its own route, remembering which Organization each Canvas id it
+   opened came from, so the native shell's commands, which name a Canvas by
+   id, keep it there.
 
 ## Invariants
 
@@ -109,6 +127,9 @@ for the person in the regional D1, so it covers every Organization and device.
 - **A newer build always wins** in what a socket last received.
 - **One failing Organization does not hold the others.** A build relays what
   it could read and names the rest as unavailable.
+- **Opening a shared Canvas never switches Organization.** Only the screen
+  that shows it reads its Organization, on that Organization's own
+  credential; nothing it reads lands in the active Organization's caches.
 
 ## Boundary
 
@@ -131,6 +152,8 @@ guest relationship and switching Organization are
 | An origin Organization is renamed, retired or abandoned | Queues nothing: its old name, or its Canvases, stay on open sockets until the next subscribe or change. |
 | The first time an Organization answers for a guest | Caching their relationship queues one extra, idempotent rebuild of their other Organizations. |
 | A person in another data region | Not federated: each region builds from its own Organizations and user ids. |
+| The Canvas's Organization cannot be opened (access revoked, offline) | The Canvas pane says so with the reason and a Try again; the rest of the shell is unaffected. |
+| The Mac app holds no credential for that Organization | The first open mints one through activation, which revalidates the relationship and records a `workspace_activation_completed` outcome as a switch would; later opens reuse it. |
 
 ## Testing
 
@@ -139,7 +162,8 @@ guest relationship and switching Organization are
 | `apps/api/test-workers/canvas-share-federation.test.ts` (`pnpm --filter @rally/api test:workers`) | The flow on real Organization objects and sockets: the guest rule, rename, unshare and archive, a member never federated, promotion to member, a suspended guest, an unshare that still lands while another origin fails, the consumer's delayed retry and its other-region ack, no build where the person has no socket, the support-session exclusion and relay ordering. |
 | `apps/api/test/shared-canvases.test.ts` (`pnpm --filter @rally/api test`) | The D1 reads against the checked-in migrations: which Organizations a person is in and a guest of, and the switch. |
 | `apps/api/test/shared-canvases-route.test.ts` | The route: the caller's own switch, on by default, a change queuing an `all` rebuild, a malformed body refused, and no session refused. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `screens/canvases-home.test.tsx`, `components/canvas-sidebar-section.test.tsx`, `screens/workspace-settings.test.tsx` | The pushed list and switch, an unavailable Organization's rows kept, the merged home grid and sidebar, and the settings switch and its read failure. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `screens/canvases-home.test.tsx`, `components/canvas-sidebar-section.test.tsx`, `screens/workspace-settings.test.tsx` | The pushed list and switch, an unavailable Organization's rows kept, the merged home grid and sidebar with their in-place routes, and the settings switch and its read failure. |
+| `apps/desktop/src/renderer/screens/other-organization-canvas.test.tsx` | The real Canvas screen in an `OrganizationScope`: it reads on the other Organization's client and cache, never the active one's, and a failed open says why. |
 | `apps/mobile/src/protocol.test.ts`, `directory.test.ts`, `saved-directory.test.ts` | The Expo snapshot's `sharedElsewhere`, the directory key, and that shared rows are never saved. |
 
 Traps in the workers test:
@@ -189,6 +213,36 @@ those with no socket for them. A person in no Organization as a guest is asked
 nothing.
 
 ## Changelog
+
+### 2026-11-19 — Opening a shared Canvas stays in the current Organization
+
+**What changed:** Choosing a Canvas shared from another Organization opens it
+in place, on the Mac, in the browser and in the Expo app, instead of switching
+the whole app to that Organization. A new primitive, `OrganizationScope`,
+re-roots one screen onto another Organization's client, query cache and
+local-cache scope, with no Organization socket; each host hands out that
+client through `openOrganizationSession`. `openWorkspaceCanvas`, the switching
+path, is gone.
+
+**Why:** Switching tore down the shell the person was working in to read one
+Canvas, and left them in the other Organization afterwards. The person asked
+to stay where they were.
+
+**Considered and rejected:** Overriding only the API client and keeping the
+shell's query cache: list and detail keys are not keyed by Organization (the
+members list, the sidebar lists), so the other Organization's rows would land
+in the active one's. Asking the active Organization to proxy the Canvas: it
+would put cross-Organization reads into an Organization's object, which this
+design forbids. Reusing the stored credential without minting: a device that
+never opened that Organization has none.
+
+**Consequences:** Anything a Canvas screen reads must come from
+`useCollaborationSession`, not `useAppSession`, or it reads the active
+Organization inside the scope; the Expo Canvas and its detail hook moved for
+this. Screens inside the scope have no Organization socket, so a live rename
+or new artifact in the other Organization shows on the next read, not at once;
+the Chat's own socket stays live. Deep links from outside still switch
+Organization.
 
 ### 2026-11-16 — Document created: federate a guest's shared Canvases by invalidation
 

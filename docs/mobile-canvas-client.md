@@ -80,9 +80,13 @@ right, and writes "Shared from Acme" on the card in place of its "Open canvas"
 footer, since a touch screen has no hover and two Organizations can share an
 initial. The card's label says the same ("Open Partner roadmap, Shared from
 Acme"). The browser preview's card does the same. A tap sends Home `open-elsewhere`
-(region, Organization, Canvas); Home loads that Canvas's canonical page with
-`mobile=1` (and the preview's `mobilePreviewOrigin`), which opens it in its
-Organization, as a notification's link from another Organization does. A shell
+(region, Organization, Canvas); Home opens it in place, on
+`#/organizations/:region/:workspaceId/canvases/:id`, without switching
+Organization: the Canvas and its Chat run on that Organization's own client
+(`OrganizationScope`), and Home remembers which Organization each such Canvas
+id came from, so `open`, `open-chat` and `close-chat`, which name a Canvas by
+id, keep it there. The Canvas and its detail read `useCollaborationSession`,
+not `useAppSession`, for that reason. A shell
 older than the field drops it and shows only its own Canvases. The saved
 directory never holds them: they show once Home's live snapshot arrives. The browser
 preview's dashboard draws the same list and badge from the same socket event.

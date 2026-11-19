@@ -47,7 +47,7 @@ async function signupStart<T>(path: '/google/start' | '/apple/start' | '/email/s
  * workspace there, setting that deployment's cookie, and the select is retried
  * once. See the full browser client PRD's design.md.
  */
-async function openWorkspace(region: string, workspaceId: string): Promise<BrowserSession> {
+export async function openWorkspace(region: string, workspaceId: string): Promise<BrowserSession> {
   const select = () => browserRequest(region, "/workspace/select", BrowserSessionSchema, { workspaceId });
   try { return await select(); }
   catch (cause) {

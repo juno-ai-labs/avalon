@@ -493,6 +493,12 @@ const browserBridge: RallyDesktopBridge = {
     if (!response.ok) throw new Error(`Organization attention failed (${response.status})`);
     return response.json();
   },
+  async getWorkspaceSession() {
+    throw new Error('The browser keeps only its active organization session.');
+  },
+  async refreshWorkspaceSession() {
+    throw new Error('The browser keeps only its active organization session.');
+  },
   async leaveWorkspace({ expectedOutcome, region, workspaceId }) {
     if (
       !browserSession?.workspace

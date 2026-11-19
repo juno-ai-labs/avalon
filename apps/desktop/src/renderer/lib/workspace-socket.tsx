@@ -1174,6 +1174,15 @@ export function useWorkspaceSocket(): WorkspaceSocketContextValue {
   return context;
 }
 
+/**
+ * Hides the Organization socket from what it wraps: a screen showing another
+ * Organization's Canvas in place (`organization-scope.tsx`) has no socket of
+ * its own there, and must not read or ask this one about that Canvas.
+ */
+export function WorkspaceSocketAbsent({ children }: PropsWithChildren): React.JSX.Element {
+  return <WorkspaceSocketContext.Provider value={null}>{children}</WorkspaceSocketContext.Provider>;
+}
+
 /** Test/embedding escape hatch; product windows always install the provider. */
 export function useOptionalWorkspaceSocket(): WorkspaceSocketContextValue | null {
   return useContext(WorkspaceSocketContext);

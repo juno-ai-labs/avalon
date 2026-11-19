@@ -3,7 +3,10 @@ import { Tip } from '@rally/ui/components/primitives';
 
 import { ConfiguredRegionSchema } from '@rally/contracts/regions';
 
-import { useOptionalAppSession } from '../lib/app-session';
+import clsx from 'clsx';
+import { Link, useLocation } from 'react-router-dom';
+
+import { organizationCanvasRoute } from '../lib/organization-scope';
 import { formatSidebarActivityTime } from '../lib/format';
 import type { OtherOrganizationCanvas } from '../lib/shared-canvases';
 import { CanvasMark } from './canvas-mark';
@@ -44,14 +47,11 @@ export function OrganizationCardBadge({ id, organization }: {
   </Tip>;
 }
 
-/** Opens a Canvas in its own Organization, switching to it first. */
-export function useOpenOtherOrganizationCanvas(): (item: OtherOrganizationCanvas) => void {
-  const app = useOptionalAppSession();
-  return (item) => {
-    // The server names a configured region; one this build does not know cannot be opened from it.
-    const region = ConfiguredRegionSchema.safeParse(item.organization.region);
-    if (region.success) app?.openWorkspaceCanvas({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id });
-  };
+/** Where a Canvas from another Organization opens: in place, the Organization in front staying in front. */
+export function otherOrganizationCanvasRoute(item: OtherOrganizationCanvas): string | null {
+  // The server names a configured region; one this build does not know cannot be opened from it.
+  const region = ConfiguredRegionSchema.safeParse(item.organization.region);
+  return region.success ? organizationCanvasRoute({ region: region.data, workspaceId: item.organization.id }, item.canvas.id) : null;
 }
 
 /**
@@ -60,16 +60,18 @@ export function useOpenOtherOrganizationCanvas(): (item: OtherOrganizationCanvas
  * on the second line. Its Organization sends no read state with it, so it
  * is never drawn unread. It has no
  * menu and no drag, since pinning, renaming and sharing are its own
- * Organization's; choosing it opens it there.
+ * Organization's; choosing it opens it here, without switching Organization.
  */
-export function OtherOrganizationCanvasRow({ item }: { item: OtherOrganizationCanvas }): React.JSX.Element {
-  const open = useOpenOtherOrganizationCanvas();
+export function OtherOrganizationCanvasRow({ item }: { item: OtherOrganizationCanvas }): React.JSX.Element | null {
   const { canvas, organization } = item;
-  return <button
-    className="navigation-row navigation-canvas-row navigation-other-organization-row"
+  const route = otherOrganizationCanvasRoute(item);
+  const active = useLocation().pathname === route;
+  if (!route) return null;
+  return <Link
+    aria-current={active ? 'page' : undefined}
+    className={clsx('navigation-row navigation-canvas-row navigation-other-organization-row', active && 'is-active')}
     data-motion-key={`canvas:${organization.region}:${organization.id}:${canvas.id}`}
-    onClick={() => open(item)}
-    type="button"
+    to={route}
   >
     <RowLayout
       detail={sharedFromLabel(organization)}
@@ -78,5 +80,5 @@ export function OtherOrganizationCanvasRow({ item }: { item: OtherOrganizationCa
       title={canvas.title || 'Untitled canvas'}
       unread={false}
     />
-  </button>;
+  </Link>;
 }

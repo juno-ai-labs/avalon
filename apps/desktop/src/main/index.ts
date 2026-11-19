@@ -2659,6 +2659,43 @@ async function getWorkspaceAttention(input: unknown): Promise<WorkspaceAttention
   return WorkspaceAttentionSchema.parse(await readJsonBody(response));
 }
 
+function parseWorkspaceTarget(input: unknown): { region: RallyRegion; workspaceId: string } {
+  const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const parsed = ActivateWorkspaceRequestSchema.safeParse({ region: candidate['region'], workspaceId: candidate['workspaceId'] });
+  if (!parsed.success || Object.keys(candidate).some((key) => key !== 'workspaceId' && key !== 'region')) {
+    throw new Error('Invalid organization session request');
+  }
+  return parsed.data;
+}
+
+/**
+ * Another Organization's session, for one screen that shows something of it
+ * (a Canvas shared with this person there) without making it the active
+ * one. A credential this device holds answers at once; one it lacks crosses
+ * the activation route, which revalidates the relationship, and is stored
+ * without moving the window. A support credential is never handed out here:
+ * its view is another person's.
+ */
+async function getWorkspaceSession(input: unknown): Promise<DesktopSession> {
+  const target = parseWorkspaceTarget(input);
+  const authSet = await loadStoredAuthSet();
+  const stored = authSet ? storedWorkspaceCredential(authSet, target.workspaceId, target.region) : null;
+  const session = stored ? await storedSessionForCredential(stored) : null;
+  if (session && !session.impersonator) return publicSession(session);
+  return requestOnboardingSession(
+    '/onboarding/workspace/activate', target, target.region, target.workspaceId, undefined, 'store',
+  );
+}
+
+/** Renews the credential `getWorkspaceSession` handed out, leaving the active one alone. */
+async function refreshWorkspaceSession(input: unknown): Promise<DesktopSession> {
+  const target = parseWorkspaceTarget(input);
+  const authSet = await loadStoredAuthSet();
+  const stored = authSet ? storedWorkspaceCredential(authSet, target.workspaceId, target.region) : null;
+  if (!stored) throw new Error('No credential is stored for this organization');
+  return publicSession(await refreshStoredCredential(stored));
+}
+
 async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
@@ -2705,7 +2742,7 @@ async function requestOnboardingSession(
   expectedRegion: RallyRegion,
   expectedWorkspaceId?: string,
   operationId?: string,
-  selectionIntent = ++workspaceSelectionIntent,
+  selectionIntent: number | 'store' = ++workspaceSelectionIntent,
 ): Promise<DesktopSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   const identity = await requireOnboardingIdentitySession();
@@ -2756,6 +2793,8 @@ async function requestOnboardingSession(
     const displaced = await displacedSupportCredentialUnlocked(session);
     inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
     if (displaced) revokeInBackground(displaced);
+    // Stored for one screen in another Organization: the window stays where it is.
+    if (selectionIntent === 'store') return publicSession(session);
     if (activate) {
       await dropBackgroundSupportCredentialsUnlocked();
       inMemorySession = session;
@@ -4071,6 +4110,14 @@ function registerIpc(): void {
   ipcMain.handle('workspace:get-attention', (event, input: unknown) => {
     assertTrustedIpcSender(event);
     return getWorkspaceAttention(input);
+  });
+  ipcMain.handle('workspace:get-session', (event, input: unknown) => {
+    assertTrustedIpcSender(event);
+    return getWorkspaceSession(input);
+  });
+  ipcMain.handle('workspace:refresh-session', (event, input: unknown) => {
+    assertTrustedIpcSender(event);
+    return refreshWorkspaceSession(input);
   });
   ipcMain.handle('workspace:leave', (event, input: unknown) => {
     assertTrustedIpcSender(event);

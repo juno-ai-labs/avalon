@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
-import { OrganizationCardBadge, sharedFromLabel, useOpenOtherOrganizationCanvas } from '../components/other-organization-canvas';
+import { OrganizationCardBadge, sharedFromLabel, otherOrganizationCanvasRoute } from '../components/other-organization-canvas';
 import { CanvasMarketplace } from '../components/canvas-template-picker';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
@@ -45,7 +45,6 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const currentUserId = session?.user.id;
   const rows = useCanvasList();
   const elsewhere = useOtherOrganizationCanvases();
-  const openElsewhere = useOpenOtherOrganizationCanvas();
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const showMarketplace = !guest && marketplaceOpen;
   useDocumentTitle(showMarketplace ? 'Marketplace' : 'Canvases');
@@ -62,7 +61,9 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const hasCanvases = cards.length > 0;
   const shown = cards.filter((card) => matchesCanvasFilter(card.kind === 'own' ? canvasFilterFacts(card.row, currentUserId) : ELSEWHERE_CANVAS_FACTS, filter)
     && (needle === '' || cardTitle(card).toLocaleLowerCase().includes(needle)));
-  const sharedCard = ({ canvas, organization }: OtherOrganizationCanvas): React.JSX.Element => {
+  const sharedCard = (item: OtherOrganizationCanvas): React.JSX.Element => {
+    const { canvas, organization } = item;
+    const route = otherOrganizationCanvasRoute(item);
     const key = `${organization.region}:${organization.id}:${canvas.id}`;
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.appearance);
     return <li className="dashboard-card" key={key}>
@@ -71,8 +72,10 @@ export function CanvasesHomeScreen(): React.JSX.Element {
         <span className="canvas-card-indicators"><OrganizationCardBadge id={`canvas-organization-${key}`} organization={organization} /></span>
       </div>
       <div className="canvas-card-body">
-        {/* It opens in its own Organization, so it is a button that switches first. */}
-        <h3><button aria-describedby={`canvas-organization-${key}`} className="dashboard-card-link" onClick={() => openElsewhere({ canvas, organization })} type="button">{canvas.title || 'Untitled canvas'}</button></h3>
+        {/* It opens here, on its own Organization's client, without switching Organization. */}
+        <h3>{route
+          ? <Link aria-describedby={`canvas-organization-${key}`} className="dashboard-card-link" to={route}>{canvas.title || 'Untitled canvas'}</Link>
+          : <span className="dashboard-card-link">{canvas.title || 'Untitled canvas'}</span>}</h3>
         <small><span className="canvas-sharing-status">{sharedFromLabel(organization)}</span><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
       </div>
     </li>;

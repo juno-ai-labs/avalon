@@ -22,9 +22,7 @@ vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({ api: { setCanvasPinned, getWorkspaceMembers }, session: { user: { id: ME }, workspace: { id: 'workspace-1', region: 'global' } } }),
 }));
 const elsewhere = vi.hoisted(() => ({ items: [] as unknown[] }));
-const openWorkspaceCanvas = vi.hoisted(() => vi.fn());
 vi.mock('../lib/shared-canvases', () => ({ useOtherOrganizationCanvases: () => elsewhere.items }));
-vi.mock('../lib/app-session', () => ({ useOptionalAppSession: () => ({ openWorkspaceCanvas }) }));
 
 function canvas(id: string, title: string, overrides: Partial<CanvasSidebarRow> = {}): CanvasSidebarRow {
   return {
@@ -46,23 +44,24 @@ function renderSection(rows: CanvasSidebarRow[] | null, at = '/'): QueryClient {
 beforeEach(() => {
   socket.current = null;
   elsewhere.items = [];
-  openWorkspaceCanvas.mockReset();
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   getWorkspaceMembers.mockReset().mockResolvedValue([{ id: MAYA, name: 'Maya Lin', email: 'maya@example.test', timezone: 'UTC' }]);
 });
 
 describe('CanvasesSection', () => {
-  it("lists another Organization's shared Canvas by recency, badged with that Organization, and opens it there", () => {
+  it("lists another Organization's shared Canvas by recency, badged with that Organization, and opens it here", () => {
     const organization = { id: '00000000-0000-7000-8000-0000000000f1', name: 'Acme', region: 'global' as const };
     elsewhere.items = [{ organization, canvas: { id: '00000000-0000-7000-8000-0000000000d1', title: 'Partner roadmap', updatedAt: '2026-11-08T09:00:00.000Z' } }];
     renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Our plan')]);
     const all = screen.getByRole('region', { name: 'All canvases' });
     expect([...all.querySelectorAll('.navigation-row-title')].map((title) => title.textContent)).toEqual(['Partner roadmap', 'Our plan']);
-    const shared = within(all).getByRole('button', { name: /Partner roadmap/ });
+    const shared = within(all).getByRole('link', { name: /Partner roadmap/ });
     expect(shared).toHaveTextContent('Shared from Acme');
     expect(shared.querySelector('.identity-tile-badge .organization-badge-initial')).toHaveTextContent('A');
+    expect(shared).toHaveAttribute('href', '/organizations/global/00000000-0000-7000-8000-0000000000f1/canvases/00000000-0000-7000-8000-0000000000d1');
+    expect(shared).not.toHaveAttribute('aria-current');
     fireEvent.click(shared);
-    expect(openWorkspaceCanvas).toHaveBeenCalledWith({ region: 'global', workspaceId: organization.id, canvasId: '00000000-0000-7000-8000-0000000000d1' });
+    expect(within(all).getByRole('link', { name: /Partner roadmap/ })).toHaveAttribute('aria-current', 'page');
   });
 
   it('draws Pinned first in pinned order, then every other Canvas by recency', () => {

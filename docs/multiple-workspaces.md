@@ -402,8 +402,12 @@ Composer dictation remains tied to its composer lifecycle.
   content, and open no sockets. One exception: a Canvas explicitly shared with
   the person as a guest of another Organization reaches the active one's list,
   built by the server from that Canvas's own Organization and sent on the
-  active socket. The client never reads another Organization for it
-  ([`canvas-share-federation.md`](canvas-share-federation.md)).
+  active socket. The client never reads another Organization for the list
+  ([`canvas-share-federation.md`](canvas-share-federation.md)). Opening one of
+  those Canvases is the other exception: that one screen runs on its own
+  Organization's credential, with its conversation socket, while the active
+  Organization stays in front and keeps its own socket
+  (`lib/organization-scope.tsx`).
 - A late activation may be retained but cannot replace a newer selection.
 - An addressed link into a workspace that is not active always revalidates
   membership through platform activation; a locally stored credential is never
@@ -439,7 +443,8 @@ never turns aggregate attention into a content cache, and background workspaces
 never acquire a product WebSocket. Canvases shared with the person as a guest
 in their other Organizations reach the active one from the server, on its own socket
 ([`canvas-share-federation.md`](canvas-share-federation.md)); no client reads
-another Organization for them.
+another Organization for them. Opening one reads it on that Organization's own
+credential, for that screen only, and switches nothing.
 
 ## Failure modes and limits
 

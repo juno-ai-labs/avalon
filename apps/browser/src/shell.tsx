@@ -6,12 +6,11 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useSt
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
-import { canvasCanonicalUrl } from '@rally/contracts/links';
 import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
-import { BrowserBoot } from './entry';
+import { BrowserBoot, openWorkspace } from './entry';
 import { acceptInvitation, createOrganization, declineInvitation, listInvitations, organizationPath } from './organization-actions';
 // The native consumer does not need the desktop navigation and settings bundle.
 // eslint-disable-next-line rally/no-dynamic-import
@@ -29,7 +28,7 @@ import { DevicePushReadinessContext, type DevicePushReadiness } from '../../desk
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
 import { useWindowActivationTracking } from '../../desktop/src/renderer/lib/window-activation';
 import { setShellMounted } from './notification-open';
-import { shellLocation } from './session';
+import { cookieClientSession, shellLocation } from './session';
 import { BrowserApiError, browserRequest } from './transport';
 
 /**
@@ -153,8 +152,12 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
       if (!found) throw new Error('Organization attention is unavailable right now.');
       return found.attention;
     },
-    // The canonical path, which the entry opens in its Organization (`session.ts`).
-    openWorkspaceCanvas: (target) => { location.assign(new URL(canvasCanonicalUrl(location.origin, target)).pathname); },
+    // Selecting an Organization only maps it to this browser's cookie: the tab
+    // stays on its own, and requests name the other one in their path.
+    openOrganizationSession: async ({ region: target, workspaceId }) => {
+      const opened = cookieClientSession(target, await openWorkspace(target, workspaceId));
+      return { api: new RallyApi(opened.apiBaseUrl, opened), session: opened };
+    },
     activateWorkspace: async (target, workspaceId) => { location.assign(organizationPath({ region: target, workspaceId })); },
     // Joined on Global, then opened as switching Organization opens one here.
     acceptInvitation: async (target, invitationId, operationId) => {
