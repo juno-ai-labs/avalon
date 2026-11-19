@@ -11,14 +11,14 @@ import { marked } from 'marked';
 import { loadCanvasTemplates, type CanvasTemplateData } from '../../../packages/skills/marketplace-skills/catalog';
 import { CANVAS_TEMPLATE_CATEGORIES } from '../../../packages/skills/marketplace-skills/categories';
 import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS, templateConnectorHelpPath, type TemplateConnectorId, type TemplatePluginId } from '../../../packages/skills/marketplace-skills/connectors';
+import { arrow } from './audiences';
 import { escapeHtml as escape } from './html';
 import { renderConnectorMark, renderPluginGlyph } from './connector-marks';
 import { renderReadingCard } from './reading-card';
-import { githubLink } from './site-icons';
+import { renderHomeHeader } from './home-header';
 
 const ORIGIN = 'https://rallywith.ai';
 const APP_ORIGIN = 'https://app.rallywith.ai';
-const arrow = '<svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg>';
 const CATEGORY_LABELS = new Map<string, string>(CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => [tag, label]));
 const CONNECTORS = new Map(TEMPLATE_CONNECTORS.map((connector) => [connector.id, connector]));
 const PLUGINS = new Map(TEMPLATE_PLUGINS.map((plugin) => [plugin.id, plugin]));
@@ -63,10 +63,7 @@ const chipList = (chips: readonly string[], className: string, label: string): s
  * page, whose breadcrumb names the page itself.
  */
 export function renderMarketHeader(current: 'page' | 'true' = 'page'): string {
-  return '<header class="home-header"><a class="home-logo" href="/" aria-label="Rally home"><img src="/brand/rally-mark-ink.svg" width="32" height="32" alt="" />rally</a>'
-    + `<nav class="home-nav" aria-label="Primary"><a href="/#canvases">Canvases</a><a href="/marketplace/" aria-current="${current}">Marketplace</a>`
-    + '<a href="/#pricing">Pricing</a><a href="/help/">The manual</a>' + githubLink() + '</nav>'
-    + `<a class="header-login" data-site-action="sign-in-header" href="${APP_ORIGIN}">Open Rally <span aria-hidden="true">${arrow}</span></a></header>`;
+  return renderHomeHeader({ link: 'marketplace', as: current });
 }
 
 /** One filter per category, in the app's order, after All. */

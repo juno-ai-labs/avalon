@@ -6,7 +6,9 @@
  */
 import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
+import { arrow, audiencePath, audiences, gmailMark, renderAudienceGrid, renderOtherAudiences } from './audiences';
 import { escapeHtml as escape } from './html';
+import { renderHomeHeader } from './home-header';
 import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
 import { renderLiveCarousel } from './live-examples';
 import { renderHomeIllustration } from './home-illustrations';
@@ -105,12 +107,15 @@ export function renderSiteFooter({ casaLink = true }: { casaLink?: boolean } = {
     '<a href="/canvases/">Canvases</a>',
     '<a href="/sidekicks/">Sidekicks</a>',
     '<a href="/marketplace/">Marketplace</a>',
+    '<a href="/off-the-beaten-path/">Off the beaten path</a>',
     '<a href="/#pricing">Pricing</a>',
   ];
+  const who = audiences.map(({ slug, short }) => `<a href="${audiencePath(slug)}">${escape(short)}</a>`);
   return `<footer class="rally-footer"><div class="footer-grid">`
     + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt=""><span>rally</span></a>`
     + `<p class="footer-tagline">Made for people who work with AI, not on it.</p></div>`
     + footerColumn('footer-product', 'Product', product)
+    + footerColumn('footer-who', 'Who it’s for', who)
     + footerColumn('footer-trust', 'Trust Center', trust)
     + footerColumn('footer-help', 'Help', help)
     + footerColumn('footer-blog', 'Blog', blog)
@@ -134,14 +139,21 @@ export const renderBlogSitemap = (): string => {
 export function renderLlmsTxt(): string {
   return `# Rally
 
-> Rally is a shared place where a team and AI work together. In a Canvas, people talk with Rally and it makes the artifact itself (a document, a spreadsheet, an image, a PDF, a site), shared per Canvas; Sidekicks are shared AI agents with one conversation each that run jobs on a schedule or when something happens; connectors read and write tools like Gmail, Google Drive, Slack, Notion, and GitHub. Pricing is per organization with no seat limit: Start is free with $40 of effective usage; Grow is $100 with $200, Max is $250 with $500, and Ultra is $1,000 with $2,000. Allowances are allocated weekly. macOS beta. Made by Juno AI Labs Inc.
+> Rally turns the email a person or a team already gets into one page they can check at a glance: a dashboard, a board or a table of their leads, orders, candidates or clients. Connect Gmail, say what you want to see in a sentence, and the page updates itself as new mail arrives, from one inbox or from several. Rally is also a general tool: in a Canvas, people talk with Rally and it makes the thing itself (a document, a spreadsheet, a dashboard, a site); Sidekicks are shared helpers that run on a schedule or when something happens; connectors read and write tools like Gmail, Google Drive, Slack, Notion, and GitHub.
 
 ## Product
 
-- [Rally home](${ORIGIN}/): what Rally is, Canvases, Sidekicks, pricing, and technology
-- [Canvases](${ORIGIN}/canvases/): reactive artifacts, documents, spreadsheets, dashboards and sites that Rally keeps current from your connected tools and that a team works from together
-- [Sidekicks](${ORIGIN}/sidekicks/): shared AI agents that run on a schedule or when something happens
+- [Rally home](${ORIGIN}/): connect Gmail and get a dashboard in five minutes; who it is for, how it works, pricing
+- [Off the beaten path](${ORIGIN}/off-the-beaten-path/): what Rally builds beyond inbox pages: dashboards, small apps, podcast feeds and websites that react to events in connected tools
+- [Canvases](${ORIGIN}/canvases/): the conversation with Rally and the pages it makes beside it, kept up to date from your email and connected tools, and shared with a team
+- [Sidekicks](${ORIGIN}/sidekicks/): shared helpers that run on a schedule or when something happens, and keep pages up to date
 - [Help Center](${ORIGIN}/help/): the Rally manual, from installing Rally to running an Organization. Its own index of every page, each published as Markdown: ${ORIGIN}/help/llms.txt
+
+## Who it is for
+
+One page per kind of work, each with examples of the pages Rally builds from that inbox.
+
+${audiences.map(({ slug, name, line }) => `- [${name}](${ORIGIN}${audiencePath(slug)}): ${line}`).join('\n')}
 
 ## Marketplace
 
@@ -176,7 +188,19 @@ function renderCanvasDemo(): string {
   return readFileSync(new URL('./canvas-demo.html', import.meta.url), 'utf8');
 }
 
-const markers: Record<string, () => string> = {
+/** The homepage's hero story, one slide per audience, from `home-story.html`. */
+function renderHomeStory(): string {
+  return renderSiteChrome(readFileSync(new URL('./home-story.html', import.meta.url), 'utf8'));
+}
+
+/** A marker's markup. One that takes a word after its name, such as `audience-others legal`, is handed it. */
+const markers: Record<string, (argument?: string) => string> = {
+  'home-header': () => renderHomeHeader(),
+  'home-story': renderHomeStory,
+  'audience-grid': renderAudienceGrid,
+  'audience-others': renderOtherAudiences,
+  'gmail-mark': () => gmailMark,
+  arrow: () => arrow,
   'reading-nav': renderReadingNav,
   'home-pricing': renderHomePricing,
   'home-illustration-canvas': () => renderHomeIllustration('canvas'),
@@ -192,7 +216,7 @@ const markers: Record<string, () => string> = {
   'site-footer': () => renderSiteFooter(),
   'site-footer-without-casa': () => renderSiteFooter({ casaLink: false }),
   'casa-badge': renderCasaBadge,
-  'market-header': renderMarketHeader,
+  'market-header': () => renderMarketHeader(),
   'github-link': () => githubLink(),
   // For hand-written headers whose links are styled as `.header-link`, such as the Trust Center's.
   'github-header-link': () => githubLink('header-link github-link'),
@@ -200,11 +224,11 @@ const markers: Record<string, () => string> = {
   'marketplace-cards': renderMarketplaceCards,
 };
 
-/** Replaces each `<!-- rally:name -->` marker with its shared markup. */
+/** Replaces each `<!-- rally:name -->` marker, or `<!-- rally:name word -->`, with its shared markup. */
 export function renderSiteChrome(html: string): string {
-  return html.replace(/<!-- rally:([a-z-]+) -->/gu, (_match, name: string) => {
+  return html.replace(/<!-- rally:([a-z-]+)(?: ([a-z-]+))? -->/gu, (_match, name: string, argument?: string) => {
     const render = markers[name];
     if (!render) throw new Error(`Unknown site chrome marker: ${name}`);
-    return render();
+    return render(argument);
   });
 }

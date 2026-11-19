@@ -1,6 +1,6 @@
 /**
- * The link preview of every hand-written page: home, the product pages, the
- * marketplace and blog indexes, and the Trust Center. Help, blog posts and
+ * The link preview of every hand-written page: home, the audience pages, the
+ * product pages, the marketplace and blog indexes, and the Trust Center. Help, blog posts and
  * marketplace templates draw theirs from their own front matter instead.
  *
  * The `rally-page-cards` plugin in `vite.config.ts` draws each card at build
@@ -11,6 +11,7 @@
  */
 import { escapeHtml } from './html';
 import { accessCopy } from './access-copy';
+import { audiencePath, audiences } from './audiences';
 import { getIllustration } from './home-illustrations';
 import { renderReadingCard, type ReadingCard } from './reading-card';
 
@@ -31,8 +32,23 @@ export const pageCards: readonly PageCard[] = [
   {
     path: '/',
     eyebrow: 'Start free · No credit card needed',
-    title: 'Rally creates reactive\nMulti-human Artifacts',
-    description: 'Dashboards, micro-apps, podcast feeds and websites that react to the tools you already use, and that your team shapes together.',
+    title: 'Connect Gmail.\nGet a dashboard of your leads\nin five minutes.',
+    description: 'Rally turns your inbox into one page you can check at a glance: a dashboard, a board or a table. It stays up to date as new mail arrives.',
+    scene: 'canvas',
+  },
+  // Each audience page's card is its row in `audiences.ts`; a page not yet written has no headline.
+  ...audiences.filter(({ headline }) => headline).map(({ slug, name, headline, pitch }): PageCard => ({
+    path: audiencePath(slug),
+    eyebrow: `Rally for ${name.charAt(0).toLowerCase()}${name.slice(1)}`,
+    title: headline,
+    description: pitch,
+    scene: 'canvas',
+  })),
+  {
+    path: '/off-the-beaten-path/',
+    eyebrow: 'Beyond the inbox',
+    title: 'Off the\nbeaten\npath',
+    description: 'Email is where most people start. Rally also builds dashboards, small apps, podcast feeds and websites that react to the tools you already use.',
     scene: 'canvas',
   },
   {

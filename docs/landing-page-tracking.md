@@ -63,8 +63,8 @@ Tagged links on the landing page, by `data-site-action` id:
 
 | Id | Link | Action · placement |
 | --- | --- | --- |
-| `sign-in-header` | Homepage Open Rally link; rolling sign-in button on the supporting pages | primary_cta · header |
-| `web-app-hero` | Homepage Get started for free and closing invitation (app.rallywith.ai); primary web entry in `/start-fast/` | secondary_cta · hero |
+| `sign-in-header` | Open Rally link in the pencil pages' header (homepage, audience pages, marketplace); rolling sign-in button on the supporting pages | primary_cta · header |
+| `web-app-hero` | Homepage Connect your Gmail and closing invitation (app.rallywith.ai); every sign-up button on an audience page (`/for/<slug>/`) and on `/off-the-beaten-path/`; primary web entry in `/start-fast/` | secondary_cta · hero |
 | `web-app-offer` | Homepage inline browser-entry link under pricing; retains the historical offer action | primary_cta · offer |
 | `web-app-template` | Each `/marketplace/` card's Start from this, the template's link on the web app (`/app/templates/<slug>`) | primary_cta · body |
 | `download-hero` | Homepage macOS text link; desktop download button on `/start-fast/` | download · hero |
@@ -88,6 +88,14 @@ keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
 The homepage has no offer card; `web-app-offer` identifies its inline browser-entry link under pricing.
+
+Each audience page at `/for/<slug>/` counts as page class `landing` with its own
+`$pathname`, so which audience a visit or a sign-up click came from is read from
+the path, and the signup that follows is joined to it by `flowId`. The pages add
+no action ids of their own, and the web app is not told the audience: it drops a
+query on its root at sign-in ([`links.md`](links.md#template-links)). The
+audience pages do not run Apollo; adding them means `runsApollo` and the
+landing-only CSP, as for any new landing variant.
 
 Not reported as site events: scrolling, section views, header nav clicks, the
 "See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page

@@ -12,7 +12,9 @@ here.
 | --- | --- |
 | `apps/site/src/site-chrome.ts` | `trustPages`, `blogPosts`, the header and footer renderers, the blog sitemap, `/llms.txt`, and the marker table. |
 | `apps/site/src/site-icons.ts` | `externalArrow` and `githubLink`, the header GitHub link every header renderer and the `github-link` and `github-header-link` markers use. |
-| `apps/site/src/marketplace-catalog.ts`, `apps/site/build/help/layout.ts` | The marketplace and help center headers, rendered outside `site-chrome.ts`. |
+| `apps/site/src/home-header.ts` | `renderHomeHeader`, the header of every pencil page: the homepage, the audience pages, `/off-the-beaten-path/` and the marketplace. |
+| `apps/site/src/audiences.ts` | The audiences behind the footer's "Who it’s for" column, the homepage grid and the `audience-others` marker ([`site-audience-pages.md`](site-audience-pages.md)). |
+| `apps/site/build/help/layout.ts` | The help center's header, rendered outside `site-chrome.ts`. |
 | `apps/site/src/html.ts` | `escapeHtml` and `longDate`, shared by every page rendered at build time. |
 | `apps/site/vite.config.ts` | `rally-site-chrome` swaps markers for markup; `rally-markdown-pages` renders the blog, described in [`site-blog.md`](site-blog.md). |
 | `apps/site/src/landing.css` | Header and footer styles, in the landing page's tokens. |
@@ -24,12 +26,19 @@ becomes the header's links and sign-in button and `<!-- rally:site-footer -->`
 becomes the column footer, so no page lists header or footer links by hand.
 The nav's section links point at `/#pricing` and friends, so the same markup
 works on the landing page and on every other page. Markers work anywhere in
-the file, attribute values and JSON included. The plugin runs with
+the file, attribute values and JSON included. A marker may carry one word
+after its name, which its renderer is handed: `<!-- rally:audience-others legal -->`
+lists every audience page but that one. The plugin runs with
 `order: 'pre'`, before the access-copy and telemetry plugins. An unknown marker
 throws, so a typo fails `vite build` and `vite dev`.
 
-The footer has five columns: Product, Trust Center, Help, Blog, and the brand
-block. The Trust Center column reads `trustPages`; the Blog column reads
+The pencil pages (the homepage, the audience pages, `/off-the-beaten-path/` and
+the marketplace) share one header, `<!-- rally:home-header -->`: Who it’s for,
+Marketplace, Pricing, The manual, GitHub, and Open Rally. The earlier product
+pages keep `site-nav`.
+
+The footer has six columns: the brand block, Product, Who it’s for, Trust
+Center, Help, and Blog. Who it’s for reads `audiences`. The Trust Center column reads `trustPages`; the Blog column reads
 `blogPosts`.
 
 The footer's legal row links to the security page with "ADA CASA AL1
@@ -64,6 +73,30 @@ build, serve `dist` with `vite preview`, and screenshot the footer at 1440px and
 390px.
 
 ## Changelog
+
+### 2026-11-19: One header for the pencil pages, and markers that take a word
+
+**What changed:** The homepage's hand-written header and the marketplace's
+`renderMarketHeader` became one `renderHomeHeader` (`home-header.ts`), behind a
+`home-header` marker. Its first link is "Who it’s for" (`/#who`) in place of
+"Canvases" (`/#canvases`). The footer gained a "Who it’s for" column and a link
+to `/off-the-beaten-path/`. A marker can now carry one word,
+`<!-- rally:name word -->`.
+
+**Why:** The homepage stopped having a Canvases section when it began leading
+with Gmail, which left the marketplace header linking to an anchor that no
+longer existed, and seven new audience pages needed the same header. The
+`audience-others` list has to leave out the page it is on, and a marker with no
+argument could not say which page that is.
+
+**Considered and rejected:** One marker per audience (`audience-others-legal`).
+It would need a table entry for each new audience, which is the list the
+registry in `audiences.ts` exists to hold once.
+
+**Consequences:** A pencil-page header link goes in `home-header.ts`. The
+footer grids in `home.css`, `landing.css` and `reading.css` each assume six
+columns; change them together. A marker's word is lowercase letters and
+hyphens, and a marker that takes none ignores one.
 
 ### 2026-11-17: Every header links the GitHub repository
 

@@ -1,4 +1,4 @@
-/** The homepage's illustrative Canvas. No live product data or actions. */
+/** The illustrative Canvas on the page about everything else (`/off-the-beaten-path/`). No live product data or actions. */
 type ExampleId = "gtm" | "requests" | "podcast";
 type Example = {
   artifact: string;

@@ -9,6 +9,7 @@ import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { handoffAppLink, handoffDevice, handoffHeading, handoffPlan } from '../src/link-handoff';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
+import { audiences, renderAudienceSitemap } from '../src/audiences';
 import { blogPosts, renderBlogSitemap, renderSiteChrome } from '../src/site-chrome';
 import { renderConnectorMark, renderPluginGlyph } from '../src/connector-marks';
 import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS } from '../../../packages/skills/marketplace-skills/connectors';
@@ -182,8 +183,12 @@ describe('public Rally site', () => {
     const home = renderSiteChrome(readProjectFile('index.html'));
     const variant = renderSiteChrome(readProjectFile('start-fast/index.html'));
     const marketplace = renderSiteChrome(readProjectFile('marketplace/index.html'));
+    const others = ['off-the-beaten-path/index.html', ...audiences.map(({ slug }) => `for/${slug}/index.html`)]
+      .map((file) => renderSiteChrome(readProjectFile(file)));
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
-    for (const id of [...ids(home), ...ids(variant), ...ids(marketplace)]) expect(siteActionForLink(id), id).not.toBeNull();
+    for (const id of [...ids(home), ...ids(variant), ...ids(marketplace), ...others.flatMap(ids)]) expect(siteActionForLink(id), id).not.toBeNull();
+    // Every page that sells sends people to sign up through a counted link.
+    for (const page of others) expect(ids(page)).toContain('web-app-hero');
     // A tag removed in a redesign is just as silent: every tracked link must still be on the home page,
     // or, for a template card's link, on the marketplace. Not the variant, so it can't hide a tag the home page lost.
     for (const id of Object.keys(SITE_ACTION_LINKS)) expect([...ids(home), ...ids(marketplace)], id).toContain(id);
@@ -205,10 +210,50 @@ describe('public Rally site', () => {
       '/trust/subprocessors/', '/trust/cookies/', '/trust/acceptable-use/',
     ]);
     expect(column('Blog')).toEqual(['/blog/', `/blog/${blogPosts[0]?.slug ?? ''}/`]);
+    expect(column('Product')).toEqual(['/canvases/', '/sidekicks/', '/marketplace/', '/off-the-beaten-path/', '/#pricing']);
+    expect(column('Who it’s for')).toEqual([
+      '/for/wholesalers/', '/for/agencies/', '/for/legal/', '/for/accountants/', '/for/recruiters/', '/for/brokers/', '/for/event-planners/',
+    ]);
+  });
+
+  it('lists every audience in the homepage grid, ending on the page for everything else', () => {
+    const grid = renderSiteChrome('<!-- rally:audience-grid -->');
+    expect([...grid.matchAll(/<a href="([^"]+)"><strong>([^<]+)<\/strong>/gu)].map(([, href, name]) => `${name} ${href}`)).toEqual([
+      'Wholesalers and small sellers /for/wholesalers/', 'Agencies and freelancers /for/agencies/', 'In-house legal teams /for/legal/',
+      'Accountants and bookkeepers /for/accountants/', 'Recruiters and staffing shops /for/recruiters/',
+      'Real estate, mortgage and insurance brokers /for/brokers/', 'Wedding and event planners /for/event-planners/',
+      'Something else? /off-the-beaten-path/',
+    ]);
+  });
+
+  it('lists the other audiences at the foot of an audience page, leaving out its own', () => {
+    const hrefs = (html: string): string[] => [...html.matchAll(/href="([^"]+)"/gu)].flatMap(([, href]) => (href ? [href] : []));
+    expect(hrefs(renderSiteChrome('<!-- rally:audience-others legal -->'))).toEqual([
+      '/for/wholesalers/', '/for/agencies/', '/for/accountants/', '/for/recruiters/', '/for/brokers/', '/for/event-planners/',
+    ]);
+    expect(() => renderSiteChrome('<!-- rally:audience-others lawyers -->')).toThrow('Unknown audience: lawyers');
+  });
+
+  it('lists every audience page in its sitemap', () => {
+    expect([...renderAudienceSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc)).toEqual([
+      'https://rallywith.ai/for/wholesalers/', 'https://rallywith.ai/for/agencies/', 'https://rallywith.ai/for/legal/',
+      'https://rallywith.ai/for/accountants/', 'https://rallywith.ai/for/recruiters/', 'https://rallywith.ai/for/brokers/',
+      'https://rallywith.ai/for/event-planners/',
+    ]);
+  });
+
+  it('gives the pencil pages one header: the homepage sections, the marketplace, the manual and the web app', () => {
+    const links = (html: string): string[] => [...html.matchAll(/<a [^>]*href="([^"]+)"([^>]*)>(.*?)<\/a>/gu)]
+      .map(([, href, attrs, body]) => `${(body ?? '').replace(/<svg[\s\S]*?<\/svg>|<[^>]+>/gu, '').trim()} ${href}${/aria-current="([^"]+)"/u.exec(attrs ?? '')?.[0] ? ` (${/aria-current="([^"]+)"/u.exec(attrs ?? '')?.[1]})` : ''}`);
+    expect(links(renderSiteChrome('<!-- rally:home-header -->'))).toEqual([
+      'rally /', 'Who it’s for /#who', 'Marketplace /marketplace/', 'Pricing /#pricing', 'The manual /help/',
+      'GitHub https://github.com/juno-ai-labs/avalon', 'Open Rally https://app.rallywith.ai',
+    ]);
+    expect(links(renderSiteChrome('<!-- rally:market-header -->'))).toContain('Marketplace /marketplace/ (page)');
   });
 
   it('links the GitHub repository from every header marker', () => {
-    for (const marker of ['site-nav', 'reading-nav', 'market-header', 'github-link', 'github-header-link']) {
+    for (const marker of ['site-nav', 'reading-nav', 'home-header', 'market-header', 'github-link', 'github-header-link']) {
       const links = [...renderSiteChrome(`<!-- rally:${marker} -->`).matchAll(/<a [^>]*href="https:\/\/github\.com\/[^"]+"[^>]*>/gu)].map(([tag]) => tag);
       expect(links, marker).toHaveLength(1);
       expect(links[0], marker).toContain('href="https://github.com/juno-ai-labs/avalon"');
