@@ -339,7 +339,7 @@ resident Channel agent reads the window snapshot once.
 
 ## Changelog
 
-### 2026-11-19 — Defer `@rally/contracts` schemas; stop the HTTP graph importing the conversation object
+### 2026-11-19 — Defer `@rally/contracts` schemas; keep both Durable Objects out of the HTTP and queue graphs
 
 **What changed:** In `packages/contracts/src`, 573 top-level Zod schemas now wrap
 their construction in `deferredZodSchema()`. These are the object, union, enum
@@ -350,6 +350,10 @@ that carry a type annotation. TypeScript decides which are which: a deferred
 schema is a `ZodLazy`, so an object-only call on one fails typecheck. Separately,
 `workstream-service.ts` imports `conversationObjectName` from
 `durable-objects/names` instead of `agent-loop-do`, the module that re-exports it.
+`WORKSPACE_DO_SCHEMA_MIGRATIONS`, with the 15 constants and helpers only it
+uses, moved out of `workspace-do.ts` into `workspace-do-schema-migrations.ts`.
+`workspace-do.ts` re-exports it, so existing imports still work, and
+`queues/migration-command-consumer.ts` imports the new module directly.
 
 **Why:** Global uploads kept failing with the startup-budget form of 10021, and
 the 2026-11-18 entry below found no single module left to fix. Bundling trial
@@ -359,9 +363,11 @@ imports contracts pays it, including any Worker split off later. Six alternating
 local profiles of the full Global bundle before and after: median active startup
 fell from about 236 ms to about 191 ms (230–261 ms before, 184–225 ms after).
 The usual caveat applies: these are local proportions, not Cloudflare's numbers.
-The import fix changes nothing for today's single Worker, which loads every
-module anyway. It matters for a split: built alone, the HTTP app was 9.4 MB and
-about 304 ms with the import, and 6.2 MB and about 225 ms without it.
+The two import fixes change nothing for today's single Worker, which loads
+every module anyway. They matter for a split: built alone, the HTTP app was 9.4
+MB and about 304 ms with the first leak and 6.2 MB and about 225 ms without it.
+With both fixed, the HTTP app with its queues and crons holds neither Durable
+Object, and its bundle went from 10.6 MB to 9.4 MB.
 
 **Considered and rejected:** Splitting the Worker first. Trial bundles of
 AgentLoopDO alone, the DOs without the HTTP app, and the HTTP app with queues and
@@ -379,12 +385,11 @@ conversion, once per isolate. Nothing enforces deferral for new contracts
 schemas yet, so a new schema is eager until someone wraps it. Calling
 `.extend()` or `.shape` on a deferred schema fails typecheck. Either make that
 schema eager again or unwrap it inside the deriving schema's own deferred
-factory, as the style guide says. Don't cast at the call site. Two leaks remain
-that matter only for a future split: `queues/migration-command-consumer.ts`
-imports `WORKSPACE_DO_SCHEMA_MIGRATIONS` from `workspace-do.ts`, which pulls
-WorkspaceDO into the queue graph, and `@rally/connectors` and
+factory, as the style guide says. Don't cast at the call site. Import the
+migration list from `workspace-do-schema-migrations.ts`, not `workspace-do.ts`,
+anywhere outside the object; nothing checks this yet. `@rally/connectors` and
 `@rally/agent-harness` each cost about 100–130 ms alone and have not had the
-same sweep.
+contracts sweep.
 
 ### 2026-11-18 — Take the Google tool catalog and a sentinel Error out of startup
 

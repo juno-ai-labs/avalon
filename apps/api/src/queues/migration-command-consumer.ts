@@ -9,7 +9,7 @@ import {
 } from "@rally/contracts/durable-object-migrations";
 
 import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migratable-durable-object";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do-schema-migrations";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-object-schema";
 import type { Env } from "../env";
 import { durableObjectStubById } from "../lib/durable-object-namespace";
