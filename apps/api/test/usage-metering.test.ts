@@ -349,6 +349,34 @@ describe("consumeUsageQueue", () => {
     expect(acked.sort()).toEqual(["again", "one"]);
     expect(usage.prepare(`SELECT organization_microusd FROM usage_rollups`).all()).toEqual([{ organization_microusd: 2_000_000 }]);
   });
+  it("backs off a batch whose ledger write fails without sending it to the lakehouse", async () => {
+    const { usage, env } = seed();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    usage.exec(`DROP TABLE usage_events`);
+    const acked: string[] = [];
+    const retried: [string, number | undefined][] = [];
+    const send = vi.fn(async () => undefined);
+    await consumeUsageQueue({
+      queue: "avalon-global-usage",
+      messages: [{
+        id: "one", timestamp: new Date(RECEIVED), body: event("inf:one"), attempts: 3,
+        ack: () => { acked.push("one"); },
+        retry: (options?: QueueRetryOptions) => { retried.push(["one", options?.delaySeconds]); },
+      } satisfies Message<unknown>],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: vi.fn(), ackAll: vi.fn(),
+    } satisfies MessageBatch<unknown>, {
+      ...env, APP_ENV: "test" as const, LOG_LEVEL: "warn" as const,
+      USAGE_LAKEHOUSE: createCloudflareTestBinding<NonNullable<Env["USAGE_LAKEHOUSE"]>>({ send }),
+    }, () => Date.parse(RECEIVED));
+
+    expect(acked).toEqual([]);
+    expect(retried).toEqual([["one", 20]]);
+    expect(send).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      event: "usage_batch_retry", messages: 1, queue_attempts: 3, code: "usage_batch_failed:sqlite_no_such_table",
+    }));
+  });
 });
 
 describe("pruneUsageEvents", () => {
