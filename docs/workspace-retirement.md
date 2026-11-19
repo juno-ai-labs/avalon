@@ -487,12 +487,6 @@ cannot invoke retirement.
 - **Artifact hosts are not walked.** See **Boundary**: `ArtifactHostDO`
   holds no tombstone. Walking `artifact_registry` and gating the class is the
   remaining step.
-- **A Sidekick child's Terminal deadline never reaches the workspace
-  schedule.** `workstreamScheduleTargets` enumerated only a Thread's `channels`
-  row, and answers nothing now that Threads are retired;
-  `HostedConversation.childTerminalDeadlines` is read only for a parent the
-  schedule already named. Whether a Sidekick run's Terminal deadline should be
-  scheduled here is unanswered, and was not changed by the Thread-era drop.
 - **Nothing re-invokes an interrupted walk.** See **Failure modes and limits**;
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
