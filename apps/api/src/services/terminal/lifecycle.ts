@@ -294,9 +294,15 @@ export async function reconcileDueTerminalSandbox(
       if (!archived || archived.state === "expired") return await settleMissingSandbox(archived?.state === "expired");
       if (archived.state !== "archived") throw new Error("terminal_lifecycle_archive_pending");
     } else {
-      // The final diff was captured before the sandbox was stopped. Daytona
-      // archives cannot execute commands, so expiry only deletes them.
-      if (observed.state !== "archived") {
+      // Rally's own warm stop captures the final diff. A sandbox Daytona
+      // archived before Rally stopped it never had one taken, and an archive
+      // cannot execute commands, so restore such an archive once, here,
+      // rather than delete work nobody saved. A failed restore fails the
+      // expiry, which retries: the sandbox is kept, not deleted unsaved.
+      const unsavedArchive = observed.state === "archived"
+        && preserveBeforeExpiry !== undefined
+        && !(await terminal.finalDiffResourceId());
+      if (observed.state !== "archived" || unsavedArchive) {
         if (preserveBeforeExpiry && observed.state === "failed" && observed.recoverable === true) {
           await renewClaim();
           await provider.recoverSandbox(claimedSandboxId);

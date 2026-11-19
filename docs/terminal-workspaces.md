@@ -1555,6 +1555,15 @@ hundred rows carry a deadline. Also rejected: refreshing only from the
 projection hook. An Organization alarm's full reconcile replaces the whole
 kind, so it has to derive the same entries, or it clears what the hook wrote.
 
+Expiry now restores an archive once before deleting it when no final diff was
+ever recorded. Before this, expiry only deleted an archive, on the assumption
+that Rally's own warm stop had saved the diff. That holds when Rally stops the
+sandbox first, but it fails for every sandbox Daytona archived while the
+schedule was dark, and Canvas sandboxes are never deleted by Daytona
+(`autoDeleteInterval: -1`). Turning the sweep back on without this guard would
+have deleted their unsaved work. Adopting an archive at a warm-stop or archive
+deadline still makes no toolbox call, because nothing is lost there.
+
 **Consequences:** On the first alarm after deploy, every overdue deadline comes
 due. The drain's per-pass limit and the per-entry stall backoff bound that
 burst. A deadline the pass finds nothing to do for still republishes and backs

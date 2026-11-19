@@ -70,14 +70,24 @@ export function hostedTerminalDeadlines(
   sql: SqlStorage,
   parentId?: string,
 ): { parentId: string; dueAt: string }[] {
-  return sql.exec<{ parent_id: string; due_at: string }>(
-    `SELECT sidekick_id AS parent_id, MIN(json_extract(effect_json, '$.nextTerminalActionAt')) AS due_at
-       FROM sidekick_child_projections INDEXED BY sidekick_child_projections_terminal_deadline_idx
-      WHERE json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
-        AND (?1 IS NULL OR sidekick_id = ?1)
-      GROUP BY sidekick_id`,
-    parentId ?? null,
-  ).toArray().map((row) => ({ parentId: row.parent_id, dueAt: row.due_at }));
+  // Two statements, not one with `(?1 IS NULL OR sidekick_id = ?1)`: that
+  // optional predicate would plan once as a full scan of the index, and the
+  // per-parent read runs on every accepted projection.
+  const rows = parentId === undefined
+    ? sql.exec<{ parent_id: string; due_at: string }>(
+      `SELECT sidekick_id AS parent_id, MIN(json_extract(effect_json, '$.nextTerminalActionAt')) AS due_at
+         FROM sidekick_child_projections INDEXED BY sidekick_child_projections_terminal_deadline_idx
+        WHERE json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
+        GROUP BY sidekick_id`,
+    )
+    : sql.exec<{ parent_id: string; due_at: string }>(
+      `SELECT sidekick_id AS parent_id, MIN(json_extract(effect_json, '$.nextTerminalActionAt')) AS due_at
+         FROM sidekick_child_projections INDEXED BY sidekick_child_projections_terminal_deadline_idx
+        WHERE sidekick_id = ? AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
+        GROUP BY sidekick_id`,
+      parentId,
+    );
+  return rows.toArray().map((row) => ({ parentId: row.parent_id, dueAt: row.due_at }));
 }
 
 /** The kinds of parent this primitive hosts: a Sidekick (`automation`, its wire name) and a Canvas. */
