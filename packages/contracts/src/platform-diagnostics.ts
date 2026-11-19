@@ -39,6 +39,8 @@ const PLATFORM_ERRORS: readonly (readonly [RegExp, string])[] = [
   [/string or blob too big|SQLITE_TOOBIG/u, "sqlite_too_big"],
   [/database is locked|SQLITE_BUSY/u, "sqlite_busy"],
   [/CF_PIPELINE_MESSAGE_TOO_LARGE/u, "pipeline_message_too_large"],
+  // Pipelines' stream backend (`CF_SB_…`): its storage tier failing a send.
+  [/^CF_SB_CACHEW_[A-Z_]{1,60}:/u, "pipeline_storage_unavailable"],
   [/: syntax error/u, "sqlite_syntax_error"],
 ];
 
