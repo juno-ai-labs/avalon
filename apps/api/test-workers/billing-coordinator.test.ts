@@ -164,9 +164,12 @@ it('creates a no-card signup trial through the actor and refreshes payment readi
   });
   expect(initializeOrganizationBilling(configured, ORG)).toBeUndefined();
   await expect.poll(async () => env.DB.prepare('SELECT status, payment_method_ready FROM billing_accounts WHERE workspace_id = ?').bind(ORG).first()).toEqual({ status: 'trialing', payment_method_ready: 0 });
+  // The row turns trialing before the background refresh releases the actor
+  // (it still publishes usage), and a call in that window gets the retryable
+  // `billing_busy`. Retry as a caller would until the actor answers for itself.
+  await expect.poll(() => Promise.resolve(stub().overages(ORG, true)).then(() => 'accepted', (error: { code?: string }) => error.code)).toBe('billing_overage_unavailable');
   expect(await env.DB.prepare('SELECT plan FROM workspaces WHERE id = ?').bind(ORG).first()).toEqual({ plan: 'growth' });
   expect(await env.DB.prepare('SELECT subscription_id FROM billing_signup_trials WHERE workspace_id = ?').bind(ORG).first()).toEqual({ subscription_id: 'sub_signup' });
-  await expect(Promise.resolve(stub().overages(ORG, true))).rejects.toMatchObject({ code: 'billing_overage_unavailable' });
   ready = true;
   const app = new Hono<HonoAppEnv>(); app.onError(errorHandler); app.route('/webhook', stripeWebhookRoutes);
   const body = JSON.stringify({ type: 'customer.updated', data: { object: { id: 'cus_1' } } });
