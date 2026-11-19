@@ -161,17 +161,69 @@ describe("assigning a workspace member's role", () => {
     expect(roleOf(MEMBER_ID)).toBe("admin");
   });
 
-  it("refuses an ordinary member, a missing person, the owner, and somebody who has not joined", async () => {
+  it("refuses an ordinary member, a missing person, and somebody who has not joined", async () => {
     await expect(serviceAs(MEMBER_ID, "member").setMemberRole(INVITEE_ID, "admin"))
       .rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });
     await expect(serviceAs(OWNER_ID, "owner").setMemberRole(ADMIN_ID, "admin"))
       .rejects.toMatchObject({ status: 404, code: "member_not_found" });
-    await expect(serviceAs(OWNER_ID, "owner").setMemberRole(OWNER_ID, "member"))
-      .rejects.toMatchObject({ status: 403, code: "cannot_change_owner_role" });
     await expect(serviceAs(OWNER_ID, "owner").setMemberRole(INVITEE_ID, "admin"))
       .rejects.toMatchObject({ status: 409, code: "member_not_active" });
-    expect(roleOf(OWNER_ID)).toBe("owner");
     expect(roleOf(INVITEE_ID)).toBe("member");
+  });
+
+  it("lets an owner make a second owner, who can then hand ownership back down", async () => {
+    await serviceAs(OWNER_ID, "owner").setMemberRole(MEMBER_ID, "owner");
+    expect(roleOf(MEMBER_ID)).toBe("owner");
+    // The new owner is a real one: they can step the founder down.
+    await serviceAs(MEMBER_ID, "owner").setMemberRole(OWNER_ID, "admin");
+    expect(roleOf(OWNER_ID)).toBe("admin");
+  });
+
+  it("refuses an administrator who grants ownership or changes an owner", async () => {
+    seedMember(ADMIN_ID, "admin");
+    await expect(serviceAs(ADMIN_ID, "admin").setMemberRole(MEMBER_ID, "owner"))
+      .rejects.toMatchObject({ status: 403, code: "workspace_owner_required" });
+    await expect(serviceAs(ADMIN_ID, "admin").setMemberRole(ADMIN_ID, "owner"))
+      .rejects.toMatchObject({ status: 403, code: "workspace_owner_required" });
+    await expect(serviceAs(ADMIN_ID, "admin").setMemberRole(OWNER_ID, "member"))
+      .rejects.toMatchObject({ status: 403, code: "workspace_owner_required" });
+    expect(roleOf(MEMBER_ID)).toBe("member");
+    expect(roleOf(ADMIN_ID)).toBe("admin");
+    expect(roleOf(OWNER_ID)).toBe("owner");
+  });
+
+  it("refuses the write itself when the caller's ownership is gone, even with a stale owner role in hand", async () => {
+    // `auth.role` was read at the start of the request. If the caller lost
+    // ownership in between, the `WHERE` must still refuse to let them grant it.
+    seedMember(ADMIN_ID, "admin");
+    await expect(serviceAs(ADMIN_ID, "owner").setMemberRole(MEMBER_ID, "owner"))
+      .rejects.toMatchObject({ status: 409, code: "membership_changed" });
+    expect(roleOf(MEMBER_ID)).toBe("member");
+  });
+
+  it("refuses to demote the last owner, naming that as the reason", async () => {
+    // An administrator remains, so only the owner guard can refuse this.
+    seedMember(ADMIN_ID, "admin");
+    await expect(serviceAs(OWNER_ID, "owner").setMemberRole(OWNER_ID, "admin"))
+      .rejects.toMatchObject({ status: 409, code: "last_workspace_owner" });
+    await expect(serviceAs(OWNER_ID, "owner").setMemberRole(OWNER_ID, "member"))
+      .rejects.toMatchObject({ status: 409, code: "last_workspace_owner" });
+    expect(roleOf(OWNER_ID)).toBe("owner");
+
+    // With a second owner, the founder may step down.
+    await serviceAs(OWNER_ID, "owner").setMemberRole(ADMIN_ID, "owner");
+    await serviceAs(OWNER_ID, "owner").setMemberRole(OWNER_ID, "member");
+    expect(roleOf(OWNER_ID)).toBe("member");
+    expect(roleOf(ADMIN_ID)).toBe("owner");
+  });
+
+  it("lets one of several owners leave, and keeps the last from leaving", async () => {
+    await serviceAs(OWNER_ID, "owner").setMemberRole(MEMBER_ID, "owner");
+    await expect(serviceAs(OWNER_ID, "owner").leaveWorkspace("left")).resolves.toEqual({ outcome: "left" });
+    expect(roleOf(OWNER_ID)).toBeUndefined();
+    seedMember(ADMIN_ID, "member");
+    await expect(serviceAs(MEMBER_ID, "owner").leaveWorkspace("left"))
+      .rejects.toMatchObject({ status: 409, code: "sole_workspace_owner" });
   });
 
   it("invalidates both the roster and the workspace profile, and neither for a write that did not happen", async () => {
@@ -251,9 +303,17 @@ describe("assigning a workspace member's role", () => {
     expect((await patch(MEMBER_ID, ADMIN_ID, { role: "admin" })).status).toBe(204);
     expect(roleOf(ADMIN_ID)).toBe("admin");
 
-    // The body schema, and a role the route may not assign.
-    expect((await patch(OWNER_ID, MEMBER_ID, { role: "owner" })).status).toBe(400);
+    // The body schema: a role that does not exist, and no role at all.
+    expect((await patch(OWNER_ID, MEMBER_ID, { role: "superuser" })).status).toBe(400);
     expect((await patch(OWNER_ID, MEMBER_ID, {})).status).toBe(400);
+    expect(roleOf(MEMBER_ID)).toBe("admin");
+
+    // Ownership crosses the route for an owner and only for an owner, read
+    // from the row by the real middleware.
+    expect((await patch(MEMBER_ID, ADMIN_ID, { role: "owner" })).status).toBe(403);
+    expect((await patch(OWNER_ID, MEMBER_ID, { role: "owner" })).status).toBe(204);
+    expect(roleOf(MEMBER_ID)).toBe("owner");
+    expect((await patch(MEMBER_ID, MEMBER_ID, { role: "admin" })).status).toBe(204);
     expect(roleOf(MEMBER_ID)).toBe("admin");
 
     // The path parameter names somebody, and the gate is real.
@@ -331,9 +391,9 @@ describe("assigning a workspace member's role", () => {
     expect(latest.dispatched_at).toEqual(expect.any(String));
   });
 
-  it("names the field when the role is not one an administrator may assign", async () => {
+  it("names the field when the role is not one that exists", async () => {
     await expect(serviceAs(OWNER_ID, "owner")
-      .setMemberRole(MEMBER_ID, "owner" as unknown as "admin"))
+      .setMemberRole(MEMBER_ID, "superuser" as unknown as "admin"))
       .rejects.toMatchObject({ status: 400, code: "member_role_invalid:-root-:invalid_value" });
     expect(roleOf(MEMBER_ID)).toBe("member");
   });

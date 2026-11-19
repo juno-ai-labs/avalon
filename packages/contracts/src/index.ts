@@ -274,14 +274,12 @@ export type AgentModelRouting = z.infer<typeof AgentModelRoutingSchema>;
 
 export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
 /**
- * The roles an administrator may hand to somebody else.
+ * The roles any administrator may hand to somebody else: the role an
+ * invitation or an add carries, and the role an admin may set on a membership.
  *
- * One schema for both ways a role is assigned — the role carried on an
- * invitation, and the role set on a membership that already exists — because
- * they are the same decision made at two moments, and a second enum is how the
- * two drift. `owner` is deliberately not in it: the founding membership is the
- * one role nobody may grant, and transferring it is a different operation
- * nobody has asked for.
+ * `owner` is not in it. Only an owner may make another owner, and only on a
+ * membership that already exists (`UpdateWorkspaceMemberRoleRequestSchema`),
+ * so an add or an invitation never creates one.
  */
 export const AssignableMemberRoleSchema = z.enum(["admin", "member"]);
 export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
@@ -331,9 +329,13 @@ export const WorkspaceMemberSchema = z.object({
 { message: "Guests have no workspace role; members require a role" });
 
 export const WorkspaceInvitationRoleSchema = AssignableMemberRoleSchema;
-/** Set the role of a membership that already exists. */
+/**
+ * Set the role of a membership that already exists. Any of the three roles:
+ * the server refuses `owner`, and any change to an owner, unless the caller is
+ * an owner (docs/workspace-member-roles.md).
+ */
 export const UpdateWorkspaceMemberRoleRequestSchema = z.object({
-  role: AssignableMemberRoleSchema
+  role: MemberRoleSchema
 });
 export const WorkspaceInvitationStatusSchema = z.enum(["pending", "accepted", "expired", "revoked"]);
 export const WorkspaceInvitationSchema = z.object({
@@ -3551,7 +3553,7 @@ export type WorkspaceAttention = z.infer<typeof WorkspaceAttentionSchema>;
 export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSchema>;
 export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
 export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;
-export type AssignableMemberRole = z.infer<typeof AssignableMemberRoleSchema>;
+export type MemberRole = z.infer<typeof MemberRoleSchema>;
 export type UpdateWorkspaceMemberRoleRequest = z.infer<typeof UpdateWorkspaceMemberRoleRequestSchema>;
 export type ClientFeatureFlags = z.infer<typeof ClientFeatureFlagsSchema>;
 export type ProductFeatureFlagKey = z.infer<typeof ProductFeatureFlagKeySchema>;

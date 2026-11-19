@@ -6,10 +6,10 @@ import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
 import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferencesUpdate, type UserTimezone } from '@rally/contracts';
 import {
-  AssignableMemberRoleSchema,
+  MemberRoleSchema,
   asUserId,
   asWorkspaceId,
-  type AssignableMemberRole,
+  type MemberRole,
   type UserId,
   type PendingWorkspaceInvitation,
   type WorkspaceInvitation,
@@ -638,50 +638,47 @@ export class WorkspaceService {
 
   /**
    * Set the role on a membership that already exists — the one way a workspace
-   * grows a second administrator.
+   * grows a second administrator or a second owner.
    *
    * `workspace_members.role` has been a per-membership column since the first
-   * migration, so N administrators were always representable; what did not
-   * exist was any way to *assign* one after the fact. An invitation carried a
-   * role and nothing else did, so a workspace whose administrator was away had
-   * no in-product way to grant anybody else the powers every admin-gated action
-   * already accepted. That is what this method is.
+   * migration, so N administrators and N owners were always representable; what
+   * did not exist was a way to *assign* either after the fact.
    *
-   * Three refusals, and each is deliberate:
+   * The refusals, and each is deliberate:
    *
-   * - **`owner` is not assignable, and an owner is not a target.** The founding
-   *   membership is what `leaveWorkspace` and `removeMember` count when they
-   *   refuse to leave a workspace unowned. Letting it be handed around here
-   *   would put a second module in charge of an invariant those two enforce,
-   *   and transferring ownership is a separate operation nobody has asked for.
+   * - **Only an owner may grant `owner`, or change an owner's role.** An admin
+   *   who could make themselves an owner would hold every power the owner role
+   *   protects, and `removeMember` already refuses an admin who removes an
+   *   owner for the same reason.
+   * - **Never the last owner.** `leaveWorkspace` and `removeMember` keep a
+   *   workspace owned; demoting its only active owner would undo that from a
+   *   third door, so it is refused here too.
    * - **Only an active membership.** Somebody who has not accepted their
    *   invitation is not yet a member to promote; the invitation carries their
    *   role, and changing it there is what revoking and reissuing one is for.
    * - **Never the last administrator.** A workspace with nobody who can
-   *   administer it cannot be recovered from inside the product — no admin
-   *   means no invitation, no promotion, and no way back. The guard counts
-   *   owner and admin together, because that pair is exactly the set every
-   *   admin-gated check in this tree accepts.
+   *   administer it cannot be recovered from inside the product. The guard
+   *   counts owner and admin together, because that pair is exactly the set
+   *   every admin-gated check in this tree accepts.
    *
-   * The write re-asserts all three in its own `WHERE`, for the reason
+   * The write re-asserts all of them in its own `WHERE`, for the reason
    * `removeMember` spells out at length: each was read in an earlier round trip
-   * and D1 auto-commits in between, so two administrators demoting each other
-   * at once both pass the reads. SQLite serializes the statements, whichever
-   * runs second finds the invariant it needed already gone, and changes
-   * nothing.
+   * and D1 auto-commits in between, so two owners demoting each other at once
+   * both pass the reads. SQLite serializes the statements, whichever runs
+   * second finds the invariant it needed already gone, and changes nothing.
    */
-  async setMemberRole(userId: string, role: AssignableMemberRole): Promise<void> {
+  async setMemberRole(userId: string, role: MemberRole): Promise<void> {
     this.requireAdmin();
     // Parsed rather than trusted. The route validates the body, but this is
     // also reachable from a test, a script, and whatever calls it next, and a
     // `ZodError` escaping here would reach the error handler as a 500 whose
     // message is a JSON blob. `zodDiagnosticCode` names the field instead.
-    const parsed = AssignableMemberRoleSchema.safeParse(role);
+    const parsed = MemberRoleSchema.safeParse(role);
     if (!parsed.success) {
       throw new ApiError(
         400,
         zodDiagnosticCode(parsed.error, "member_role") ?? "member_role_invalid",
-        "A member's role can only be set to administrator or member",
+        "A member's role can only be set to owner, administrator or member",
       );
     }
     const assigned = parsed.data;
@@ -698,13 +695,10 @@ export class WorkspaceService {
     // is `promoteGuest`, which moves the access class rather than the role.
     //
     // Named here rather than left to the write below, which does refuse it but
-    // for the wrong reason and in the wrong words: the conditional `UPDATE`
-    // re-asserts `role = ?` against the role that was read, and a guest's is
-    // `NULL`, which no comparison matches. So the statement changes nothing and
-    // the caller is told the membership changed underneath them — a lost race,
-    // inviting a retry that can never succeed — when what is true is that this
-    // person cannot hold a role until somebody promotes them. A wrong code on a
-    // path that had the reason in hand is the defect this avoids.
+    // for the wrong reason: the conditional `UPDATE` re-asserts `role = ?`
+    // against the role that was read, and a guest's is `NULL`, which no
+    // comparison matches, so the caller would be told of a lost race and invited
+    // to retry something that can never succeed.
     if (member.access_class === "guest") {
       throw new ApiError(
         409,
@@ -712,11 +706,14 @@ export class WorkspaceService {
         "That person is a guest of this workspace. Promote them to a member before giving them a role.",
       );
     }
-    if (member.role === "owner") {
+    // Ownership is the owners' to hand out and take back. Checked against the
+    // role on this request; the write re-asserts it against the row.
+    const touchesOwnership = assigned === "owner" || member.role === "owner";
+    if (touchesOwnership && this.auth.role !== "owner") {
       throw new ApiError(
         403,
-        "cannot_change_owner_role",
-        "The workspace owner's role cannot be changed here",
+        "workspace_owner_required",
+        "Only an owner can make somebody an owner or change an owner's role",
       );
     }
     if (member.status !== "active") {
@@ -738,16 +735,27 @@ export class WorkspaceService {
 
     const updated = await this.env.DB.prepare(
       `UPDATE workspace_members
-          SET role = ?
-        WHERE workspace_id = ? AND user_id = ? AND role = ? AND status = 'active'
+          SET role = ?1
+        WHERE workspace_id = ?2 AND user_id = ?3 AND role = ?4 AND status = 'active'
           AND EXISTS (
             SELECT 1 FROM workspace_members actor
              WHERE actor.workspace_id = workspace_members.workspace_id
-               AND actor.user_id = ? AND actor.status = 'active'
-               AND actor.role IN ('owner', 'admin')
+               AND actor.user_id = ?5 AND actor.status = 'active'
+               AND (actor.role = 'owner'
+                 OR (actor.role = 'admin' AND ?1 != 'owner' AND ?4 != 'owner'))
           )
           AND (
-            ? != 'member'
+            ?4 != 'owner'
+            OR EXISTS (
+              SELECT 1 FROM workspace_members remaining
+               WHERE remaining.workspace_id = workspace_members.workspace_id
+                 AND remaining.user_id != workspace_members.user_id
+                 AND remaining.status = 'active'
+                 AND remaining.role = 'owner'
+            )
+          )
+          AND (
+            ?1 != 'member'
             OR EXISTS (
               SELECT 1 FROM workspace_members remaining
                WHERE remaining.workspace_id = workspace_members.workspace_id
@@ -763,18 +771,26 @@ export class WorkspaceService {
       userId,
       member.role,
       this.auth.userId,
-      assigned,
     ).first<{ user_id: string }>();
     if (!updated) {
       // Which invariant refused it is worth a second read: "something changed"
       // is the right answer to a lost race and the wrong one to the person who
-      // is about to leave their workspace with nobody able to administer it,
-      // and only they can act on the difference.
+      // is about to leave their workspace with no owner or nobody able to
+      // administer it, and only they can act on the difference.
       const remaining = await this.env.DB.prepare(
-        `SELECT COUNT(*) AS administrators FROM workspace_members
-          WHERE workspace_id = ? AND user_id != ? AND status = 'active'
-            AND role IN ('owner', 'admin')`,
-      ).bind(this.auth.workspaceId, userId).first<{ administrators: number }>();
+        `SELECT
+           COALESCE(SUM(role = 'owner'), 0) AS owners,
+           COALESCE(SUM(role IN ('owner', 'admin')), 0) AS administrators
+           FROM workspace_members
+          WHERE workspace_id = ? AND user_id != ? AND status = 'active'`,
+      ).bind(this.auth.workspaceId, userId).first<{ owners: number; administrators: number }>();
+      if (member.role === "owner" && Number(remaining?.owners ?? 0) === 0) {
+        throw new ApiError(
+          409,
+          "last_workspace_owner",
+          "This is the only owner of this organization. Make somebody else an owner first.",
+        );
+      }
       if (assigned === "member" && Number(remaining?.administrators ?? 0) === 0) {
         throw new ApiError(
           409,
@@ -820,7 +836,7 @@ export class WorkspaceService {
    * every request — so the stale copy decides what is drawn and never what is
    * allowed.
    */
-  private async publishMemberRoleChange(userId: string, role: AssignableMemberRole): Promise<void> {
+  private async publishMemberRoleChange(userId: string, role: MemberRole): Promise<void> {
     try {
       await publishWorkspaceSync(
         this.env,
