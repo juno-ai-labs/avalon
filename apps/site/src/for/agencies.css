@@ -96,8 +96,9 @@
   font-size: 13px;
 }
 
+/* The longhand, so a line that must not wrap (a sender on a small card) still does not. */
 .ag-page p:not(.ag-start-foot) {
-  text-wrap: pretty;
+  text-wrap-style: pretty;
 }
 
 /* ---- The hero: a centered question over the wall ---- */
@@ -153,17 +154,47 @@
   position: relative; z-index: 3; max-width: 560px; margin-inline: auto;
 }
 
-/* An email drops onto the wall with a tilt, rather than fading in. */
-.ag-page .story-email {
-  box-shadow: 0 14px 26px -18px #57503a99;
+/* How mail flows on this page. Each example has its own way in and out, all on
+   the shared Gmail card: on the hero a card drops onto the wall and dissolves
+   toward the place its tile is about to take; in "Just me" it crosses from the
+   left toward the wall; in "My studio" three inboxes get mail in the same
+   minute; and on the list of asks it is posted into the top of the list. */
+
+/* The hero: a card lands with a tilt, then falls onto the wall, shrinking as it goes. */
+.ag-hero-story .story-mail > .story-ask,
+.ag-hero-story .story-mail > .story-email {
+  justify-self: center;
 }
 
-.ag-page .story-email.is-new {
-  animation: ag-drop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+.ag-hero-story .story-mail .is-new.story-email {
+  animation: ag-drop-in 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
 }
 
-@keyframes ag-drop {
-  from { opacity: 0; transform: translateY(-18px) rotate(-1.6deg); }
+.ag-hero-story .story-mail .is-leaving.story-email {
+  animation: ag-drop-out 1.05s cubic-bezier(0.35, 0.05, 0.3, 1) both;
+}
+
+/* Where on a three-column wall a card is heading: which row, and one column left or right. */
+.ag-hero-story {
+  --ag-column: calc((min(1240px, 100vw - 112px) - 92px) / 3 + 20px);
+}
+
+.ag-to-row1 { --ag-fall: 130px; }
+.ag-to-row2 { --ag-fall: 296px; }
+.ag-to-left { --ag-drift: calc(var(--ag-column) * -1); --ag-lean: -5deg; }
+.ag-to-right { --ag-drift: var(--ag-column); --ag-lean: 5deg; }
+
+@keyframes ag-drop-in {
+  from { opacity: 0; transform: translateY(-26px) rotate(-1.6deg); }
+}
+
+@keyframes ag-drop-out {
+  50% { opacity: 0.85; }
+
+  100% {
+    opacity: 0; filter: blur(1.5px);
+    transform: translate(var(--ag-drift, 0), var(--ag-fall, 70px)) rotate(var(--ag-lean, -3deg)) scale(0.6);
+  }
 }
 
 /* ---- The wall ---- */
@@ -493,6 +524,10 @@
   border: 1px solid #d4d9c8; background: var(--white); box-shadow: 0 14px 26px -20px #57503a99;
 }
 
+.ag-draft .story-label svg {
+  color: #c5463a;
+}
+
 .ag-draft .story-subject {
   font-family: var(--display-font); font-style: italic; font-size: 17px; line-height: 1.3; color: #4c5540;
   margin-top: 2px;
@@ -550,6 +585,47 @@
   flex: 1;
 }
 
+/* A burst: the client's email, and under it what the other two inboxes got in
+   the same minute. Those two are only traffic, so they are smaller and say less.
+   They sit in their own row so a burst is as tall hidden as it is shown. */
+.ag-studio-story .story-burst {
+  flex-flow: column nowrap; align-items: stretch; gap: 0;
+}
+
+.ag-studio-story .story-burst > .story-email:not(.is-small) {
+  flex: 0 0 auto; width: auto; max-width: none;
+}
+
+.ag-also {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px;
+}
+
+.ag-also > .story-email {
+  justify-self: stretch; width: auto; padding: 8px 11px 9px; opacity: 0.9;
+}
+
+.ag-also .story-from,
+.ag-also .story-subject {
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px;
+}
+
+.ag-also .story-from {
+  margin-top: 3px;
+}
+
+.ag-also > .story-email:nth-child(1) { animation-delay: 0.14s; }
+.ag-also > .story-email:nth-child(2) { animation-delay: 0.28s; }
+
+/* Mail leaves toward the wall on its right, and stops short of the first tile. */
+.ag-studio-story .story-mail[data-flow="across"] .is-leaving.story-email,
+.ag-studio-story .story-mail[data-flow="across"] .is-leaving .story-email {
+  animation-name: ag-across-out;
+}
+
+@keyframes ag-across-out {
+  to { opacity: 0; transform: translateX(40px) scale(0.97); filter: blur(3px); }
+}
+
 .ag-feeds {
   grid-column: 1; padding: 0 4px; font-size: 15px; line-height: 1.7; color: var(--muted);
 }
@@ -575,6 +651,27 @@
 
 .ag-scope-story .story-bar {
   justify-content: space-between;
+}
+
+/* An email is posted into the top of the list: it slides down and the list's
+   top edge takes it in, a line at a time. */
+.ag-scope-story .story-mail .is-new.story-email {
+  animation: ag-post-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.ag-scope-story .story-mail .is-leaving.story-email {
+  animation: ag-post-out 0.95s cubic-bezier(0.5, 0, 0.6, 1) both;
+}
+
+@keyframes ag-post-in {
+  from { opacity: 0; transform: translateY(-34px); }
+}
+
+/* The clip's lower edge stays level with the top of the list while the card slides down behind it. */
+@keyframes ag-post-out {
+  0% { opacity: 1; transform: none; clip-path: inset(-30px -30px -12px -30px); }
+  75% { opacity: 1; }
+  100% { opacity: 0.4; transform: translateY(calc(100% + 10px)); clip-path: inset(-30px -30px 100% -30px); }
 }
 
 .ag-page .ag-slip {
@@ -894,6 +991,10 @@
 /* ---- Narrower screens ---- */
 
 @media (max-width: 1150px) {
+  .ag-hero-story {
+    --ag-column: calc((100vw - 72px - 84px) / 3 + 16px);
+  }
+
   .ag-hero-story .ag-bar-note {
     display: none;
   }
@@ -928,6 +1029,17 @@
   .ag-start,
   .ag-safe {
     padding-top: 84px;
+  }
+
+  /* Fewer than three columns: a card falls straight onto the top of the wall. */
+  .ag-to-row1,
+  .ag-to-row2 {
+    --ag-fall: 84px;
+  }
+
+  .ag-to-left,
+  .ag-to-right {
+    --ag-drift: 0px; --ag-lean: -3deg;
   }
 
   /* The bar becomes a row of its own: the note on the left, pause on the right. */
@@ -1250,7 +1362,11 @@
 
 /* With reduced motion the player rests every story at its end; nothing of this page's moves either. */
 @media (prefers-reduced-motion: reduce) {
-  .ag-page .story-email.is-new,
+  .ag-page .story-mail .story-email,
+  .ag-page .story-mail .is-new.story-email,
+  .ag-page .story-mail .is-leaving.story-email,
+  .ag-page .story-mail[data-flow] .is-new .story-email,
+  .ag-page .story-mail[data-flow] .is-leaving .story-email,
   .ag-tile.is-new,
   .ag-tile.ag-jump.is-new,
   .ag-tile.is-new .ag-meter b,

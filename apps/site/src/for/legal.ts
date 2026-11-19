@@ -4,7 +4,7 @@
  * that crossing is slowed and evened out, so it reads as a deliberate, level
  * move rather than a snap. The player still keeps time (docs/site-audience-pages.md).
  */
-const CROSSING: OptionalEffectTiming = { duration: 1150, easing: 'cubic-bezier(0.45, 0, 0.25, 1)' };
+const CROSSING: OptionalEffectTiming = { duration: 1000, easing: 'cubic-bezier(0.45, 0, 0.25, 1)' };
 
 document.addEventListener('story:step', (event) => {
   if (!(event.target instanceof HTMLElement)) return;

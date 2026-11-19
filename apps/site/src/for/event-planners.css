@@ -114,22 +114,14 @@
   font-size: 29px; line-height: 1.1; letter-spacing: -0.02em;
 }
 
-/* Nothing snaps: mail rises in, a new row settles, a touched row takes a wash of sage. */
-.ev-page .story-email.is-new,
-.ev-page .ev-beat.is-new {
-  animation: ev-rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-
+/* Nothing snaps: a new row settles, a touched row takes a wash of sage. How
+   each example's mail arrives and goes is written with that example, below. */
 .ev-page .story-page [data-at].is-new:not(.is-moved) {
   animation: ev-settle 0.8s 0.25s ease both;
 }
 
 .ev-page .story-page .is-touched {
   animation: ev-wash 2.6s ease-out both;
-}
-
-@keyframes ev-rise {
-  from { opacity: 0; transform: translateY(10px); }
 }
 
 @keyframes ev-settle {
@@ -179,7 +171,7 @@
 
 .ev-event-slide {
   display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr); column-gap: 76px;
-  grid-template-areas: "copy count" "bar bar" "mail mail" "vend vend"; align-items: center;
+  grid-template-areas: "copy count" "mail bar" "vend vend"; align-items: center;
   align-content: start;
 }
 
@@ -282,49 +274,34 @@
 }
 
 .ev-page .story-bar.ev-event-bar {
-  grid-area: bar; margin: 46px 0 10px;
+  grid-area: bar; align-self: end; margin: 0 0 4px;
 }
 
-/* The mail as one line across the page: who wrote, what they said, what Rally did. */
-.ev-strip {
-  grid-area: mail;
+/* The hero's mail is a little Gmail card under the headline. It floats down
+   from above, rests, then sinks into the vendor list and dissolves as the
+   vendor's path fills. The slowest and calmest flow on the page. */
+.ev-event-mail {
+  grid-area: mail; margin-top: 44px;
 }
 
-.ev-strip .story-ask,
-.ev-strip .story-email {
-  display: grid; grid-template-columns: 178px minmax(0, 1fr) auto; column-gap: 24px; align-items: center;
-  min-height: 72px; border-radius: 12px; padding: 13px 24px;
+.ev-event-mail .story-ask {
+  justify-self: start; align-self: start; width: min(100%, 26rem);
 }
 
-/* The player parks the messages that are not showing as blocks; here they stay strips, so the slot keeps a strip's height. */
-.ev-page .story.is-live .ev-strip > .is-gone,
-.ev-page .story.is-live .ev-strip > [data-at]:not(.is-on) {
-  display: grid !important;
+.ev-event .story-mail .is-new.story-email {
+  animation: ev-float-in 1.05s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
-.ev-strip .story-label {
-  grid-column: 1; grid-row: 1 / span 2; flex-wrap: wrap; gap: 3px 7px; font-size: 12.5px;
+.ev-event .story-mail .is-leaving.story-email {
+  animation: ev-float-out 1.7s cubic-bezier(0.4, 0, 0.7, 0.6) both;
 }
 
-.ev-strip .story-from {
-  grid-column: 2; grid-row: 1; margin-top: 0; font-size: 15px;
+@keyframes ev-float-in {
+  from { opacity: 0; transform: translateY(-28px); }
 }
 
-.ev-strip .story-subject {
-  grid-column: 2; grid-row: 2; font-size: 14.5px;
-}
-
-.ev-strip .story-did {
-  grid-column: 3; grid-row: 1 / span 2; align-self: stretch; align-items: center; width: 330px;
-  margin-top: 0; border-top: 0; border-left: 1px dashed #d4d9c8; padding: 0 0 0 24px; font-size: 14px;
-}
-
-.ev-strip .story-did::before {
-  margin-top: 0;
-}
-
-.ev-strip .story-quote {
-  grid-column: 2 / -1; margin-top: 0; font-size: 24px;
+@keyframes ev-float-out {
+  to { opacity: 0; transform: translateY(74px) scale(0.97); filter: blur(4px); }
 }
 
 /* The vendor list: each vendor on a path of five states. */
@@ -505,12 +482,16 @@
   color: #f1eee3;
 }
 
-.ev-beat-night .story-ask,
-.ev-beat-night .story-email {
-  border-color: #485043; background: var(--ev-night-card); box-shadow: none; padding: 16px 18px;
+/* The ask is part of the night. The emails are not: each is a white Gmail card, lit like a screen in a dark room. */
+.ev-beat-night .story-ask {
+  border-color: #485043; background: var(--ev-night-card); padding: 16px 18px;
 }
 
-.ev-beat-night .story-label {
+.ev-beat-night .story-email {
+  border-color: #f1eee3; box-shadow: 0 0 0 5px #f1eee314, 0 14px 30px -14px #000000aa;
+}
+
+.ev-beat-night .story-ask .story-label {
   color: #b9c0aa;
 }
 
@@ -518,20 +499,59 @@
   color: #e1e6d2; font-size: 23px;
 }
 
-.ev-beat-night .story-from {
-  color: #f6f3e8; font-size: 15px;
+/* 11:48: three emails land together. The client's is the one the page acts on;
+   the newsletter and the receipt sit under it, smaller, and are plainly other mail. */
+.ev-night .ev-pile {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: min(100%, 26rem);
 }
 
-.ev-beat-night .story-subject {
-  color: #d5d9c9; font-size: 15px;
+.ev-night .ev-pile > .story-email {
+  justify-self: stretch; width: auto; max-width: none;
 }
 
-.ev-beat-night .story-did {
-  border-top-color: #525a4c; color: #cddbb5; font-size: 14px;
+.ev-night .ev-pile > .story-email:first-child {
+  position: relative; z-index: 1; grid-column: 1 / -1;
 }
 
-.ev-beat-night .story-did::before {
-  background-image: url("/brand/rally-mark-paper.svg");
+.ev-night .ev-pile > .story-email.is-small {
+  border-color: #cfd1c4; background: #e7e5da; box-shadow: none; opacity: 0.86;
+}
+
+/* Night mail lights up where it lands, like a notification. A client's request
+   then drifts across to the page and dissolves into it; other mail just fades where it is. */
+.ev-night .story-mail .is-new .story-email {
+  animation: ev-light-up 0.95s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.ev-night .story-mail .is-leaving .story-email {
+  animation: ev-to-page 1.6s cubic-bezier(0.4, 0, 0.7, 0.6) both;
+}
+
+.ev-night .story-mail .is-leaving .story-email.is-small {
+  animation: ev-fade-away 1.3s ease-in both;
+}
+
+.ev-night .story-mail .ev-pile > .story-email:nth-child(2) { animation-delay: 0.3s; }
+.ev-night .story-mail .ev-pile > .story-email:nth-child(3) { animation-delay: 0.55s; }
+
+.ev-night .story-mail .is-new .ev-clock {
+  animation: ev-fade 0.9s ease both;
+}
+
+@keyframes ev-light-up {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+}
+
+@keyframes ev-to-page {
+  to { opacity: 0; transform: translateX(92px) scale(0.97); filter: blur(4px); }
+}
+
+@keyframes ev-to-page-below {
+  to { opacity: 0; transform: translateY(64px) scale(0.97); filter: blur(4px); }
+}
+
+@keyframes ev-fade-away {
+  to { opacity: 0; transform: scale(0.98); }
 }
 
 .ev-morning {
@@ -551,7 +571,7 @@
 
 /* Morning waits for the light. The ask fades back in each time the night starts over. */
 .ev-page .ev-beat-morning.is-new {
-  animation: ev-rise 1.3s 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: ev-rise 1.1s 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 .ev-night .story-slide[data-step="0"] .ev-beat:first-child {
@@ -560,6 +580,10 @@
 
 @keyframes ev-fade {
   from { opacity: 0; }
+}
+
+@keyframes ev-rise {
+  from { opacity: 0; transform: translateY(10px); }
 }
 
 /* The sheet fills the band at every step; requests arrive into the room it already has. */
@@ -627,8 +651,42 @@
   margin-top: 52px;
 }
 
-.ev-all .ev-strip .story-label .kit-face {
-  width: 22px; height: 22px; font-size: 11px;
+/* Three inboxes feed this page, so its mail crosses it: a card comes in from
+   the left, stops over the event it is about, then carries on to the right and thins out. */
+.ev-all-mail .story-ask {
+  align-self: start; justify-self: start; width: min(100%, 44rem);
+}
+
+.ev-all-mail .story-email {
+  width: min(100%, 20rem);
+}
+
+.ev-all-mail .story-label .kit-face {
+  margin-left: auto;
+}
+
+.ev-all-mail .ev-to-2 {
+  margin-left: calc(25% + 14px);
+}
+
+.ev-all-mail .ev-to-3 {
+  margin-left: 50%;
+}
+
+.ev-all .story-mail .is-new.story-email {
+  animation: ev-cross-in 1.05s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.ev-all .story-mail .is-leaving.story-email {
+  animation: ev-cross-out 1.6s cubic-bezier(0.4, 0, 0.7, 0.6) both;
+}
+
+@keyframes ev-cross-in {
+  from { opacity: 0; transform: translateX(-120px); }
+}
+
+@keyframes ev-cross-out {
+  to { opacity: 0; transform: translateX(150px) scale(0.97); filter: blur(4px); }
 }
 
 .ev-cards {
@@ -786,18 +844,26 @@
   display: grid; grid-template-rows: auto 1fr;
 }
 
-.ev-shared .story-ask,
-.ev-shared .story-email {
-  padding: 14px 18px;
+/* The client page's mail arrives at the top corner, then glides down and
+   across toward Settled, where what it said ends up. */
+.ev-shared .story-mail .is-new.story-email {
+  animation: ev-corner-in 1s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
-.ev-shared .story-from,
-.ev-shared .story-subject {
-  font-size: 15px;
+.ev-shared .story-mail .is-leaving.story-email {
+  animation: ev-glide-out 1.6s cubic-bezier(0.4, 0, 0.7, 0.6) both;
 }
 
-.ev-shared .story-did {
-  font-size: 14px;
+@keyframes ev-corner-in {
+  from { opacity: 0; transform: translate(-22px, -26px); }
+}
+
+@keyframes ev-glide-out {
+  to { opacity: 0; transform: translate(118px, 66px) scale(0.96); filter: blur(4px); }
+}
+
+@keyframes ev-glide-out-near {
+  to { opacity: 0; transform: translate(12px, 58px) scale(0.96); filter: blur(4px); }
 }
 
 .ev-guest-access {
@@ -805,8 +871,12 @@
   line-height: 1.5; color: #5b4a68;
 }
 
+.ev-page .story-page.ev-guest {
+  display: flex; flex-direction: column;
+}
+
 .ev-guest-cols {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+  flex: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
 }
 
 .ev-guest-col {
@@ -1023,35 +1093,11 @@
   }
 
   .ev-page .story-bar.ev-event-bar {
-    margin-top: 36px;
+    margin: 36px 0 0;
   }
 
-  /* Without the width for a strip, the mail is a card again: who and what, then what Rally did. */
-  .ev-strip .story-ask,
-  .ev-strip .story-email {
-    display: block; min-height: 0; padding: 14px 18px;
-  }
-
-  .ev-page .story.is-live .ev-strip > .is-gone,
-  .ev-page .story.is-live .ev-strip > [data-at]:not(.is-on) {
-    display: block !important;
-  }
-
-  .ev-strip .story-from {
-    margin-top: 6px;
-  }
-
-  .ev-strip .story-did {
-    width: auto; margin-top: 9px; border-left: 0; border-top: 1px dashed #d4d9c8; padding: 9px 0 0;
-    align-items: flex-start;
-  }
-
-  .ev-strip .story-did::before {
-    margin-top: 3px;
-  }
-
-  .ev-strip .story-quote {
-    margin-top: 5px;
+  .ev-event-mail {
+    margin-top: 12px;
   }
 
   .ev-vendor-list {
@@ -1072,6 +1118,17 @@
 
   .ev-night .story-mail {
     align-self: start; padding-top: 0;
+  }
+
+  /* The page is below now, so a request sinks to it. */
+  .ev-night .story-mail .is-leaving .story-email:not(.is-small) {
+    animation-name: ev-to-page-below;
+  }
+
+  /* The events no longer sit in a row under the mail, so every card starts from the left. */
+  .ev-all-mail .ev-to-2,
+  .ev-all-mail .ev-to-3 {
+    margin-left: 0;
   }
 
   .ev-cards {
@@ -1179,13 +1236,21 @@
     margin-top: 30px;
   }
 
-  .ev-strip .story-ask,
-  .ev-strip .story-email {
-    padding: 13px 15px;
+  /* On a phone a card keeps clear of the screen's edge as it travels, so nothing scrolls sideways. */
+  .ev-all-mail .story-email {
+    width: min(84%, 20rem);
   }
 
-  .ev-strip .story-quote {
-    font-size: 21px;
+  .ev-all .story-mail .is-new.story-email {
+    animation-name: ev-cross-in-near;
+  }
+
+  .ev-all .story-mail .is-leaving.story-email {
+    animation-name: ev-cross-out-near;
+  }
+
+  .ev-shared .story-mail .is-leaving.story-email {
+    animation-name: ev-glide-out-near;
   }
 
   .ev-legend {
@@ -1366,6 +1431,14 @@
   .ev-page .ev-closer h2 {
     margin-bottom: 32px; font-size: clamp(46px, 13vw, 58px);
   }
+}
+
+@keyframes ev-cross-in-near {
+  from { opacity: 0; transform: translateX(-18px); }
+}
+
+@keyframes ev-cross-out-near {
+  to { opacity: 0; transform: translateX(46px) scale(0.97); filter: blur(3px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

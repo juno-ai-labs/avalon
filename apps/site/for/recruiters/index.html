@@ -156,10 +156,10 @@
               <div class="rc-mail-col">
                 <div class="story-mail">
                   <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Track everyone I’ve submitted for the Acme designer role, stage by stage.”</p></div>
-                  <div class="story-email rc-from-client" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from the client</b></p><p class="story-from">Ravi Patel, Acme Health</p><p class="story-subject">Kai looks strong. Phone screen Tuesday?</p><p class="story-did">Moved Kai Moss to Screen.</p></div>
-                  <div class="story-email rc-from-cand" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Tom Baker</p><p class="story-subject">Confirmed for the onsite, Thursday at 10</p><p class="story-did">Moved Tom Baker to Interview.</p></div>
-                  <div class="story-email rc-from-client" data-at="3" data-until="4"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from the client</b></p><p class="story-from">Ravi Patel, Acme Health</p><p class="story-subject">We’d like to make Lena an offer</p><p class="story-did">Moved Lena Fox to Offer.</p></div>
-                  <div class="story-email rc-from-cand" data-at="4"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Lena Fox</p><p class="story-subject">Signed. I start December 1!</p><p class="story-did">Lena Fox is placed. Start date December 1.</p></div>
+                  <div class="story-email rc-from-client rc-to-row-3" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from the client</b></p><p class="story-from">Ravi Patel, Acme Health</p><p class="story-subject">Kai looks strong. Phone screen Tuesday?</p><p class="story-did">Moved Kai Moss to Screen.</p></div>
+                  <div class="story-email rc-from-cand rc-to-row-2" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Tom Baker</p><p class="story-subject">Confirmed for the onsite, Thursday at 10</p><p class="story-did">Moved Tom Baker to Interview.</p></div>
+                  <div class="story-email rc-from-client rc-to-row-1" data-at="3" data-until="4"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from the client</b></p><p class="story-from">Ravi Patel, Acme Health</p><p class="story-subject">We’d like to make Lena an offer</p><p class="story-did">Moved Lena Fox to Offer.</p></div>
+                  <div class="story-email rc-from-cand rc-to-row-1" data-at="4"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Lena Fox</p><p class="story-subject">Signed. I start December 1!</p><p class="story-did">Lena Fox is placed. Start date December 1.</p></div>
                 </div>
                 <p class="rc-aside">
                   The page reads both sides of the thread. Nobody logged a
@@ -334,9 +334,21 @@
                   <span class="rc-inbox rc-priya"><i class="kit-face priya">P</i><span>Priya<b>’s Gmail</b></span></span>
                 </div>
                 <div class="story-ask" data-until="1"><p class="story-label">Maya asks Rally</p><p class="story-quote">“One board for the firm: who’s interviewing, who we placed this month, and whose candidate is whose.”</p></div>
-                <div class="story-email rc-in-theo" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Jen Wu, Kestrel Labs</p><p class="story-subject">Dev Shah: onsite Thursday at 1</p><p class="story-did">Added Dev Shah’s interview. Theo’s candidate.</p></div>
-                <div class="story-email rc-in-priya" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priya’s inbox</b></p><p class="story-from">Sam Ortiz</p><p class="story-subject">Thanks for reaching out, Priya</p><p class="story-did">Sam Ortiz is already Maya’s candidate. Flagged it.</p></div>
-                <div class="story-email rc-in-maya" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Maya’s inbox</b></p><p class="story-from">Ana Ruiz</p><p class="story-subject">Offer signed. I start December 8</p><p class="story-did">Ana Ruiz is placed. Maya’s placement.</p></div>
+                <div class="story-burst rc-burst" data-at="1" data-until="2">
+                  <div class="story-email rc-in-theo"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Jen Wu, Kestrel Labs</p><p class="story-subject">Dev Shah: onsite Thursday at 1</p><p class="story-did">Added Dev Shah’s interview. Theo’s candidate.</p></div>
+                  <div class="story-email is-small rc-in-maya" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Maya’s inbox</p><p class="story-from">Building office</p><p class="story-subject">Parking passes for December</p><p class="rc-skip">Not for the board</p></div>
+                  <div class="story-email is-small rc-in-priya" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Priya’s inbox</p><p class="story-from">Payroll</p><p class="story-subject">Timesheets are due Friday</p><p class="rc-skip">Not for the board</p></div>
+                </div>
+                <div class="story-burst rc-burst" data-at="2" data-until="3">
+                  <div class="story-email rc-in-priya"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priya’s inbox</b></p><p class="story-from">Sam Ortiz</p><p class="story-subject">Thanks for reaching out, Priya</p><p class="story-did">Sam Ortiz is already Maya’s candidate. Flagged it.</p></div>
+                  <div class="story-email is-small rc-in-maya" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Maya’s inbox</p><p class="story-from">Calendar</p><p class="story-subject">Standup moved to 10</p><p class="rc-skip">Not for the board</p></div>
+                  <div class="story-email is-small rc-in-theo" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Theo’s inbox</p><p class="story-from">Accounts</p><p class="story-subject">Invoice 1184 was paid</p><p class="rc-skip">Not for the board</p></div>
+                </div>
+                <div class="story-burst rc-burst" data-at="3">
+                  <div class="story-email rc-in-maya"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Maya’s inbox</b></p><p class="story-from">Ana Ruiz</p><p class="story-subject">Offer signed. I start December 8</p><p class="story-did">Ana Ruiz is placed. Maya’s placement.</p></div>
+                  <div class="story-email is-small rc-in-theo" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Theo’s inbox</p><p class="story-from">IT support</p><p class="story-subject">Your password expires soon</p><p class="rc-skip">Not for the board</p></div>
+                  <div class="story-email is-small rc-in-priya" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Priya’s inbox</p><p class="story-from">Newsletter</p><p class="story-subject">The hiring market this week</p><p class="rc-skip">Not for the board</p></div>
+                </div>
               </div>
               <div class="story-page rc-firm">
                 <div class="kit-head"><h3>The firm, November</h3><span class="kit-live">Updates itself from 3 inboxes <i class="kit-face maya" aria-hidden="true">M</i><i class="kit-face theo" aria-hidden="true">T</i><i class="kit-face priya" aria-hidden="true">P</i></span></div>

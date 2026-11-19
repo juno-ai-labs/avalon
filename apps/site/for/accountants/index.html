@@ -249,11 +249,11 @@
           </div>
           <div class="story-stage">
             <article class="story-slide" data-slide aria-label="Example: April filing dates">
-              <div class="story-mail">
+              <div class="story-mail" data-flow="across">
                 <div class="story-ask" data-until="1"><p class="story-label">You ask Rally, once</p><p class="story-quote">“Put my April filing dates on a calendar. Mark each one filed when its confirmation email arrives.”</p></div>
-                <div class="story-email" data-at="1" data-until="2"><div class="ac-strip"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">E-file service</p><p class="story-subject">Accepted: Garcia, 2026 return</p><p class="story-did">Marked the Garcia return filed.</p></div></div>
-                <div class="story-email" data-at="2" data-until="3"><div class="ac-strip"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">E-file service</p><p class="story-subject">Accepted: Whitlock, extension</p><p class="story-did">Marked the Whitlock extension filed.</p></div></div>
-                <div class="story-email" data-at="3"><div class="ac-strip"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">State revenue office</p><p class="story-subject">Confirmation: sales tax return, Bluebird Bakery</p><p class="story-did">Marked Bluebird’s sales tax filed, a week early.</p></div></div>
+                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">E-file service</p><p class="story-subject">Accepted: Garcia, 2026 return</p><p class="story-did">Marked the Garcia return filed.</p></div>
+                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">E-file service</p><p class="story-subject">Accepted: Whitlock, extension</p><p class="story-did">Marked the Whitlock extension filed.</p></div>
+                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">State revenue office</p><p class="story-subject">Confirmation: sales tax return, Bluebird Bakery</p><p class="story-did">Marked Bluebird’s sales tax filed, a week early.</p></div>
               </div>
               <div class="story-page">
                 <div class="kit-head"><h3>April filings</h3><span class="kit-live">Updates itself from your Gmail</span></div>
@@ -339,7 +339,7 @@
               <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
             </div>
             <div class="story-stage">
-              <article class="story-slide" data-slide aria-label="Example: tax documents across three preparers">
+              <article class="story-slide" data-slide data-steps="2" aria-label="Example: tax documents across three preparers">
                 <div class="story-mail">
                   <ul class="ac-rail" aria-label="Inboxes that feed this page">
                     <li class="ac-inbox ac-dana"><i class="kit-face ac-dana" aria-hidden="true">D</i>Dana’s inbox</li>
@@ -347,21 +347,27 @@
                     <li class="ac-inbox ac-priti"><i class="kit-face ac-priti" aria-hidden="true">P</i>Priti’s inbox</li>
                   </ul>
                   <div class="story-ask" data-until="1"><p class="story-label">Dana asks Rally, once</p><p class="story-quote">“Make one checklist of the tax documents every client owes the three of us. Show whose client each one is.”</p></div>
-                  <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Marcus’s inbox</b></p><p class="story-from">Elena Garcia</p><p class="story-subject">Our W-2s, both attached</p><ul class="ac-files" aria-label="Attached"><li>W2-Elena.pdf</li><li>W2-Luis.pdf</li></ul><p class="story-did">Ticked the W-2 for the Garcia family.</p></div>
-                  <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priti’s inbox</b></p><p class="story-from">Sam Okafor</p><p class="story-subject">1099 from my brokerage</p><ul class="ac-files" aria-label="Attached"><li>1099-brokerage.pdf</li></ul><p class="story-did">Ticked the 1099. Sam Okafor has sent everything.</p></div>
-                  <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Dana’s inbox</b></p><p class="story-from">June Whitlock</p><p class="story-subject">K-1 from the farm, and my 1098</p><ul class="ac-files" aria-label="Attached"><li>K1-Whitlock-Farms.pdf</li><li>1098-mortgage.pdf</li></ul><p class="story-did">Ticked both. June Whitlock has sent everything.</p></div>
+                  <div class="story-email ac-to-marcus" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New in <b>Marcus’s inbox</b></p><p class="story-from">Elena Garcia</p><p class="story-subject">Our W-2s, both attached</p><ul class="ac-files" aria-label="Attached"><li>W-2s-2026.pdf</li></ul><p class="story-did">Ticked the W-2 for the Garcia family.</p></div>
+                  <!-- The afternoon before a deadline: three clients send at once, one to each inbox, and three boxes tick. -->
+                  <div class="story-burst ac-burst" data-at="2">
+                    <div class="ac-trio">
+                      <div class="story-email"><p class="story-label"><!-- rally:gmail-mark -->New in <b>Dana’s inbox</b></p><p class="story-from">June Whitlock</p><p class="story-subject">K-1 from the farm</p><p class="story-did">Ticked the K-1.</p></div>
+                      <div class="story-email"><p class="story-label"><!-- rally:gmail-mark -->New in <b>Marcus’s inbox</b></p><p class="story-from">Tom Brandt</p><p class="story-subject">My 1099, at last</p><p class="story-did">Ticked the 1099.</p></div>
+                      <div class="story-email"><p class="story-label"><!-- rally:gmail-mark -->New in <b>Priti’s inbox</b></p><p class="story-from">Sam Okafor</p><p class="story-subject">1099 from my brokerage</p><p class="story-did">Ticked the 1099.</p></div>
+                    </div>
+                  </div>
                 </div>
                 <div class="story-page">
                   <div class="kit-head"><h3>2026 returns: documents in</h3><span class="kit-live">Updates itself from 3 inboxes <i class="kit-face ac-dana" aria-hidden="true">D</i><i class="kit-face ac-marcus" aria-hidden="true">M</i><i class="kit-face ac-priti" aria-hidden="true">P</i></span></div>
                   <table class="ac-sheet ac-sheet-firm">
                     <thead><tr><th scope="col">Client</th><th scope="col">W-2</th><th scope="col">1099</th><th scope="col">1098</th><th scope="col">K-1</th></tr></thead>
                     <tbody>
-                      <tr data-done="3">
-                        <th scope="row"><span class="ac-client"><i class="kit-face ac-dana" aria-hidden="true">D</i><span class="ac-name">June Whitlock</span><span class="ac-state"><span class="kit-sr">Dana’s client. </span><span data-until="3">1 of 3 in</span><span class="ac-ready" data-at="3">Ready</span></span></span></th>
+                      <tr data-done="2">
+                        <th scope="row"><span class="ac-client"><i class="kit-face ac-dana" aria-hidden="true">D</i><span class="ac-name">June Whitlock</span><span class="ac-state"><span class="kit-sr">Dana’s client. </span><span data-until="2">2 of 3 in</span><span class="ac-ready" data-at="2">Ready</span></span></span></th>
                         <td><span class="ac-na" role="img" aria-label="Not needed">–</span></td>
                         <td><i class="ac-tick ac-in" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
-                        <td><i class="ac-tick ac-second" data-done="3" data-touch="3" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
-                        <td><i class="ac-tick" data-done="3" data-touch="3" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
+                        <td><i class="ac-tick ac-in" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
+                        <td><i class="ac-tick" data-done="2" data-touch="2" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
                       </tr>
                       <tr>
                         <th scope="row"><span class="ac-client"><i class="kit-face ac-dana" aria-hidden="true">D</i><span class="ac-name">Lin &amp; Park</span><span class="ac-state"><span class="kit-sr">Dana’s client. </span><span>2 of 3 in</span></span></span></th>
@@ -377,26 +383,19 @@
                         <td><i class="ac-tick ac-in" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
                         <td><span class="ac-na" role="img" aria-label="Not needed">–</span></td>
                       </tr>
-                      <tr>
-                        <th scope="row"><span class="ac-client"><i class="kit-face ac-marcus" aria-hidden="true">M</i><span class="ac-name">Tom Brandt</span><span class="ac-state"><span class="kit-sr">Marcus’s client. </span><span>1 of 2 in</span></span></span></th>
+                      <tr data-done="2">
+                        <th scope="row"><span class="ac-client"><i class="kit-face ac-marcus" aria-hidden="true">M</i><span class="ac-name">Tom Brandt</span><span class="ac-state"><span class="kit-sr">Marcus’s client. </span><span data-until="2">1 of 2 in</span><span class="ac-ready" data-at="2">Ready</span></span></span></th>
                         <td><i class="ac-tick ac-in" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
-                        <td><i class="ac-tick" role="img" aria-label="Not in yet"></i></td>
+                        <td><i class="ac-tick ac-beat2" data-done="2" data-touch="2" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
                         <td><span class="ac-na" role="img" aria-label="Not needed">–</span></td>
                         <td><span class="ac-na" role="img" aria-label="Not needed">–</span></td>
                       </tr>
                       <tr data-done="2">
                         <th scope="row"><span class="ac-client"><i class="kit-face ac-priti" aria-hidden="true">P</i><span class="ac-name">Sam Okafor</span><span class="ac-state"><span class="kit-sr">Priti’s client. </span><span data-until="2">2 of 3 in</span><span class="ac-ready" data-at="2">Ready</span></span></span></th>
                         <td><i class="ac-tick ac-in" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
-                        <td><i class="ac-tick" data-done="2" data-touch="2" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
+                        <td><i class="ac-tick ac-beat3" data-done="2" data-touch="2" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
                         <td><span class="ac-na" role="img" aria-label="Not needed">–</span></td>
                         <td><i class="ac-tick ac-in" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
-                      </tr>
-                      <tr>
-                        <th scope="row"><span class="ac-client"><i class="kit-face ac-priti" aria-hidden="true">P</i><span class="ac-name">Ruth Kim</span><span class="ac-state"><span class="kit-sr">Priti’s client. </span><span>1 of 3 in</span></span></span></th>
-                        <td><i class="ac-tick" role="img" aria-label="Not in yet"></i></td>
-                        <td><i class="ac-tick" role="img" aria-label="Not in yet"></i></td>
-                        <td><i class="ac-tick ac-in" role="img" aria-label="In"><svg viewBox="0 0 22 22" aria-hidden="true"><path pathLength="1" d="M5 11.5c1.6 1.2 2.9 2.6 4 4.4 2.3-4.6 5.2-8.4 9.3-11.6" /></svg></i></td>
-                        <td><span class="ac-na" role="img" aria-label="Not needed">–</span></td>
                       </tr>
                     </tbody>
                   </table>
@@ -405,8 +404,9 @@
             </div>
           </div>
           <p class="ac-caption">
-            An example. Each email lands in one preparer’s inbox and ticks the
-            same page. Nobody copies anything across.
+            An example. One email on a quiet morning, then three at once the
+            afternoon before a deadline. Each lands in one preparer’s inbox
+            and ticks the same page. Nobody copies anything across.
           </p>
         </div>
       </section>

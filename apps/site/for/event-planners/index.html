@@ -91,13 +91,13 @@
 
               <div class="story-bar ev-event-bar">
                 <p class="ev-bar-note">
-                  An example event, played back. Every change is caused by an
-                  email arriving.
+                  An example event, played back. An email arrives, and the page
+                  updates itself. Nobody fills it in.
                 </p>
                 <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
               </div>
 
-              <div class="story-mail ev-strip">
+              <div class="story-mail ev-event-mail">
                 <div class="story-ask" data-until="1">
                   <p class="story-label">You ask Rally</p>
                   <p class="story-quote">“Make a page for the Lee and Park wedding on June 14: every vendor and where each one stands.”</p>
@@ -207,8 +207,8 @@
         <div class="story ev-night" data-story>
           <div class="story-bar">
             <p class="ev-bar-note">
-              One night, played back. The page fills itself in from the email.
-              Nobody refreshes it.
+              One night, played back. A client’s email goes onto the page by
+              itself. Other mail passes by. Nobody refreshes anything.
             </p>
             <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
           </div>
@@ -234,11 +234,23 @@
                 </div>
                 <div class="ev-beat ev-beat-night" data-at="2" data-until="3">
                   <p class="ev-clock">11:48 <small>pm</small></p>
-                  <div class="story-email">
-                    <p class="story-label"><!-- rally:gmail-mark -->New email</p>
-                    <p class="story-from">Anika Raman</p>
-                    <p class="story-subject">Could we move Dad’s toast to 8:00?</p>
-                    <p class="story-did">Filed under the Raman 60th. It changes the run of show.</p>
+                  <div class="story-burst ev-pile">
+                    <div class="story-email">
+                      <p class="story-label"><!-- rally:gmail-mark -->New email</p>
+                      <p class="story-from">Anika Raman</p>
+                      <p class="story-subject">Could we move Dad’s toast to 8:00?</p>
+                      <p class="story-did">Filed under the Raman 60th. It changes the run of show.</p>
+                    </div>
+                    <div class="story-email is-small" aria-hidden="true">
+                      <p class="story-label"><!-- rally:gmail-mark -->Newsletter</p>
+                      <p class="story-from">Petal Post</p>
+                      <p class="story-subject">Peony season is here</p>
+                    </div>
+                    <div class="story-email is-small" aria-hidden="true">
+                      <p class="story-label"><!-- rally:gmail-mark -->Receipt</p>
+                      <p class="story-from">Skyline Air</p>
+                      <p class="story-subject">Your receipt for June</p>
+                    </div>
                   </div>
                 </div>
                 <div class="ev-beat ev-beat-morning" data-at="3">
@@ -350,25 +362,25 @@
           </div>
           <div class="story-stage">
             <div class="story-slide" data-slide data-steps="3">
-              <div class="story-mail ev-strip">
+              <div class="story-mail ev-all-mail">
                 <div class="story-ask" data-until="1">
                   <p class="story-label">You ask Rally</p>
                   <p class="story-quote">“Show every event the three of us are running, nearest date first, with what is still open.”</p>
                 </div>
-                <div class="story-email" data-at="1" data-until="2">
-                  <p class="story-label"><i class="kit-face theo" aria-hidden="true">T</i>Monday <b>in Theo’s inbox</b></p>
+                <div class="story-email ev-to-2" data-at="1" data-until="2">
+                  <p class="story-label"><!-- rally:gmail-mark -->Monday <b>in Theo’s inbox</b><i class="kit-face theo" aria-hidden="true">T</i></p>
                   <p class="story-from">Harbor AV</p>
                   <p class="story-subject">Quote for two mics and a projector: $840</p>
                   <p class="story-did">Northwind offsite: the AV quote is in.</p>
                 </div>
-                <div class="story-email" data-at="2" data-until="3">
-                  <p class="story-label"><i class="kit-face priya" aria-hidden="true">P</i>Tuesday <b>in Priya’s inbox</b></p>
+                <div class="story-email ev-to-3" data-at="2" data-until="3">
+                  <p class="story-label"><!-- rally:gmail-mark -->Tuesday <b>in Priya’s inbox</b><i class="kit-face priya" aria-hidden="true">P</i></p>
                   <p class="story-from">Sugar &amp; Rye</p>
                   <p class="story-subject">Tasting confirmed for Thursday at 4</p>
                   <p class="story-did">A day closer. The Raman tasting is set.</p>
                 </div>
-                <div class="story-email" data-at="3">
-                  <p class="story-label"><i class="kit-face maya" aria-hidden="true">M</i>Tuesday <b>in Maya’s inbox</b></p>
+                <div class="story-email ev-to-1" data-at="3">
+                  <p class="story-label"><!-- rally:gmail-mark -->Tuesday <b>in Maya’s inbox</b><i class="kit-face maya" aria-hidden="true">M</i></p>
                   <p class="story-from">Jess Lee</p>
                   <p class="story-subject">Final headcount is 142</p>
                   <p class="story-did">Lee &amp; Park: the final headcount is in.</p>

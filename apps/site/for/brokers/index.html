@@ -55,17 +55,32 @@
               </p>
               <div class="bk-phone">
                 <div class="story-mail">
+                  <p class="bk-inbox" aria-hidden="true"><!-- rally:gmail-mark -->Your Gmail inbox</p>
                   <div class="story-ask" data-until="1"><p class="story-label">You ask Rally, once</p><p class="story-quote">“Who do I need to get back to today? New leads first, then whoever has waited longest.”</p></div>
-                  <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:12 am</span></p><p class="story-from">Website inquiry form</p><p class="story-subject">Nora Shah asked about 14 Oak Lane</p><p class="story-did">Put Nora Shah on top. Her clock is running.</p></div>
-                  <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:31 am</span></p><p class="story-from">Jamal Reed</p><p class="story-subject">Saturday at 11 works for the showing</p><p class="story-did">Jamal’s showing is booked. Struck him off.</p></div>
-                  <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:50 am</span></p><p class="story-from">Elena Cruz</p><p class="story-subject">Just checking you got my message</p><p class="story-did">Elena has now asked twice. Flagged her.</p></div>
+                  <div class="story-burst bk-stack" data-at="1" data-until="2">
+                    <div class="story-email"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Listing site inquiry<span class="bk-at">8:12 am</span></p><p class="story-subject">Nora Shah asked about 14 Oak Lane</p><p class="story-did">Three new leads at once. All three go on top.</p></div>
+                    <div class="story-email is-small"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from Listing site inquiry</span></p><p class="story-subject">Dev Patel asked about 9 Elm Court</p></div>
+                    <div class="story-email is-small"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from Listing site inquiry</span></p><p class="story-subject">Ines Mora asked about 31 Hill Road</p></div>
+                  </div>
+                  <div class="story-email" data-at="2" data-until="3"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Jamal Reed<span class="bk-at">8:31 am</span></p><p class="story-subject">Saturday at 11 works for the showing</p><p class="story-did">Jamal’s showing is booked. Struck him off.</p></div>
+                  <div class="story-email" data-at="3"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Elena Cruz<span class="bk-at">8:50 am</span></p><p class="story-subject">Just checking you got my message</p><p class="story-did">Elena has now asked twice. Flagged her.</p></div>
                 </div>
                 <div class="story-page bk-list">
                   <div class="bk-list-head"><h2>Today</h2><span class="kit-live">Updates itself from your Gmail</span></div>
-                  <p class="bk-now">Tuesday, <span data-until="1">8:05</span><span data-at="1" data-until="2">8:12</span><span data-at="2" data-until="3">8:31</span><span data-at="3">8:50</span> am</p>
+                  <p class="bk-now">Monday, <span data-until="1">8:05</span><span data-at="1" data-until="2">8:12</span><span data-at="2" data-until="3">8:31</span><span data-at="3">8:50</span> am</p>
                   <ul class="bk-rows">
                     <li class="bk-row" data-at="1" data-left="10">
                       <div class="bk-who"><strong>Nora Shah <span class="kit-pill new">New</span></strong><span>Asked about 14 Oak Lane</span></div>
+                      <span class="bk-wait">Since 8:12</span>
+                      <i class="bk-clock" aria-hidden="true"><b></b></i>
+                    </li>
+                    <li class="bk-row" data-at="1" data-left="10">
+                      <div class="bk-who"><strong>Dev Patel <span class="kit-pill new">New</span></strong><span>Asked about 9 Elm Court</span></div>
+                      <span class="bk-wait">Since 8:12</span>
+                      <i class="bk-clock" aria-hidden="true"><b></b></i>
+                    </li>
+                    <li class="bk-row" data-at="1" data-left="10">
+                      <div class="bk-who"><strong>Ines Mora <span class="kit-pill new">New</span></strong><span>Asked about 31 Hill Road</span></div>
                       <span class="bk-wait">Since 8:12</span>
                       <i class="bk-clock" aria-hidden="true"><b></b></i>
                     </li>
@@ -76,7 +91,7 @@
                     </li>
                     <li class="bk-row" data-left="4" data-done="2">
                       <div class="bk-who"><strong>Jamal Reed</strong><span data-until="2">Wants to see Maple Court</span><span data-at="2">Showing booked, Sat 11am</span></div>
-                      <span class="bk-wait" data-until="2">Since yesterday</span><span class="kit-pill good" data-at="2">Booked</span>
+                      <span class="bk-wait" data-until="2">Since Saturday</span><span class="kit-pill good" data-at="2">Booked</span>
                       <svg class="bk-strike" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><path d="M1 11C18 6 32 14 52 9S86 7 99 10" /></svg>
                       <i class="bk-clock" aria-hidden="true"><b></b></i>
                     </li>
@@ -85,13 +100,7 @@
                       <span class="bk-wait">Since 7:10</span>
                       <i class="bk-clock" aria-hidden="true"><b></b></i>
                     </li>
-                    <li class="bk-row" data-left="8">
-                      <div class="bk-who"><strong>The Okafors</strong><span>Question on the inspection</span></div>
-                      <span class="bk-wait">Since 7:48</span>
-                      <i class="bk-clock" aria-hidden="true"><b></b></i>
-                    </li>
                   </ul>
-                  <p class="bk-list-foot">New leads land on top. Then whoever has waited longest. Answered ones strike themselves off.</p>
                 </div>
                 <p class="bk-note">An example. Nobody types this list or refreshes it. Each email changes it.</p>
               </div>
@@ -104,10 +113,11 @@
               </p>
               <div class="bk-phone">
                 <div class="story-mail">
+                  <p class="bk-inbox" aria-hidden="true"><!-- rally:gmail-mark -->Your Gmail inbox</p>
                   <div class="story-ask" data-until="1"><p class="story-label">You ask Rally, once</p><p class="story-quote">“Who is waiting on me today? New referrals first, then whoever has waited longest.”</p></div>
-                  <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:12 am</span></p><p class="story-from">Kim Tran, Hale Realty</p><p class="story-subject">Intro: Ben Ortiz needs a pre-approval</p><p class="story-did">Put Ben Ortiz on top. His clock is running.</p></div>
-                  <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:31 am</span></p><p class="story-from">Sara Lind</p><p class="story-subject">Thursday at 2 works for the call</p><p class="story-did">Sara’s call is booked. Struck her off.</p></div>
-                  <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:50 am</span></p><p class="story-from">Marcus Lee</p><p class="story-subject">Any news? My rate lock ends Friday</p><p class="story-did">Marcus has now asked twice. Flagged him.</p></div>
+                  <div class="story-email" data-at="1" data-until="2"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Kim Tran, Hale Realty<span class="bk-at">8:12 am</span></p><p class="story-subject">Intro: Ben Ortiz needs a pre-approval</p><p class="story-did">Put Ben Ortiz on top. His clock is running.</p></div>
+                  <div class="story-email" data-at="2" data-until="3"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Sara Lind<span class="bk-at">8:31 am</span></p><p class="story-subject">Thursday at 2 works for the call</p><p class="story-did">Sara’s call is booked. Struck her off.</p></div>
+                  <div class="story-email" data-at="3"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Marcus Lee<span class="bk-at">8:50 am</span></p><p class="story-subject">Any news? My rate lock ends Friday</p><p class="story-did">Marcus has now asked twice. Flagged him.</p></div>
                 </div>
                 <div class="story-page bk-list">
                   <div class="bk-list-head"><h2>Today</h2><span class="kit-live">Updates itself from your Gmail</span></div>
@@ -140,7 +150,6 @@
                       <i class="bk-clock" aria-hidden="true"><b></b></i>
                     </li>
                   </ul>
-                  <p class="bk-list-foot">New referrals land on top. Then whoever has waited longest. Answered ones strike themselves off.</p>
                 </div>
                 <p class="bk-note">An example. Nobody types this list or refreshes it. Each email changes it.</p>
               </div>
@@ -153,10 +162,11 @@
               </p>
               <div class="bk-phone">
                 <div class="story-mail">
+                  <p class="bk-inbox" aria-hidden="true"><!-- rally:gmail-mark -->Your Gmail inbox</p>
                   <div class="story-ask" data-until="1"><p class="story-label">You ask Rally, once</p><p class="story-quote">“Who is waiting on me today? New quote requests first, then whoever has waited longest.”</p></div>
-                  <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:12 am</span></p><p class="story-from">Website quote form</p><p class="story-subject">Omar Haddad wants a landlord policy quote</p><p class="story-did">Put Omar Haddad on top. His clock is running.</p></div>
-                  <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:31 am</span></p><p class="story-from">Greg Tanaka</p><p class="story-subject">The adjuster just called me, all good</p><p class="story-did">Greg has his answer. Struck him off.</p></div>
-                  <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email<span class="bk-at">8:50 am</span></p><p class="story-from">Ruiz Bakery</p><p class="story-subject">Landlord needs our certificate by noon</p><p class="story-did">Ruiz Bakery asked twice. Flagged them.</p></div>
+                  <div class="story-email" data-at="1" data-until="2"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Website quote form<span class="bk-at">8:12 am</span></p><p class="story-subject">Omar Haddad wants a landlord policy quote</p><p class="story-did">Put Omar Haddad on top. His clock is running.</p></div>
+                  <div class="story-email" data-at="2" data-until="3"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Greg Tanaka<span class="bk-at">8:31 am</span></p><p class="story-subject">The adjuster just called me, all good</p><p class="story-did">Greg has his answer. Struck him off.</p></div>
+                  <div class="story-email" data-at="3"><p class="story-from"><!-- rally:gmail-mark --><span class="kit-sr">New email from </span>Ruiz Bakery<span class="bk-at">8:50 am</span></p><p class="story-subject">Landlord needs our certificate by noon</p><p class="story-did">Ruiz Bakery asked twice. Flagged them.</p></div>
                 </div>
                 <div class="story-page bk-list">
                   <div class="bk-list-head"><h2>Today</h2><span class="kit-live">Updates itself from your Gmail</span></div>
@@ -189,7 +199,6 @@
                       <i class="bk-clock" aria-hidden="true"><b></b></i>
                     </li>
                   </ul>
-                  <p class="bk-list-foot">New quote requests land on top. Then whoever has waited longest. Answered ones strike themselves off.</p>
                 </div>
                 <p class="bk-note">An example. Nobody types this list or refreshes it. Each email changes it.</p>
               </div>
@@ -324,7 +333,7 @@
           </div>
           <div class="story-stage">
             <article class="story-slide" data-slide aria-label="A list of follow-ups due this week that changes as emails arrive">
-              <div class="story-mail">
+              <div class="story-mail" data-flow="across">
                 <div class="story-ask" data-until="1"><p class="story-label">You ask Rally, once</p><p class="story-quote">“List my follow-ups due this week, by day. When a new lead writes, notify me and draft a reply.”</p></div>
                 <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Ruiz Bakery</p><p class="story-subject">Got the certificate, thank you</p><p class="story-did">Ruiz Bakery has what they needed. Struck it off today.</p></div>
                 <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Lakeside Dental</p><p class="story-subject">Can we do the renewal Thursday instead?</p><p class="story-did">Moved Lakeside Dental from Wednesday to Thursday.</p></div>
@@ -438,9 +447,9 @@
             <article class="story-slide" data-slide aria-label="One page of an office’s leads that changes as emails arrive in three inboxes">
               <div class="story-mail">
                 <div class="story-ask" data-until="1"><p class="story-label">You ask Rally, once</p><p class="story-quote">“Show every open lead in the office, by broker, and how long each has waited.”</p></div>
-                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priya’s inbox</b></p><p class="story-from">Sara Lind</p><p class="story-subject">Thursday at 2 works for the call</p><p class="story-did">Sara’s call is booked. Struck her off Priya’s list.</p></div>
-                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Kim Tran, Hale Realty</p><p class="story-subject">Intro: Ben Ortiz needs a pre-approval</p><p class="story-did">Added Ben Ortiz to Theo’s list.</p></div>
-                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Maya’s inbox</b></p><p class="story-from">Marcus Lee</p><p class="story-subject">Any news? My rate lock ends Friday</p><p class="story-did">Marcus has asked twice. Flagged him on Maya’s list.</p></div>
+                <div class="story-email bk-in-3" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priya’s inbox</b></p><p class="story-from">Sara Lind</p><p class="story-subject">Thursday at 2 works for the call</p><p class="story-did">Sara’s call is booked. Struck her off Priya’s list.</p></div>
+                <div class="story-email bk-in-2" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Kim Tran, Hale Realty</p><p class="story-subject">Intro: Ben Ortiz needs a pre-approval</p><p class="story-did">Added Ben Ortiz to Theo’s list.</p></div>
+                <div class="story-email bk-in-1" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Maya’s inbox</b></p><p class="story-from">Marcus Lee</p><p class="story-subject">Any news? My rate lock ends Friday</p><p class="story-did">Marcus has asked twice. Flagged him on Maya’s list.</p></div>
               </div>
               <div class="story-page bk-board">
                 <div class="kit-head"><h3>Office leads</h3><span class="kit-live">Updates itself from 3 inboxes <i class="kit-face maya" aria-hidden="true">M</i><i class="kit-face theo" aria-hidden="true">T</i><i class="kit-face priya" aria-hidden="true">P</i></span></div>

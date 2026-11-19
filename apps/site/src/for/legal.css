@@ -18,6 +18,11 @@
 
 /* ---- The sheet: one ruled margin down the page, section marks to its left ---- */
 
+/* A card that crosses out of its slot is cut at the screen's edge instead of widening the page. */
+.lg {
+  overflow-x: clip;
+}
+
 .lg-sheet {
   position: relative;
 }
@@ -144,33 +149,152 @@
   font-size: 13px; line-height: 1.5; color: var(--muted);
 }
 
-.lg-story .story-ask,
-.lg-story .story-email {
-  border-radius: 4px; padding: 13px 16px;
-}
-
 .lg-story .story-ask {
-  border-style: dashed; border-color: var(--lg-rule); background: transparent;
-}
-
-.lg-story .story-email {
-  border-color: #d4d9c8; border-left: 3px solid var(--green); box-shadow: none;
-}
-
-.lg-story .story-label {
-  font-size: 12px;
+  border-style: dashed; border-color: var(--lg-rule); border-radius: 6px; background: transparent;
+  padding: 13px 16px;
 }
 
 .lg-story .story-quote {
   font-size: 20px;
 }
 
+/* An email here is the shared little Gmail card, a shade squarer to sit with the registers. */
+.lg-story .story-email {
+  border-radius: 8px;
+}
+
 .lg-story .story-did {
   font-size: 13.5px;
 }
 
-.lg-story .story-email.is-new {
-  animation: lg-set 0.5s ease-out both;
+/*
+ * How mail arrives, one way per example. Every card comes in, travels on at
+ * one slow, level pace and dissolves as the page changes: nothing scales and
+ * nothing bounces. A card drifts on `translate` while it is read, and leaves
+ * from where the drift put it, so the two motions join without a step.
+ */
+
+/* § 1, the docket: a request crosses the desk, in from the left and out to the right. */
+.lg-mail-across {
+  --lg-drift: 40px; --lg-travel: 320px;
+}
+
+.lg-story .lg-mail-across .is-new.story-email {
+  animation: lg-in-left 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both, lg-drift-across 1.9s linear both;
+}
+
+.lg-story .lg-mail-across .is-leaving.story-email {
+  animation: lg-out-across 1.3s cubic-bezier(0.45, 0, 0.8, 0.65) both;
+}
+
+/* § 4, the status page: the same crossing the other way, toward the people who read it. */
+.lg-mail-back {
+  --lg-drift: -28px; --lg-travel: -210px;
+}
+
+.lg-mail-back > .story-email {
+  justify-self: end;
+}
+
+.lg-story .lg-mail-back .is-new.story-email {
+  animation: lg-in-right 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both, lg-drift-across 1.9s linear both;
+}
+
+.lg-story .lg-mail-back .is-leaving.story-email {
+  animation: lg-out-across 1.3s cubic-bezier(0.45, 0, 0.8, 0.65) both;
+}
+
+/* § 2, the lanes: one card floats straight down onto the board and dissolves as the marker moves. */
+/* It sinks only as far as the board's title, so it never passes over a count or a marker that is changing. */
+.lg-mail-down {
+  --lg-sink: 66px;
+}
+
+.lg-mail-down > .story-email {
+  justify-self: center;
+}
+
+.lg-story .lg-mail-down .is-new.story-email {
+  animation: lg-in-top 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both, lg-drift-down 1.9s linear both;
+}
+
+.lg-story .lg-mail-down .is-leaving.story-email {
+  animation: lg-out-down 1.45s cubic-bezier(0.4, 0, 0.75, 0.85) both;
+}
+
+/* § 3, the NDA queue: mail from three inboxes lands a beat apart. The card
+   the queue acts on sinks into it; mail that is not about an NDA passes by. */
+.lg-mail-burst {
+  --lg-sink: 46px;
+}
+
+.lg-story .lg-mail-burst .is-new .story-email {
+  animation: lg-in-top 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.lg-story .lg-mail-burst .is-leaving .story-email {
+  animation: lg-out-sink 1.2s cubic-bezier(0.45, 0, 0.8, 0.65) both;
+}
+
+.lg-story .lg-mail-burst .is-leaving .story-email.is-small {
+  animation-name: lg-out-pass;
+}
+
+.lg-story .lg-mail-burst .story-burst > .story-email:nth-child(2) {
+  animation-delay: 0.22s;
+}
+
+.lg-story .lg-mail-burst .story-burst > .story-email:nth-child(3) {
+  animation-delay: 0.44s;
+}
+
+.lg-burst .story-burst > .story-email.is-small {
+  opacity: 1;
+}
+
+/* What Rally did with mail that was not for this page: nothing. */
+.lg-skip {
+  margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 6px; font-size: 11.5px; line-height: 1.4;
+  color: var(--muted);
+}
+
+@keyframes lg-in-left {
+  from { opacity: 0; transform: translateX(-72px); }
+}
+
+@keyframes lg-in-right {
+  from { opacity: 0; transform: translateX(72px); }
+}
+
+@keyframes lg-in-top {
+  from { opacity: 0; transform: translateY(-34px); }
+}
+
+@keyframes lg-drift-across {
+  to { translate: var(--lg-drift) 0; }
+}
+
+@keyframes lg-out-across {
+  from { translate: var(--lg-drift) 0; }
+  to { translate: var(--lg-travel) 0; opacity: 0; filter: blur(2.5px); }
+}
+
+@keyframes lg-drift-down {
+  to { translate: 0 8px; }
+}
+
+@keyframes lg-out-down {
+  from { translate: 0 8px; }
+  45% { opacity: 0.8; filter: blur(0); }
+  to { translate: 0 var(--lg-sink); opacity: 0; filter: blur(2.5px); }
+}
+
+@keyframes lg-out-sink {
+  to { translate: 0 var(--lg-sink); opacity: 0; filter: blur(2.5px); }
+}
+
+@keyframes lg-out-pass {
+  to { translate: 26px 0; opacity: 0; filter: blur(2px); }
 }
 
 .lg-story .story-page {
@@ -215,24 +339,24 @@
   /* Longhands, so a value that sits on a tinted chip keeps its tint under the line. */
   background-image: linear-gradient(currentColor, currentColor); background-position: left bottom;
   background-size: 0 1.5px; background-repeat: no-repeat;
-  animation: lg-set 0.45s ease-out both, lg-underline 2.8s ease-out both;
+  animation: lg-set 0.45s ease-out both, lg-underline 1.8s ease-out both;
 }
 
-/* A marker's count is underlined once it has landed. */
+/* A marker's count is underlined once it has landed, and done before the next email. */
 .lg-story .lg-page .lg-marker.is-touched b {
-  animation: lg-underline 2.4s 1s ease-out both;
+  animation: lg-underline 1s 0.8s ease-out both;
 }
 
 .lg-story .lg-page .lg-reg-row.is-touched,
 .lg-story .lg-page .lg-nda-row.is-touched,
 .lg-story .lg-page .lg-status > li.is-touched {
-  animation: lg-wash 2.8s ease-out both;
+  animation: lg-wash 1.8s ease-out both;
 }
 
 .lg-story .lg-page .lg-reg-row[data-at].is-new:not(.is-moved),
 .lg-story .lg-page .lg-nda-row[data-at].is-new:not(.is-moved),
 .lg-story .lg-page .lg-status > li[data-at].is-new:not(.is-moved) {
-  animation: lg-open 0.6s ease-out backwards, lg-wash 2.8s ease-out both;
+  animation: lg-open 0.6s ease-out backwards, lg-wash 1.8s ease-out both;
 }
 
 @keyframes lg-set {
@@ -800,40 +924,6 @@
   max-width: 40em;
 }
 
-/* On a wide screen an email is one line across the page: who wrote, then what Rally did. */
-@media (min-width: 901px) {
-  .lg-story-wide .lg-slip {
-    display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 0.85fr); column-gap: 24px;
-    align-items: center;
-  }
-
-  .lg-story-wide .story-ask .lg-slip {
-    grid-template-columns: 150px minmax(0, 1fr); align-items: baseline;
-  }
-
-  .lg-story-wide .story-email .story-label {
-    grid-row: 1 / 3;
-  }
-
-  .lg-story-wide .story-quote,
-  .lg-story-wide .story-from {
-    margin-top: 0;
-  }
-
-  .lg-story-wide .story-from {
-    grid-column: 2; grid-row: 1;
-  }
-
-  .lg-story-wide .story-subject {
-    grid-column: 2; grid-row: 2;
-  }
-
-  .lg-story-wide .story-did {
-    grid-column: 3; grid-row: 1 / 3; align-self: stretch; align-items: center; margin: 0;
-    border-top: 0; border-left: 1px dashed var(--lg-rule); padding: 0 0 0 24px;
-  }
-}
-
 @media (max-width: 1100px) {
   .lg-hero h1 {
     font-size: 68px;
@@ -1071,6 +1161,33 @@
     font-size: 18.5px;
   }
 
+  .lg-mail-across {
+    --lg-drift: 10px; --lg-travel: 76px;
+  }
+
+  .lg-mail-back {
+    --lg-drift: -10px; --lg-travel: -76px;
+  }
+
+  .lg-mail-down {
+    --lg-sink: 58px;
+  }
+
+  /* The shared burst wraps here. Passing mail sits above, so the card the queue
+     acts on stays next to the queue and sinks straight into it. */
+  .lg-burst .story-burst > .story-email.is-small {
+    order: -1; max-width: 62%;
+  }
+
+  /* Its inbox, its subject and "no change" say enough at this width. */
+  .lg-burst .story-burst > .story-email.is-small .story-from {
+    display: none;
+  }
+
+  .lg-burst .story-burst > .story-email.is-small .story-subject {
+    display: block;
+  }
+
   .lg-tally {
     gap: 2px 16px;
   }
@@ -1151,7 +1268,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lg-story .story-email.is-new,
+  .lg-story .story-mail .story-email,
   .lg-story .lg-page [data-at].is-new,
   .lg-story .lg-page .is-touched,
   .lg-story .lg-page .is-touched b,

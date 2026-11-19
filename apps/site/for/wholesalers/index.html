@@ -62,10 +62,10 @@
           <div class="story-stage">
             <article class="story-slide" data-slide data-steps="3" aria-label="Example: an order board that updates itself from Gmail">
               <div class="story-mail">
-                <div class="story-ask" data-until="1"><div class="wh-slip"><p class="story-label">You ask Rally</p><p class="story-quote">“Put every order in my inbox on a board: new, quoted, confirmed, shipped.”</p></div></div>
-                <div class="story-email" data-at="1" data-until="2"><div class="wh-slip"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Harbor Cafe</p><p class="story-subject">Can you do 40 cases by Friday?</p><p class="story-did">Added Harbor Cafe to New.</p></div></div>
-                <div class="story-email" data-at="2" data-until="3"><div class="wh-slip"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Tri-County Freight</p><p class="story-subject">Picked up: Greenleaf, 2 pallets</p><p class="story-did">Moved Greenleaf to Shipped.</p></div></div>
-                <div class="story-email" data-at="3"><div class="wh-slip"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Bell &amp; Co</p><p class="story-subject">Re: Quote for 24 cases. Approved, go ahead</p><p class="story-did">Moved Bell &amp; Co to Confirmed.</p></div></div>
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Put every order in my inbox on a board: new, quoted, confirmed, shipped.”</p></div>
+                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Harbor Cafe</p><p class="story-subject">Can you do 40 cases by Friday?</p><p class="story-did">Added Harbor Cafe to New.</p></div>
+                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Tri-County Freight</p><p class="story-subject">Picked up: Greenleaf, 2 pallets</p><p class="story-did">Moved Greenleaf to Shipped.</p></div>
+                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Bell &amp; Co</p><p class="story-subject">Re: Quote for 24 cases. Approved, go ahead</p><p class="story-did">Moved Bell &amp; Co to Confirmed.</p></div>
               </div>
               <div class="story-page wh-board">
                 <div class="kit-head wh-board-head">
@@ -261,29 +261,31 @@
         </div>
         <div class="story wh-in" data-story>
           <div class="story-bar">
-            <p class="wh-bar-note">An example. Three supplier emails, two inboxes.</p>
+            <p class="wh-bar-note">An example. Three supplier emails land at once, in two inboxes.</p>
             <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
           </div>
           <div class="story-stage">
-            <article class="story-slide" data-slide data-steps="3" aria-label="Example: a week of supplier deliveries that updates itself from two inboxes">
+            <article class="story-slide" data-slide data-steps="1" aria-label="Example: a week of supplier deliveries that updates itself from two inboxes">
               <div class="story-mail">
-                <div class="story-ask" data-until="1"><div class="wh-slip"><p class="story-label">You ask Rally</p><p class="story-quote">“Show what we’re waiting on from suppliers this week, from my inbox and Jay’s.”</p></div></div>
-                <div class="story-email" data-at="1" data-until="2"><div class="wh-slip"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Jay’s inbox</b></p><p class="story-from">Sun Valley Oils</p><p class="story-subject">Delay: your 60 cases now ship Friday</p><p class="story-did">Moved Sun Valley to Friday. It’s late.</p></div></div>
-                <div class="story-email" data-at="2" data-until="3"><div class="wh-slip"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in your inbox</b></p><p class="story-from">Kettle Brook Jars</p><p class="story-subject">Your pallet shipped today, arriving Thursday</p><p class="story-did">Put Kettle Brook on Thursday.</p></div></div>
-                <div class="story-email" data-at="3"><div class="wh-slip"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Jay’s inbox</b></p><p class="story-from">Coastal Pack</p><p class="story-subject">Delivered 9:14am: 500 cartons</p><p class="story-did">Ticked off Coastal Pack. It’s in.</p></div></div>
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show what we’re waiting on from suppliers this week, from my inbox and Jay’s.”</p></div>
+                <div class="story-burst wh-burst" data-at="1">
+                  <div class="story-email"><p class="story-label"><!-- rally:gmail-mark --><span>New email</span> <b>in Jay’s inbox</b></p><p class="story-from">Sun Valley Oils</p><p class="story-subject">Delay: your 60 cases now ship Friday</p><p class="story-did">Moved it to Friday. It’s late.</p></div>
+                  <div class="story-email wh-mine"><p class="story-label"><!-- rally:gmail-mark --><span>New email</span> <b>in your inbox</b></p><p class="story-from">Kettle Brook Jars</p><p class="story-subject">Shipped today, arriving Thursday</p><p class="story-did">Put it on Thursday.</p></div>
+                  <div class="story-email"><p class="story-label"><!-- rally:gmail-mark --><span>New email</span> <b>in Jay’s inbox</b></p><p class="story-from">Coastal Pack</p><p class="story-subject">Delivered 9:14am: 500 cartons</p><p class="story-did">Ticked it off. It’s in.</p></div>
+                </div>
               </div>
               <div class="story-page wh-in-page">
                 <div class="kit-head"><h3>Inbound this week</h3><span class="kit-live">Updates itself from 2 inboxes: yours and Jay’s</span></div>
                 <dl class="wh-tally">
                   <div><dt>Due</dt><dd>4</dd></div>
-                  <div data-touch="3"><dt>Arrived</dt><dd class="wh-num"><span data-until="3">1</span><span data-at="3">2</span></dd></div>
+                  <div data-touch="1"><dt>Arrived</dt><dd class="wh-num"><span data-until="1">1</span><span data-at="1">2</span></dd></div>
                   <div data-touch="1"><dt>Late</dt><dd class="wh-num"><span data-until="1">0</span><span data-at="1">1</span></dd></div>
-                  <div data-touch="2"><dt>No date</dt><dd class="wh-num"><span data-until="2">1</span><span data-at="2">0</span></dd></div>
+                  <div data-touch="1"><dt>No date</dt><dd class="wh-num"><span data-until="1">1</span><span data-at="1">0</span></dd></div>
                 </dl>
                 <div class="wh-week">
                   <section class="wh-day wh-day-none" aria-labelledby="wh-day-none">
                     <h4 id="wh-day-none">No date</h4>
-                    <div class="wh-chip" data-key="kettle" data-until="2"><strong>Kettle Brook Jars</strong><span>1 pallet</span><p><span class="kit-pill wait">Asked Monday</span><i class="wh-via">Your inbox</i></p></div>
+                    <div class="wh-chip" data-key="kettle" data-until="1"><strong>Kettle Brook Jars</strong><span>1 pallet</span><p><span class="kit-pill wait">Asked Monday</span><i class="wh-via">Your inbox</i></p></div>
                   </section>
                   <section class="wh-day" aria-labelledby="wh-day-mon">
                     <h4 id="wh-day-mon">Mon</h4>
@@ -291,7 +293,7 @@
                   </section>
                   <section class="wh-day wh-day-today" aria-labelledby="wh-day-tue">
                     <h4 id="wh-day-tue">Tue <em>Today</em></h4>
-                    <div class="wh-chip" data-done="3" data-touch="3"><strong>Coastal Pack</strong><span>500 cartons</span><p><span class="kit-pill" data-until="3">Due today</span><span class="kit-pill good" data-at="3">Arrived 9:14</span><i class="wh-via wh-jay">Jay’s inbox</i></p></div>
+                    <div class="wh-chip" data-done="1" data-touch="1"><strong>Coastal Pack</strong><span>500 cartons</span><p><span class="kit-pill" data-until="1">Due today</span><span class="kit-pill good" data-at="1">Arrived 9:14</span><i class="wh-via wh-jay">Jay’s inbox</i></p></div>
                   </section>
                   <section class="wh-day" aria-labelledby="wh-day-wed">
                     <h4 id="wh-day-wed">Wed</h4>
@@ -299,7 +301,7 @@
                   </section>
                   <section class="wh-day" aria-labelledby="wh-day-thu">
                     <h4 id="wh-day-thu">Thu</h4>
-                    <div class="wh-chip" data-key="kettle" data-at="2" data-touch="2"><strong>Kettle Brook Jars</strong><span>1 pallet</span><p><span class="kit-pill good">On its way</span><i class="wh-via">Your inbox</i></p></div>
+                    <div class="wh-chip" data-key="kettle" data-at="1" data-touch="1"><strong>Kettle Brook Jars</strong><span>1 pallet</span><p><span class="kit-pill good">On its way</span><i class="wh-via">Your inbox</i></p></div>
                   </section>
                   <section class="wh-day" aria-labelledby="wh-day-fri">
                     <h4 id="wh-day-fri">Fri</h4>

@@ -67,9 +67,9 @@
             <article class="story-slide" data-slide aria-label="Example: a client wall that changes as three emails arrive">
               <div class="story-mail">
                 <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Make me a wall of my clients. Who’s waiting on me, and for how long? Longest wait first.”</p></div>
-                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Love the draft. One small change to the header</p><p class="story-did">Wren Yoga is waiting on you now.</p></div>
-                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Halden Dental</p><p class="story-subject">Circling back on the launch date</p><p class="story-did">Dana asked twice. Halden Dental jumps the queue.</p></div>
-                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Otis Brewing</p><p class="story-subject">Approved. Send the labels to print!</p><p class="story-did">Signed off. Otis Brewing is all square.</p></div>
+                <div class="story-email ag-to-row2 ag-to-left" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Love the draft. One small change to the header</p><p class="story-did">Wren Yoga is waiting on you now.</p></div>
+                <div class="story-email ag-to-row1 ag-to-left" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Halden Dental</p><p class="story-subject">Circling back on the launch date</p><p class="story-did">Dana asked twice. Halden Dental jumps the queue.</p></div>
+                <div class="story-email ag-to-row2 ag-to-right" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Otis Brewing</p><p class="story-subject">Approved. Send the labels to print!</p><p class="story-did">Signed off. Otis Brewing is all square.</p></div>
               </div>
               <div class="story-page ag-board">
                 <div class="ag-board-head">
@@ -203,7 +203,9 @@
         </figure>
       </section>
 
-      <!-- Solo or studio: the same three emails, built from one inbox and then from three. -->
+      <!-- Solo or studio: the same three client emails, built from one inbox and then from three.
+           In the studio each one arrives in a burst: the client's email, and what the other
+           two inboxes got in the same minute, which changes nothing on the wall. -->
       <section class="ag-studio wrap" aria-labelledby="ag-studio-title">
         <div class="ag-head ag-center">
           <p class="eyebrow">One inbox, or everyone’s</p>
@@ -226,7 +228,7 @@
           </div>
           <div class="story-stage">
             <article class="story-slide" data-slide role="tabpanel" id="ag-panel-solo" aria-labelledby="ag-tab-solo">
-              <div class="story-mail">
+              <div class="story-mail" data-flow="across">
                 <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show me which clients are waiting on me, longest wait first.”</p></div>
                 <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in your inbox</b></p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Feedback on the homepage draft</p><p class="story-did">Wren Yoga is waiting on you now.</p></div>
                 <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in your inbox</b></p><p class="story-from">Bea, Fern &amp; Fig Bakery</p><p class="story-subject">Checking you saw my note about the menu</p><p class="story-did">Bea asked twice. Answer her first.</p></div>
@@ -276,11 +278,20 @@
               <p class="ag-feeds"><b>One inbox, one wall.</b> Built from your own Gmail and nobody else’s.</p>
             </article>
             <article class="story-slide" data-slide role="tabpanel" id="ag-panel-studio" aria-labelledby="ag-tab-studio">
-              <div class="story-mail">
+              <div class="story-mail" data-flow="across">
                 <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Same wall, for all three of us. Show whose inbox it landed in and who owes the reply.”</p></div>
-                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Feedback on the homepage draft</p><p class="story-did">Wren Yoga is waiting on Theo now.</p></div>
-                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>to Priya, cc Maya</b></p><p class="story-from">Bea, Fern &amp; Fig Bakery</p><p class="story-subject">Checking you saw my note about the menu</p><p class="story-did">Bea asked twice. It was sent to Priya, so the reply is hers.</p></div>
-                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Sam, Otis Brewing</p><p class="story-subject">Approved. Send the labels to print!</p><p class="story-did">Signed off. Otis Brewing is all square.</p></div>
+                <div class="story-burst" data-at="1" data-until="2">
+                  <div class="story-email"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Noor, Wren Yoga</p><p class="story-subject">Feedback on the homepage draft</p><p class="story-did">Wren Yoga is waiting on Theo now.</p></div>
+                  <div class="ag-also" aria-hidden="true"><div class="story-email is-small"><p class="story-label"><!-- rally:gmail-mark --><b>Maya’s inbox</b></p><p class="story-from">Fontbarn</p><p class="story-subject">Your receipt for November</p></div><div class="story-email is-small"><p class="story-label"><!-- rally:gmail-mark --><b>Priya’s inbox</b></p><p class="story-from">Type Weekly</p><p class="story-subject">Five fonts we liked</p></div></div>
+                </div>
+                <div class="story-burst" data-at="2" data-until="3">
+                  <div class="story-email"><p class="story-label"><!-- rally:gmail-mark -->New email <b>to Priya, cc Maya</b></p><p class="story-from">Bea, Fern &amp; Fig Bakery</p><p class="story-subject">Checking you saw my note about the menu</p><p class="story-did">Bea asked twice. It was sent to Priya, so the reply is hers.</p></div>
+                  <div class="ag-also" aria-hidden="true"><div class="story-email is-small"><p class="story-label"><!-- rally:gmail-mark --><b>Maya’s inbox, cc</b></p><p class="story-from">Bea, Fern &amp; Fig Bakery</p><p class="story-subject">Checking you saw my note</p></div><div class="story-email is-small"><p class="story-label"><!-- rally:gmail-mark --><b>Theo’s inbox</b></p><p class="story-from">Stockyard Photos</p><p class="story-subject">Your download is ready</p></div></div>
+                </div>
+                <div class="story-burst" data-at="3">
+                  <div class="story-email"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Sam, Otis Brewing</p><p class="story-subject">Approved. Send the labels to print!</p><p class="story-did">Signed off. Otis Brewing is all square.</p></div>
+                  <div class="ag-also" aria-hidden="true"><div class="story-email is-small"><p class="story-label"><!-- rally:gmail-mark --><b>Priya’s inbox</b></p><p class="story-from">Desk &amp; Co</p><p class="story-subject">Your coworking invoice</p></div><div class="story-email is-small"><p class="story-label"><!-- rally:gmail-mark --><b>Maya’s inbox</b></p><p class="story-from">Type Weekly</p><p class="story-subject">Kerning, explained again</p></div></div>
+                </div>
               </div>
               <div class="story-page ag-board ag-board-small">
                 <div class="ag-board-head">
@@ -323,14 +334,14 @@
                   </li>
                 </ul>
               </div>
-              <p class="ag-feeds"><b>Three inboxes, one wall.</b> <span class="ag-feeds-who"><i class="kit-face maya" aria-hidden="true">M</i>Maya</span> <span class="ag-feeds-who"><i class="kit-face theo" aria-hidden="true">T</i>Theo</span> <span class="ag-feeds-who"><i class="kit-face priya" aria-hidden="true">P</i>Priya</span> each connected their own Gmail and said yes.</p>
+              <p class="ag-feeds"><b>Three inboxes, one wall.</b> <span class="ag-feeds-who"><i class="kit-face maya" aria-hidden="true">M</i>Maya</span> <span class="ag-feeds-who"><i class="kit-face theo" aria-hidden="true">T</i>Theo</span> <span class="ag-feeds-who"><i class="kit-face priya" aria-hidden="true">P</i>Priya</span> each connected their own Gmail and said yes. Receipts and newsletters land there too. Only client mail moves a tile.</p>
             </article>
           </div>
         </div>
         <p class="ag-studio-note">
-          Same three emails, shown both ways. Either way nobody keeps the wall
-          up: the tiles move when the mail does. Nobody’s inbox is read until
-          they connect it themselves.
+          The same three client emails, shown both ways. Either way nobody
+          keeps the wall up: the tiles move when the mail does. Nobody’s inbox
+          is read until they connect it themselves.
         </p>
       </section>
 

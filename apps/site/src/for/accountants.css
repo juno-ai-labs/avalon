@@ -6,12 +6,18 @@
  * deadline calendar and the practice view. Its motion is ticking off: a tick
  * draws itself into its box, a client's meter fills one document at a time and
  * settles into "Ready", a crossed-off line is ruled through, and a due date's
- * chip flips to "Filed". story.ts keeps time; every rule here hangs off the
- * classes it sets. Contract: docs/site-audience-pages.md.
+ * chip flips to "Filed". Each example brings its mail in its own way: the
+ * hero's card floats down and dissolves over the checklist, the chase list
+ * keeps the shared flow, the calendar's cards cross left to right, and the
+ * practice view drops a card from each inbox, then three at once. story.ts
+ * keeps time; every rule here hangs off the classes it sets.
+ * Contract: docs/site-audience-pages.md.
  */
 
 .ac-page {
   --ac-rule: #e6e8dc; --ac-soft: #595e53; --ac-box: #cdd2c0; --ac-wash: #f4f6ec;
+  /* An email card that crosses or tilts on its way out must not widen the page. */
+  overflow-x: clip;
 }
 
 /* ---- Text the whole page shares ---- */
@@ -131,6 +137,29 @@
   line-height: 1.1;
 }
 
+/* The hero's mail floats down, slowly: the card tips in from above, then
+   drifts on toward the checklist and dissolves as its tick is drawn. */
+.ac-check .story-mail {
+  --ac-sink: 78px;
+}
+
+.ac-check .story-mail .is-new.story-email {
+  animation: ac-float-in 0.85s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.ac-check .story-mail .is-leaving.story-email {
+  animation: ac-float-out 1.9s cubic-bezier(0.4, 0, 0.75, 0.75) both;
+}
+
+@keyframes ac-float-in {
+  from { opacity: 0; transform: translateY(-36px) rotate(-1.4deg); }
+}
+
+@keyframes ac-float-out {
+  45% { opacity: 0.8; filter: blur(0); }
+  to { opacity: 0; transform: translateY(var(--ac-sink)) rotate(1.4deg) scale(0.95); filter: blur(4px); }
+}
+
 /* Under a page's title: what it lists, and the count that moves. */
 .ac-sub {
   display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
@@ -198,6 +227,15 @@
 /* The second file in one email is ticked a beat after the first. */
 .story.is-live .ac-tick.ac-second.is-done path {
   transition-delay: 0.75s;
+}
+
+/* Three emails at once tick in the order their cards landed. */
+.story.is-live .ac-tick.ac-beat2.is-done path {
+  transition-delay: 0.45s;
+}
+
+.story.is-live .ac-tick.ac-beat3.is-done path {
+  transition-delay: 0.7s;
 }
 
 .ac-tick.ac-sm {
@@ -463,7 +501,7 @@
 
 .ac-page .story-page .ac-draft.is-new,
 .ac-page .story-page .ac-asks.is-new {
-  animation: ac-unfold 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 1.2s both;
+  animation: ac-unfold 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.45s both;
 }
 
 .ac-page .story-page .ac-asked.is-new {
@@ -498,24 +536,27 @@
   max-width: 12em;
 }
 
-/* Wide screens: the email lies along the top of the month as one strip,
-   who and what on the left, what Rally did on the right. */
-.ac-strip {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 28px;
-  align-items: center;
+/* The calendar's mail crosses: in from the left, then on to the right along
+   the top of the month, farther where there is room, and gone. */
+.ac-cal .story-mail {
+  --ac-cross: 17rem;
 }
 
-.ac-strip > * {
-  grid-column: 1;
+.ac-cal .story-mail[data-flow="across"] .is-new.story-email {
+  animation: ac-cross-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-.ac-strip .story-did {
-  grid-column: 2; grid-row: 1 / span 3; align-self: stretch; align-items: center; margin: 0;
-  border-top: 0; border-left: 1px dashed var(--line); padding: 4px 0 4px 28px; font-size: 14.5px;
+.ac-cal .story-mail[data-flow="across"] .is-leaving.story-email {
+  animation: ac-cross-out 1.4s cubic-bezier(0.45, 0, 0.7, 0.7) both;
 }
 
-.ac-strip .story-did::before {
-  margin-top: 0;
+@keyframes ac-cross-in {
+  from { opacity: 0; transform: translateX(-72px); }
+}
+
+@keyframes ac-cross-out {
+  40% { opacity: 0.85; filter: blur(0); }
+  to { opacity: 0; transform: translateX(var(--ac-cross)) scale(0.97); filter: blur(3px); }
 }
 
 .ac-dow {
@@ -691,9 +732,41 @@
   background: #e4d6e6; color: #5a4a5e;
 }
 
-/* The inboxes that feed the page. The one an email just landed in lights up. */
+/* The practice view's mail: three inboxes side by side, and each email
+   drops from its own. One on a quiet morning, then one into each at once. */
+.ac-firm-story {
+  container-type: inline-size;
+}
+
+.ac-desk .story-mail {
+  grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 8px;
+}
+
+.ac-desk .story-mail > * {
+  grid-column: 1 / -1;
+}
+
+.ac-desk .story-mail > .ac-to-marcus {
+  grid-column: 2;
+}
+
+/* The rail keeps its own row; the ask and the emails share the one beneath. */
+.ac-desk.story.is-live .story-mail > .ac-rail {
+  grid-area: 1 / 1 / auto / -1;
+}
+
+.ac-desk.story.is-live .story-mail > :not(.ac-rail) {
+  grid-area: 2 / 1 / auto / -1;
+}
+
+.ac-desk.story.is-live .story-mail > .ac-to-marcus {
+  grid-area: 2 / 2;
+}
+
+/* The inboxes that feed the page. One lights up while its email is landing. */
 .ac-rail {
-  display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; padding: 0; list-style: none;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 8px;
+  justify-items: start; margin: 0 0 8px; padding: 0; list-style: none;
 }
 
 .ac-inbox {
@@ -702,19 +775,86 @@
   color: var(--muted); transition: background-color 0.4s ease, border-color 0.4s ease, color 0.4s ease;
 }
 
-.ac-desk .story-mail.s1:not(.s2) .ac-inbox.ac-marcus,
-.ac-desk .story-mail.s2:not(.s3) .ac-inbox.ac-priti,
-.ac-desk .story-mail.s3 .ac-inbox.ac-dana {
+.ac-desk .story-mail:has(.ac-to-marcus.is-new) .ac-inbox.ac-marcus,
+.ac-desk .story-mail:has(.ac-burst.is-new) .ac-inbox {
   border-color: #91a577; background: var(--sage); color: var(--green);
 }
 
-/* The rail keeps its own row; the ask and the emails share the one beneath. */
-.ac-desk.story.is-live .story-mail > .ac-rail {
-  grid-area: 1 / 1;
+.ac-desk .story-burst {
+  display: block;
 }
 
-.ac-desk.story.is-live .story-mail > :not(.ac-rail) {
-  grid-area: 2 / 1;
+.ac-trio {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 8px; align-items: start;
+}
+
+.ac-desk .story-label {
+  flex-wrap: wrap; row-gap: 0;
+}
+
+.ac-desk .story-mail .is-new.story-email,
+.ac-desk .story-mail .is-new .story-email {
+  animation: ac-drop-in 0.62s cubic-bezier(0.2, 0.8, 0.2, 1) both; transform-origin: 50% 0;
+}
+
+.ac-desk .story-mail .is-leaving.story-email,
+.ac-desk .story-mail .is-leaving .story-email {
+  animation: ac-drop-out 1.15s cubic-bezier(0.45, 0, 0.75, 0.6) both;
+}
+
+.ac-desk .ac-trio > .story-email:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.ac-desk .ac-trio > .story-email:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes ac-drop-in {
+  from { opacity: 0; transform: translateY(-26px) scale(0.9); }
+}
+
+@keyframes ac-drop-out {
+  to { opacity: 0; transform: translateY(46px) scale(0.94); filter: blur(3px); }
+}
+
+/* Where three cards cannot stand side by side, they stack, each cut down to
+   three short lines, and the inboxes sit in a row above them. */
+@container (max-width: 520px) {
+  .ac-desk .story-mail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ac-desk .story-mail > .ac-to-marcus,
+  .ac-desk.story.is-live .story-mail > .ac-to-marcus {
+    grid-column: 1;
+  }
+
+  .ac-rail {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+
+  .ac-trio {
+    grid-template-columns: minmax(0, 1fr); row-gap: 5px;
+  }
+
+  .ac-trio > .story-email {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline;
+    padding: 7px 13px 8px;
+  }
+
+  .ac-trio .story-label,
+  .ac-trio .story-from {
+    grid-column: 1 / -1;
+  }
+
+  .ac-trio .story-from {
+    margin-top: 2px;
+  }
+
+  .ac-trio .story-did {
+    margin: 0; border: 0; padding: 0;
+  }
 }
 
 .ac-client {
@@ -943,18 +1083,10 @@
     margin-bottom: 22px;
   }
 
-  .ac-strip {
-    display: block;
+  .ac-cal .story-mail {
+    --ac-cross: 9rem;
   }
 
-  .ac-strip .story-did {
-    margin-top: 8px; border-top: 1px dashed var(--line); border-left: 0; padding: 8px 0 0;
-    font-size: 13px;
-  }
-
-  .ac-strip .story-did::before {
-    margin-top: 2px;
-  }
 
   .ac-season-grid,
   .ac-steps {
@@ -1081,8 +1213,12 @@
     display: block;
   }
 
-  .ac-rail {
-    gap: 4px;
+  .ac-check .story-mail {
+    --ac-sink: 46px;
+  }
+
+  .ac-cal .story-mail {
+    --ac-cross: 5rem;
   }
 
   .ac-inbox {
