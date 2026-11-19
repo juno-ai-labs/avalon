@@ -4514,8 +4514,23 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, CANVA_RETIREMENT_MIGRATION, {
   version: 153,
   description: "index the conversations that hold a Terminal deadline, so the schedule can find every due sandbox",
-  // See hostedTerminalDeadlines and docs/terminal-workspaces.md.
-  statements: [TERMINAL_DEADLINE_INDEX_STATEMENT],
+  // See hostedTerminalDeadlines and docs/terminal-workspaces.md. An object
+  // already holding deadlines may have nothing else to wake it, so it gets the
+  // one-shot reconcile migration 5 introduced; one with none pays no wake-up.
+  statements: [
+    TERMINAL_DEADLINE_INDEX_STATEMENT,
+    `INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
+        created_at, updated_at)
+     SELECT 'schedule_bootstrap', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)
+        AND EXISTS (SELECT 1 FROM sidekick_child_projections
+          WHERE json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL)
+     ON CONFLICT(kind, alarm_key) DO UPDATE SET
+       due_at = MIN(due_at, excluded.due_at), retry_at = 0, attempt = 0,
+       updated_at = excluded.updated_at`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {

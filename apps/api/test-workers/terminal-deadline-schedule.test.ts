@@ -4,7 +4,10 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, expect, it } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { ConversationEffectEnvelopeSchema, conversationEffectHash, WorkstreamDirectoryCommonEffectSchema } from "@rally/contracts/conversation-effects";
+import { hostedTerminalDeadlines } from "../src/durable-objects/hosted-conversation";
 import { workspaceDOName } from "../src/durable-objects/names";
+import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 // A Canvas's and a Sidekick's conversations report their sandbox deadlines to
@@ -76,4 +79,55 @@ it("schedules each Canvas's and Sidekick's earliest sandbox deadline, and keeps 
   await project(sidekickId, sidekickRun, 2, null);
   await workspace().refreshSchedule(workspaceId);
   expect(await terminalAlarms()).toEqual({});
+});
+
+it("indexes deadlines an Organization already held at v152, and wakes it once to schedule them", async () => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName(`populated-v152-terminal-${crypto.randomUUID()}`);
+  await stub.ping();
+  await runInDurableObject(stub, (_instance, state) => {
+    const sql = state.storage.sql;
+    const migrate = (through: number, now: number) => applyDurableObjectSqliteMigrations({ storage: state.storage,
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= through),
+      component: "workspace_do", workerVersionId: `v${through}`, now });
+    migrate(152, 1_000);
+    sql.exec(`INSERT INTO workspace_identity VALUES (1, 'workspace-1', 'global', 'wnam', 1, 1)`);
+    const projections: [string, string, string | null | undefined][] = [
+      ["canvas-1", "0", "2026-11-20T10:00:00.000Z"],
+      ["canvas-1", "agent-1", "2026-11-20T09:00:00.000Z"],
+      ["canvas-1", "agent-2", null],
+      ["canvas-2", "0", undefined],
+      ["sidekick-1", "run-1", "2026-11-21T08:00:00.000Z"],
+    ];
+    for (const [parentId, substreamId, deadline] of projections) {
+      const effect = { kind: "directory_common", state: "idle", ...(deadline === undefined ? {} : { nextTerminalActionAt: deadline }) };
+      sql.exec(`INSERT INTO sidekick_child_projections (sidekick_id, substream_id, source_version, payload_hash, effect_json, updated_at)
+        VALUES (?, ?, 1, 'hash', ?, 1)`, parentId, substreamId, JSON.stringify(effect));
+    }
+
+    migrate(153, 2_000);
+
+    expect(hostedTerminalDeadlines(sql)).toEqual([
+      { parentId: "canvas-1", dueAt: "2026-11-20T09:00:00.000Z" },
+      { parentId: "sidekick-1", dueAt: "2026-11-21T08:00:00.000Z" },
+    ]);
+    expect(sql.exec(`SELECT COUNT(*) AS n FROM sidekick_child_projections`).one()).toEqual({ n: 5 });
+    expect(sql.exec(`SELECT kind, alarm_key FROM _internal_durable_alarms WHERE kind = 'schedule_bootstrap'`).toArray())
+      .toEqual([{ kind: "schedule_bootstrap", alarm_key: "workspace" }]);
+  });
+});
+
+it("costs an Organization with no Terminal deadline no wake-up at v153", async () => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName(`empty-v152-terminal-${crypto.randomUUID()}`);
+  await stub.ping();
+  await runInDurableObject(stub, (_instance, state) => {
+    const migrate = (through: number) => applyDurableObjectSqliteMigrations({ storage: state.storage,
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= through),
+      component: "workspace_do", workerVersionId: `v${through}`, now: through });
+    migrate(152);
+    state.storage.sql.exec(`INSERT INTO workspace_identity VALUES (1, 'workspace-1', 'global', 'wnam', 1, 1)`);
+    state.storage.sql.exec(`DELETE FROM _internal_durable_alarms WHERE kind = 'schedule_bootstrap'`);
+    migrate(153);
+    expect(state.storage.sql.exec(`SELECT alarm_key FROM _internal_durable_alarms WHERE kind = 'schedule_bootstrap'`).toArray())
+      .toEqual([]);
+  });
 });
