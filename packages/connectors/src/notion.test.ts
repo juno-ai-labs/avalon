@@ -241,7 +241,7 @@ describe("Notion connector", () => {
       connection: notionConnection([NotionCapabilities.read]),
       principal: { type: "user", userId: AVALON_USER_ID },
       signal: neverAborts(),
-    })).rejects.toThrow(/workspace connection is not available/iu);
+    })).rejects.toThrow(/Organization's connection is not available to this run/u);
   });
 
   it("hydrates provider resources into bounded agent context", async () => {

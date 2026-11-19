@@ -8836,7 +8836,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           const pendingWakeups = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_limit_reached",
-            `This thread already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
+            `This conversation already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
             "Call list_wakeups, then cancel one pending wake-up before retrying.",
             pendingWakeups.map((wakeup) => wakeup.wakeupId),
           );

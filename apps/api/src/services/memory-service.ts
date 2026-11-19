@@ -553,7 +553,7 @@ async function forget(
       // any other refusal is a fact about someone else, or one another
       // conversation learned.
       if (outcome.subjectKind === "organization" || outcome.subjectKind === "channel") {
-        const what = outcome.subjectKind === "organization" ? "This Organization-wide fact" : "This fact, filed under an earlier shared space,";
+        const what = outcome.subjectKind === "organization" ? "This Organization-wide fact" : "This fact, filed under a shared area Rally no longer has,";
         throw new MemoryToolError(
           "memory_fact_not_forgettable",
           `${what} can be forgotten only by an administrator. Tell the person an administrator can remove it from the review surface.`,

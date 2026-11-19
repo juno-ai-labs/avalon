@@ -1,3 +1,4 @@
+import { auditedAvalonTools } from "./helpers/audited-tools";
 import {
   asHarnessRunId,
   asSubstreamId,
@@ -16,7 +17,6 @@ import {
 import { substreamLoopId } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import { withLocalWorkstreamAuthorities } from "../src/runtime/local-authorities";
-import { __integrationTesting } from "../src/services/integrations";
 import { fireWorkstreamWakeup, type WakeupConversation } from "../src/services/workstream-service";
 import {
   MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM,
@@ -257,7 +257,7 @@ function context(providerIdempotencyKey = "receipt-1") {
 
 function wakeupTools(env: Env, input: WorkstreamWorkflowInput = workflowInput()) {
   // A tool's wake-up operation reaches the work stream through its typed port.
-  const tools = __integrationTesting.createAvalonTools(
+  const tools = auditedAvalonTools(
     env,
     input,
   );
@@ -725,6 +725,8 @@ describe("wake-up tools", () => {
       context("receipt-overflow"),
     )).rejects.toMatchObject({
       code: "wakeup_limit_reached",
+      // The conversation, never the retired word for it.
+      message: expect.stringMatching(/^This conversation already has \d+ pending wake-ups, the maximum of \d+\. Cancel one before scheduling another\.$/u),
       details: {
         reason: expect.stringContaining("cancel one pending wake-up"),
         available: expect.arrayContaining([expect.any(String)]),

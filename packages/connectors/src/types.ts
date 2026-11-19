@@ -1028,7 +1028,7 @@ export function assertPrincipalAccess(
 ): void {
   if (connection.scope === "workspace") {
     if (principal.type !== "workspace" || principal.workspaceId !== connection.workspaceId) {
-      throw new ConnectorError("unauthorized", "The workspace connection is not available to this execution principal");
+      throw new ConnectorError("unauthorized", "The Organization's connection is not available to this run");
     }
     return;
   }
