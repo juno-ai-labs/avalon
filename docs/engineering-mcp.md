@@ -85,6 +85,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
+| `archive_canvas` | Resolve the Organization in exactly one region | CanvasService.archive, which calls HostedCanvas in WorkspaceDO |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
@@ -299,8 +300,8 @@ together. It refuses with one of two codes, and the remedies differ:
   that ends every session into the Organization
   ([`workspace-retirement.md`](workspace-retirement.md)). No user passes, so
   trying another one cannot help. `send_message`, the two text reads,
-  `pause_sidekick` and `resume_sidekick` do not work in an abandoned
-  Organization.
+  `pause_sidekick`, `resume_sidekick` and `archive_canvas` do not work in an
+  abandoned Organization.
 - `user_not_active_organization_user`: the named user has no active member or
   guest relationship in the Organization. Another user may pass.
 
@@ -405,6 +406,20 @@ to pair the attempt and result audit rows.
 `archive_sidekick` calls AutomationService `archive` the same way, in any
 lifecycle. It is the one of the three with no undo, so it is marked
 destructive.
+
+### Archiving a Canvas
+
+`archive_canvas` calls CanvasService `archive` as the selected user, the same
+call the app's Archive action makes, so HostedCanvas decides who may manage the
+Canvas and refuses with `canvas_archive_forbidden`, or as not found to a user
+the Canvas does not admit. Its archive takes the Sidekicks made in the Canvas
+with it and schedules the archive of its conversations and artifacts, so the
+tool owes nothing after it. Archiving an archived Canvas changes nothing, so
+like the Sidekick tools it takes no `operationId`; the bridge mints one to pair
+the audit rows, and the Canvas id fills the audit row's `workstream_id`.
+
+It refuses an abandoned Organization. Retirement already stops every Canvas
+there, so there is nothing left for it to clean up.
 
 ### Retiring an Organization
 
@@ -681,6 +696,10 @@ Sidekick's shared conversation and reads it back, refuses it read as a Canvas,
 and reaches a run conversation through `run_canvas_sql`'s registry check.
 Audit coverage reads operator and receipt attribution from the real audit
 database and refuses product writes when the attempt cannot be persisted.
+The same file archives a Canvas through the bridge as its creator, reading
+`canvas_directory` and the audit row, and proves a member who cannot manage it
+is refused with `canvas_archive_forbidden` and that an abandoned Organization is
+refused by name.
 `apps/api/test/engineering-user-auth.test.ts` covers whom a tool may act as,
 over the checked-in migrations, and `engineering-sidekick-inspection.test.ts`
 covers the archive in a retired Organization.
@@ -813,6 +832,23 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-19 — Archive a Canvas as a user
+
+**What changed:** `archive_canvas` archives a Canvas as a selected user through
+CanvasService `archive`, over a new bridge method `archiveCanvas`, audited as
+`archive_canvas`.
+
+**Why:** The server could archive a Sidekick but not a Canvas, so the only
+route was a SQL update of `canvas_directory.archived_at`, which skips the
+manager check, the archive of the Sidekicks made in it, the conversation and
+artifact archive alarms, the access revocations and the directory refresh. A
+change here must keep the tool on the product's own path for that reason.
+
+**Considered and rejected:** Admitting an abandoned Organization, as
+`archive_sidekick` does. Retirement already closes every Canvas there, and
+nobody asked for it.
+
 
 ### 2026-11-13 — Record every tool call in a lakehouse
 

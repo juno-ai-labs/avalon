@@ -101,6 +101,20 @@ export const ArchiveEngineeringSidekickResultSchema = deferredZodSchema(() => z.
 }));
 export type ArchiveEngineeringSidekickResult = z.infer<typeof ArchiveEngineeringSidekickResultSchema>;
 
+export const ArchiveEngineeringCanvasInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema,
+  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Canvas in the app: its creator, a manager of the Sidekick that writes it, or an Organization owner or admin."),
+  canvasId: IdSchema.describe("The Canvas ID."),
+}));
+export type ArchiveEngineeringCanvasInput = z.infer<typeof ArchiveEngineeringCanvasInputSchema>;
+export const ArchiveEngineeringCanvasResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  canvasId: IdSchema,
+  archived: z.literal(true),
+}));
+export type ArchiveEngineeringCanvasResult = z.infer<typeof ArchiveEngineeringCanvasResultSchema>;
+
 export const RetireEngineeringOrgInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema.describe("The Organization to close for good. Retiring it again resumes an unfinished walk."),
 }));
@@ -530,6 +544,7 @@ export interface EngineeringInspectionRpcBinding {
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
   archiveSidekick(input: ArchiveEngineeringSidekickInput, operator: EngineeringOperator): Promise<ArchiveEngineeringSidekickResult>;
+  archiveCanvas(input: ArchiveEngineeringCanvasInput, operator: EngineeringOperator): Promise<ArchiveEngineeringCanvasResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;

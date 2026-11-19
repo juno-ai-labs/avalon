@@ -23,6 +23,8 @@ import {
   SendEngineeringMessageInputSchema,
   SendEngineeringMessageResultSchema,
   ArchiveEngineeringSidekickResultSchema,
+  ArchiveEngineeringCanvasInputSchema,
+  ArchiveEngineeringCanvasResultSchema,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   RetireEngineeringOrgInputSchema,
@@ -360,6 +362,15 @@ export function createEngineeringMcpServer(
     workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
   }, async () => ArchiveEngineeringSidekickResultSchema.parse(
     await (await organizationBinding(env, request.orgId)).archiveSidekick(request, principal))));
+
+  server.registerTool("archive_canvas", {
+    description: "Archive a Canvas as userId, exactly as the app's Archive action does: it leaves everyone's Canvas list, its conversations and artifacts are archived, open sessions into it lose access, and every Sidekick made in it is archived too. There is no undo. userId must be allowed to manage the Canvas in the app: its creator, a manager of the Sidekick that writes it, or an Organization owner or admin. Archiving an archived Canvas changes nothing. Refused in an abandoned Organization.",
+    inputSchema: z.object(ArchiveEngineeringCanvasInputSchema.unwrap().shape),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "archive_canvas", {
+    workspace_id: request.orgId, workstream_id: request.canvasId, user_id: request.userId,
+  }, async () => ArchiveEngineeringCanvasResultSchema.parse(
+    await (await organizationBinding(env, request.orgId)).archiveCanvas(request, principal))));
 
   server.registerTool("retire_org", {
     description: "Retire an Organization permanently through the regional retirement service: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Task-capable clients receive a durable handle to poll while failed passes are retried. Synchronous results report complete: false while parts are still open; call again with the same orgId to resume the walk.",

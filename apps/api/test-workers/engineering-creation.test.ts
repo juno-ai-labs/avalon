@@ -297,3 +297,45 @@ describe("engineering messages in a Canvas's Chat", () => {
     expect(rest.text).not.toContain("More history");
   });
 });
+
+describe("engineering Canvas archive", () => {
+  async function archivedAt(): Promise<number | null> {
+    return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      "SELECT archived_at FROM canvas_directory WHERE canvas_id = ?", CANVAS).one().archived_at);
+  }
+
+  it("archives a Canvas as a user who manages it, through the app's own path, and refuses a member who does not", async () => {
+    const bridge = new EngineeringInspectionBridge(executionContext(), creationEnv());
+    await createOrg(bridge);
+    await createCanvas(creationEnv(), { workspaceId: ORG, creatorUserId: CREATOR, canvasId: CANVAS, title: "Releases" });
+    await workspace().canvasSetAudience({ workspaceId: ORG, canvasId: CANVAS, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER] } });
+
+    await expect(bridge.archiveCanvas({ orgId: ORG, userId: MEMBER, canvasId: CANVAS }, OPERATOR))
+      .rejects.toThrow("engineering_operation_failed:canvas_archive_forbidden");
+    expect(await archivedAt()).toBeNull();
+
+    const request = { orgId: ORG, userId: CREATOR, canvasId: CANVAS };
+    expect(await bridge.archiveCanvas(request, OPERATOR)).toEqual({ region: "global", orgId: ORG, canvasId: CANVAS, archived: true });
+    const first = await archivedAt();
+    expect(first).toEqual(expect.any(Number));
+    // A second archive changes nothing.
+    await bridge.archiveCanvas(request, OPERATOR);
+    expect(await archivedAt()).toBe(first);
+    const result = await env.AUDIT_DB.prepare(
+      "SELECT workstream_id, metadata_json FROM audit_events WHERE workspace_id = ? AND action = 'engineering.archive_canvas.result' AND target_id = ? ORDER BY created_at DESC LIMIT 1",
+    ).bind(ORG, CREATOR).first<{ workstream_id: string; metadata_json: string }>();
+    expect(result!.workstream_id).toBe(CANVAS);
+    expect(JSON.parse(result!.metadata_json)).toMatchObject({ operator: OPERATOR, conversationId: CANVAS, outcome: "admitted", archived: true });
+  });
+
+  it("refuses an archive in an abandoned Organization by naming the abandonment", async () => {
+    const bridge = new EngineeringInspectionBridge(executionContext(), creationEnv());
+    await createOrg(bridge);
+    await createCanvas(creationEnv(), { workspaceId: ORG, creatorUserId: CREATOR, canvasId: CANVAS, title: "Releases" });
+    await env.DB.prepare("UPDATE workspaces SET abandoned_at = ? WHERE id = ?").bind("2026-11-19T00:00:00Z", ORG).run();
+    await expect(bridge.archiveCanvas({ orgId: ORG, userId: CREATOR, canvasId: CANVAS }, OPERATOR))
+      .rejects.toThrow("engineering_operation_failed:organization_abandoned");
+    expect(await archivedAt()).toBeNull();
+  });
+});
