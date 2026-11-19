@@ -477,22 +477,22 @@ describe("set_evaluator_rules and a resource the rule is not about", () => {
   });
 });
 
-describe("set_evaluator_rules on a trigger whose filter fields are open", () => {
+describe("set_evaluator_rules on a trigger's declared filter fields", () => {
   function hostWithTrigger(descriptor: Record<string, unknown>) {
     const staged: unknown[] = [];
     const state = host({
       catalog: [{
-        pluginId: "plugin_webhook",
-        displayName: "Generic webhook",
-        icon: "webhook",
-        description: "Deliveries on a webhook.",
+        pluginId: "plugin_deploys",
+        displayName: "Deploy events",
+        icon: "plug",
+        description: "Deploy deliveries.",
         scope: "workspace",
         searchAliases: [],
         systemMessage: "",
         activityTriggers: [{
           eventType: "deploy.finished",
           label: "deploy.finished",
-          description: "A delivery of deploy.finished on this webhook.",
+          description: "A delivery of deploy.finished from this source.",
           eventFamilies: [],
           filterFields: [],
           resourceRelationships: [],
@@ -501,8 +501,8 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
         }],
         tools: [],
       }],
-      inspectedPluginIds: new Set(["plugin_webhook"]),
-      loadedPluginIds: new Set(["plugin_webhook"]),
+      inspectedPluginIds: new Set(["plugin_deploys"]),
+      loadedPluginIds: new Set(["plugin_deploys"]),
       draftMutationPort: {
         submitDraft: async () => ({ accepted: true as const }),
         setEvaluatorRules: async (rules) => {
@@ -519,7 +519,7 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
       evaluatorKey: "checkout_deploys",
       source: {
         sourceBindingKey: "deploy_hook",
-        suggestedSourcePluginId: "plugin_webhook",
+        suggestedSourcePluginId: "plugin_deploys",
         event: { kind: "event_type", eventType: "deploy.finished" },
       },
       when: {
@@ -529,19 +529,7 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
     }],
   };
 
-  it("lets a rule name a payload key nobody declared", async () => {
-    const { state, staged } = hostWithTrigger({ openFilterFields: true });
-
-    // The accept-side evaluator checks an open descriptor's leaves for shape
-    // only. The drafting check has to agree, or the one rule a webhook is for
-    // (a condition on the caller's own keys) is refused before it is written.
-    await expect(toolNamed(createAutomationsPlugin(state).tools, "set_evaluator_rules")
-      .execute(serviceIsCheckout, toolContext))
-      .resolves.toMatchObject({ output: { accepted: true } });
-    expect(staged).toHaveLength(1);
-  });
-
-  it("still holds a closed descriptor to its declared fields", async () => {
+  it("holds a rule to the fields its trigger declares", async () => {
     const { state, staged } = hostWithTrigger({});
 
     await expect(toolNamed(createAutomationsPlugin(state).tools, "set_evaluator_rules")
@@ -583,31 +571,33 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
 });
 
 describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
-  function webhookHost() {
+  function deployHost() {
     const staged: unknown[] = [];
     const state = host({
       catalog: [{
-        pluginId: "plugin_webhook",
-        displayName: "Generic webhook",
-        icon: "webhook",
-        description: "Deliveries on a webhook.",
+        pluginId: "plugin_deploys",
+        displayName: "Deploy events",
+        icon: "plug",
+        description: "Deploy deliveries.",
         scope: "workspace",
         searchAliases: [],
         systemMessage: "",
         activityTriggers: [{
           eventType: "deploy.finished",
           label: "deploy.finished",
-          description: "A delivery of deploy.finished on this webhook.",
+          description: "A delivery of deploy.finished from this source.",
           eventFamilies: [],
-          filterFields: [],
+          filterFields: [{
+            key: "service", label: "Service", description: "The deployed service.",
+            valueType: "string", operators: ["equals"], sensitive: false,
+          }],
           resourceRelationships: [],
-          openFilterFields: true,
           digestible: false,
         }],
         tools: [],
       }],
-      inspectedPluginIds: new Set(["plugin_webhook"]),
-      loadedPluginIds: new Set(["plugin_webhook"]),
+      inspectedPluginIds: new Set(["plugin_deploys"]),
+      loadedPluginIds: new Set(["plugin_deploys"]),
       draftMutationPort: {
         submitDraft: async () => ({ accepted: true as const }),
         setEvaluatorRules: async (rules) => {
@@ -625,7 +615,7 @@ describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
         evaluatorKey: "checkout_deploys",
         source: {
           sourceBindingKey: "deploy_hook",
-          suggestedSourcePluginId: "plugin_webhook",
+          suggestedSourcePluginId: "plugin_deploys",
           resourceId,
           event: { kind: "event_type", eventType: "deploy.finished" },
         },
@@ -638,12 +628,12 @@ describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
   }
 
   it("drops any id on a trigger that declares no resource relationship", async () => {
-    const { state, staged } = webhookHost();
+    const { state, staged } = deployHost();
     const tools = createAutomationsPlugin(state).tools;
 
     // Once the schema stopped advertising the nil UUID the model reshaped its
     // placeholder to fit the pattern; chasing each new one is a losing race.
-    // A webhook delivery cannot be about one resource, so on this trigger the
+    // A delivery on this trigger cannot be about one resource, so on this trigger the
     // field is noise whatever it holds.
     for (const id of [
       "00000000-0000-4000-8000-000000000000",
@@ -660,33 +650,21 @@ describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
         .not.toHaveProperty("resourceId");
     }
   });
-
-  it("refuses a dotted key on an open descriptor, since the payload's keys are bare", async () => {
-    const { state, staged } = webhookHost();
-    const tools = createAutomationsPlugin(state).tools;
-
-    // A dotted attribute would compile and then never match anything: the
-    // event context indexes metadata by its bare keys.
-    await expect(toolNamed(tools, "set_evaluator_rules")
-      .execute(rule("00000000-0000-4000-8000-000000000000", "metadata.service"), toolContext))
-      .rejects.toThrow(/without a metadata\. prefix/u);
-    expect(staged).toHaveLength(0);
-  });
 });
 
 describe("set_evaluator_rules echoes the bindings the submitted draft declares", () => {
   const DEPLOY_PLUGIN = {
-    pluginId: "plugin_webhook",
-    displayName: "Generic webhook",
-    icon: "webhook" as const,
-    description: "Deliveries on a webhook.",
+    pluginId: "plugin_deploys",
+    displayName: "Deploy events",
+    icon: "plug" as const,
+    description: "Deploy deliveries.",
     scope: "workspace" as const,
     searchAliases: [],
     systemMessage: "",
     activityTriggers: [{
       eventType: "deploy.finished",
       label: "deploy.finished",
-      description: "A delivery of deploy.finished on this webhook.",
+      description: "A delivery of deploy.finished from this source.",
       eventFamilies: [],
       filterFields: [],
       resourceRelationships: [],
@@ -704,9 +682,9 @@ describe("set_evaluator_rules echoes the bindings the submitted draft declares",
     instructions: "Report the deploy.",
     triggers: [{
       type: "connector_activity",
-      connectorType: "generic_webhook",
+      connectorType: "deploys",
       sourceBindingKey: "deploy_hook",
-      suggestedSourcePluginId: "plugin_webhook",
+      suggestedSourcePluginId: "plugin_deploys",
       eventTypes: ["deploy.finished"],
       deterministicFilters: {},
     }],
@@ -727,7 +705,7 @@ describe("set_evaluator_rules echoes the bindings the submitted draft declares",
       evaluatorKey: "checkout_deploys",
       source: {
         sourceBindingKey,
-        suggestedSourcePluginId: "plugin_webhook",
+        suggestedSourcePluginId: "plugin_deploys",
         event: { kind: "event_type", eventType: "deploy.finished" },
       },
       when: { kind: "always" },
@@ -736,8 +714,8 @@ describe("set_evaluator_rules echoes the bindings the submitted draft declares",
   function submittedHost(): AutomationCreatorToolHost {
     return host({
       catalog: [DEPLOY_PLUGIN],
-      inspectedPluginIds: new Set(["plugin_webhook"]),
-      loadedPluginIds: new Set(["plugin_webhook"]),
+      inspectedPluginIds: new Set(["plugin_deploys"]),
+      loadedPluginIds: new Set(["plugin_deploys"]),
       draftMutationPort: {
         submitDraft: async () => ({ accepted: true as const }),
         setEvaluatorRules: async () => ({ accepted: true as const }),
@@ -757,7 +735,7 @@ describe("set_evaluator_rules echoes the bindings the submitted draft declares",
       .resolves.toMatchObject({
         output: {
           accepted: true,
-          declaredSourceBindings: { deploy_hook: "plugin_webhook" },
+          declaredSourceBindings: { deploy_hook: "plugin_deploys" },
           rulesNamingNoTrigger: ["checkout_deploys"],
         },
       });
@@ -769,7 +747,7 @@ describe("set_evaluator_rules echoes the bindings the submitted draft declares",
 
     const result = await toolNamed(tools, "set_evaluator_rules")
       .execute(ruleNaming("deploy_hook"), toolContext);
-    expect(result.output).toMatchObject({ declaredSourceBindings: { deploy_hook: "plugin_webhook" } });
+    expect(result.output).toMatchObject({ declaredSourceBindings: { deploy_hook: "plugin_deploys" } });
     expect(result.output).not.toHaveProperty("rulesNamingNoTrigger");
   });
 
@@ -795,7 +773,7 @@ describe("a composed source binding key is enough on its own", () => {
   const MEETING_PLUGIN = {
     pluginId: "plugin_fireflies",
     displayName: "Fireflies",
-    icon: "webhook" as const,
+    icon: "plug" as const,
     description: "Meetings the notetaker recorded.",
     scope: "workspace" as const,
     searchAliases: [],

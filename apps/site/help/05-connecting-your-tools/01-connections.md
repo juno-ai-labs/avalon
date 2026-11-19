@@ -58,7 +58,7 @@ A card can have two buttons.
 
 Not every tool offers both. A card shows only the buttons that apply to it, and each page in this chapter says which ones its tool has. For example, Google Mail + Calendar and Fireflies are personal only, and X is Organization only.
 
-Most tools can have one personal connection per person and one Organization connection. Once you have one, the button turns grey and its tooltip points you to the table above. The exceptions are **Custom MCP server** and **Inbound webhook**, which you can add as many times as you like.
+Most tools can have one personal connection per person and one Organization connection. Once you have one, the button turns grey and its tooltip points you to the table above. The exception is **Custom MCP server**, which you can add as many times as you like.
 
 ### What happens when you click
 
@@ -145,5 +145,4 @@ Every connector card in Settings has its own page in this chapter:
 - [Fireflies](09-fireflies.md)
 - [Ashby](10-ashby.md)
 - [X](12-x.md)
-- [Inbound webhook](13-inbound-webhook.md)
 - [Custom MCP server](14-custom-mcp-server.md)

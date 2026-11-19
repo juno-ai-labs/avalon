@@ -48,8 +48,8 @@ import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 function resourceTelemetryConnector(value: unknown):
-  'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
-  if (value === 'google' || value === 'generic_webhook' || value === 'github' || value === 'granola'
+  'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
+  if (value === 'google' || value === 'github' || value === 'granola'
     || value === 'linear' || value === 'notion' || value === 'slack' || value === 'x') return value;
   return 'avalon';
 }

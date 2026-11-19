@@ -12,7 +12,6 @@ import {
   connectorActivitySupportsScope,
   connectorSupportsSurface,
   ConnectorRegistry,
-  createGenericWebhookConnector,
   createGoogleConnector,
   CredentialCipher,
   defineConnectorActivityTriggers,
@@ -20,15 +19,42 @@ import {
   googleTools,
   isConnectorResourceAccessRefusal,
   pollCheckpointedActivityStreams,
-  verifyGenericWebhook,
   authorizedConnection,
   type AuthorizedConnectorConnection
 } from "./index";
 
 describe("connectors", () => {
   it("normalizes legacy manifests before exposing connector surfaces", () => {
-    const registry = new ConnectorRegistry([createGenericWebhookConnector()]);
-    const manifest = registry.get("generic_webhook").manifest;
+    // A manifest that predates `surfaces` declares none. Registered under a
+    // catalog provider's type, since the registry refuses one with no product.
+    const registry = new ConnectorRegistry([{
+      agentPlugin: {
+        providerType: "x",
+        wireNamePrefix: "x",
+        description: "Test-only connector with a pre-surfaces manifest.",
+        systemMessage: "Use only the tools exposed by this test connector.",
+        tools: [],
+      },
+      manifest: {
+        type: "x",
+        displayName: "Legacy",
+        supportedScopes: ["workspace"],
+        oauthRequired: false,
+        activityTriggers: [],
+        resourceTypes: [],
+        tools: [],
+        supportsWatches: false,
+        supportsPolling: false,
+        supportsWebhooks: false,
+      },
+      async executeTool(name) {
+        throw new Error(`Unexpected tool ${name}`);
+      },
+      async healthCheck() {
+        return { ok: true, message: "Configured" };
+      },
+    }]);
+    const manifest = registry.get("x").manifest;
     expect(manifest.surfaces).toEqual(["resource"]);
     expect(connectorSupportsSurface(manifest, "resource")).toBe(true);
     expect(connectorSupportsSurface(manifest, "native_agent")).toBe(false);
@@ -93,9 +119,9 @@ describe("connectors", () => {
       expect(connectorActivitySupportsScope(adapter, "workspace")).toBe(true);
       expect(connectorActivitySupportsScope(adapter, "personal")).toBe(false);
     }
-    // Narrowed per connector: a webhook a personal connection owns is still
+    // Narrowed per connector: a personal connection's own events are still
     // delivered to it.
-    expect(connectorActivitySupportsScope(createGenericWebhookConnector(), "personal")).toBe(true);
+    expect(connectorActivitySupportsScope(googleAdapter(fetch), "personal")).toBe(true);
   });
 
   it("refuses an adapter that narrows the scopes of activity it does not produce", () => {
@@ -199,108 +225,6 @@ describe("connectors", () => {
         { type: "user", userId: asUserId("9f9d51bc-70ef-41ca-8c14-f307980a29d8") }
       )
     ).toThrow(/personal connection/i);
-  });
-
-  it("verifies signed webhooks and timestamps", async () => {
-    const secret = "test-secret";
-    const body = JSON.stringify({ type: "transcript.completed" });
-    const timestamp = 1_700_000_000;
-    const signature = await __testing.hmacHex(secret, `${timestamp}.${body}`);
-    await expect(
-      verifyGenericWebhook({
-        secret,
-        signatureHeader: `t=${timestamp},v1=${signature}`,
-        body,
-        now: timestamp
-      })
-    ).resolves.toMatchObject({ timestamp, event: { type: "transcript.completed" } });
-  });
-
-  it("verifies generic webhook HMACs over the exact received bytes", async () => {
-    const secret = "test-secret";
-    const timestamp = 1_700_000_000;
-    const json = new TextEncoder().encode(JSON.stringify({ event_type: "transcript.completed" }));
-    const body = new Uint8Array(3 + json.byteLength);
-    body.set([0xef, 0xbb, 0xbf]);
-    body.set(json, 3);
-    const prefix = new TextEncoder().encode(`${timestamp}.`);
-    const signed = new Uint8Array(prefix.byteLength + body.byteLength);
-    signed.set(prefix);
-    signed.set(body, prefix.byteLength);
-    const signature = await __testing.hmacHex(secret, signed);
-
-    await expect(verifyGenericWebhook({
-      secret,
-      signatureHeader: `t=${timestamp},v1=${signature.toUpperCase()}`,
-      body,
-      now: timestamp,
-    })).resolves.toMatchObject({
-      timestamp,
-      event: { event_type: "transcript.completed" },
-    });
-  });
-
-  it("classifies signed malformed generic webhook payloads as invalid payloads", async () => {
-    const secret = "test-secret";
-    const timestamp = 1_700_000_000;
-    const body = "[]";
-    const signature = await __testing.hmacHex(secret, `${timestamp}.${body}`);
-
-    await expect(verifyGenericWebhook({
-      secret,
-      signatureHeader: `t=${timestamp},v1=${signature}`,
-      body,
-      now: timestamp,
-    })).rejects.toMatchObject({ code: "invalid_payload" });
-  });
-
-  it("bounds generic webhook person evidence without dropping the activity", () => {
-    const source = createGenericWebhookConnector().webhookActivity!;
-    const activity = source.normalize({
-      id: TEST_CONNECTION_ID,
-      workspaceId: TEST_WORKSPACE_ID,
-      scope: "workspace",
-      ownerUserId: null,
-      grantedScopes: [],
-      credentials: {},
-      cursor: {},
-      config: {},
-    }, {
-      deliveryId: "generic-event-1",
-      eventType: "ticket.updated",
-      providerAccountId: null,
-      bodyHash: "body-hash",
-      event: {
-        title: "Ticket updated",
-        external_people: [
-          {
-            provider: "p".repeat(100),
-            providerTenantId: "t".repeat(250),
-            providerUserId: "person-1",
-            handle: "h".repeat(250),
-            email: "not-an-email",
-            displayName: "D".repeat(250),
-            role: "mentioned",
-            sourceText: "S".repeat(1_200),
-            ignored: "untrusted extra field",
-          },
-          { displayName: "Missing required evidence" },
-        ],
-      },
-    }, null);
-
-    expect(activity?.externalPeople).toEqual([expect.objectContaining({
-      provider: "p".repeat(80),
-      providerTenantId: "t".repeat(200),
-      handle: "h".repeat(200),
-      email: null,
-      displayName: "D".repeat(180),
-      sourceText: "S".repeat(1_000),
-    })]);
-    expect(() => NormalizedActivitySchema.parse({
-      id: "00000000-0000-7000-8000-000000000099",
-      ...activity,
-    })).not.toThrow();
   });
 
   it("marks every activity a non-digestible stream produced, and nothing else", async () => {
@@ -534,6 +458,7 @@ describe("connectors", () => {
       eventType: "email.received",
       resourceType: "gmail_thread",
       providerResourceId: "thread-1",
+      item: { type: "gmail_message", id: "message-1" },
       title: "New email: Quarterly planning",
       visibility: { scope: "personal", ownerUserId: TEST_USER_ID },
       targetUserIds: [TEST_USER_ID]

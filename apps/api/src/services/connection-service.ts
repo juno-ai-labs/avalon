@@ -8,7 +8,6 @@ import { AshbyEventSelectionSchema, slackInstallationId } from "@rally/connector
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
 import { withDeadline } from "../lib/deadline";
 import { dynamicConnectorCapability, stableConnectionWireName, discoverDynamicConnectorTools, storeConnectorServerMetadata } from "./connector-tool-inventory";
-import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import {
   CUSTOM_MCP_CONNECTOR_TYPE,
   ConnectorError,
@@ -25,7 +24,6 @@ import {
   connectorCapabilitySupportsScope,
   connectorObservationErrorCode,
   connectorScopeIsConnectable,
-  createWebhookSecret,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
   githubRepositoryAccessPolicy,
@@ -49,7 +47,6 @@ import type {
   ConnectorResourceAuthorizationTarget,
   ConnectorResourceAuthorizationStart,
   CreateCustomMcpConnectionRequestSchema,
-  CreateWebhookConnectionRequestSchema,
   CustomMcpConnectionSettings,
   CustomMcpToolPolicy,
   GitHubRepositoryAccessSettings,
@@ -125,7 +122,6 @@ import {
   type WorkspaceConnectorOAuthAttempt,
 } from "../durable-objects/workspace-connections-protocol";
 
-type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 
 const capabilityScopes: Record<string, readonly string[]> = {
   "gmail.read": GoogleCapabilityScopes.gmailRead,
@@ -441,7 +437,7 @@ export class ConnectionService {
 
   private async emitConnectorAction(
     connection: StoredConnection,
-    action: "test" | "reconnect" | "disconnect" | "secret_rotate",
+    action: "test" | "reconnect" | "disconnect",
     previousHealth: ReturnType<typeof telemetryConnectionHealth>,
     appliedHealth: ReturnType<typeof telemetryConnectionHealth>,
     result: "success" | "failed",
@@ -486,7 +482,7 @@ export class ConnectionService {
 
   private async emitConnectorSetupCompleted(
     connection: StoredConnection,
-    method: "oauth" | "api_key" | "direct" | "webhook",
+    method: "oauth" | "api_key" | "direct",
     durationMs: number,
     reconnect: boolean,
   ): Promise<void> {
@@ -2672,130 +2668,6 @@ export class ConnectionService {
     }
   }
 
-  async createWebhook(input: CreateWebhookInput) {
-    const telemetryStartedAt = Date.now();
-    const auth = this.requireAuth();
-    this.assertScopeAllowed(input.scope);
-    if (input.idempotencyKey) {
-      const existing = await this.findIdempotentWebhookConnection(
-        input.scope,
-        input.idempotencyKey,
-      );
-      if (existing) {
-        this.assertWebhookCreationReplay(existing, input);
-        return this.webhookConnectionResult(existing);
-      }
-    }
-    const id = newId();
-    const secret = createWebhookSecret();
-    const encrypted = await encryptString(
-      JSON.stringify({ signingSecret: secret }),
-      this.env.CONNECTOR_CREDENTIALS_KEY,
-      id,
-    );
-    const at = nowIso();
-    const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "generic_webhook");
-    try {
-      await this.env.DB.prepare(
-        `INSERT INTO connector_connections
-         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-          encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-          model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
-         VALUES (?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, '[]', ?, 'healthy', '{}', ?, ?, ?)`,
-      ).bind(
-        id,
-        auth.workspaceId,
-        input.scope,
-        input.scope === "personal" ? auth.userId : null,
-        input.displayName,
-        encrypted.ciphertext,
-        encrypted.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        modelPluginId,
-        JSON.stringify({
-          eventTypes: [...new Set(input.eventTypes)],
-          ...(input.idempotencyKey ? { creationIdempotencyKey: input.idempotencyKey } : {}),
-        }),
-        at,
-        at,
-      ).run();
-    } catch (error) {
-      if (!input.idempotencyKey || !isUniqueConstraintError(error)) throw error;
-      const winner = await this.findIdempotentWebhookConnection(input.scope, input.idempotencyKey);
-      if (!winner) throw error;
-      this.assertWebhookCreationReplay(winner, input);
-      return this.webhookConnectionResult(winner);
-    }
-    await this.syncConnectorIngressRoute(id);
-    runtimeDeferral(this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
-      provider: "generic_webhook", scope: input.scope, eventTypes: input.eventTypes,
-    }));
-    const stored: StoredConnection = {
-      id,
-      workspace_id: auth.workspaceId,
-      connector_type: "generic_webhook",
-      scope: input.scope,
-      owner_user_id: input.scope === "personal" ? auth.userId : null,
-      model_plugin_id: modelPluginId,
-      status: "healthy",
-      granted_scopes_json: "[]",
-      encrypted_credentials: encrypted.ciphertext,
-      credential_iv: encrypted.iv,
-      credential_key_version: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-    };
-    await this.emitConnectorSetupCompleted(stored, "webhook", Date.now() - telemetryStartedAt, false)
-      .catch(() => undefined);
-    return this.webhookConnectionResult(stored, secret);
-  }
-
-  async rotateWebhookSecret(id: string) {
-    const auth = this.requireAuth();
-    const connection = await this.env.DB.prepare(
-      `SELECT * FROM connector_connections
-       WHERE id = ? AND workspace_id = ? AND connector_type = 'generic_webhook'
-         AND status <> 'disabled'`,
-    ).bind(id, auth.workspaceId).first<StoredConnection>();
-    if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
-    if (connection.scope === "personal" && connection.owner_user_id !== auth.userId) {
-      throw new ApiError(403, "connection_forbidden", "This personal webhook belongs to another user");
-    }
-    this.assertScopeAllowed(connection.scope);
-    const signingSecret = createWebhookSecret();
-    const encrypted = await encryptString(
-      JSON.stringify({ signingSecret }),
-      this.env.CONNECTOR_CREDENTIALS_KEY,
-      connection.id,
-    );
-    await this.env.DB.prepare(
-      `UPDATE connector_connections
-       SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
-    ).bind(
-      encrypted.ciphertext,
-      encrypted.iv,
-      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-      nowIso(),
-      connection.id,
-      auth.workspaceId,
-    ).run();
-    runtimeDeferral(this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.credentials_rotated", id, {
-      provider: "generic_webhook",
-      scope: connection.scope,
-    }));
-    await this.emitConnectorAction(
-      connection,
-      "secret_rotate",
-      telemetryConnectionHealth(connection.status),
-      telemetryConnectionHealth(connection.status),
-      "success",
-    ).catch(() => undefined);
-    return {
-      endpoint: new URL(`/ingest/webhook/${id}`, this.env.PUBLIC_API_BASE_URL).toString(),
-      signingSecret,
-      signatureFormat: "t=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>",
-    };
-  }
-
   async createX(input: { scope: "workspace"; capabilities: string[] }) {
     const telemetryStartedAt = Date.now();
     const auth = this.requireAuth();
@@ -3701,144 +3573,6 @@ export class ConnectionService {
     };
   }
 
-  async ingestWebhook(connectionId: string, rawBody: Uint8Array, signatureHeader: string | null) {
-    const maxBytes = numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000);
-    if (rawBody.byteLength > maxBytes) {
-      throw new ApiError(413, "webhook_too_large", "Webhook payload exceeds the configured limit");
-    }
-    let rawBodyText: string;
-    try {
-      rawBodyText = new TextDecoder("utf-8", { fatal: true }).decode(rawBody);
-    } catch {
-      throw new ApiError(400, "invalid_webhook_body", "Webhook body is not valid UTF-8");
-    }
-    await this.routeIngressConnection(connectionId, "generic_webhook");
-    const connection = await this.env.DB.prepare(
-      `SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'generic_webhook' AND status <> 'disabled'`,
-    ).bind(connectionId).first<StoredConnection>();
-    if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
-    const context = await this.context(connection);
-    const signingSecret = String(context.credentials.signingSecret ?? "");
-    const source = this.registry().get("generic_webhook").webhookActivity;
-    if (!source) throw new ApiError(500, "webhook_source_unavailable", "Webhook ingestion is unavailable");
-    const webhookHeaders = new Headers();
-    if (signatureHeader) webhookHeaders.set(RALLY_HEADERS.SIGNATURE, signatureHeader);
-    const envelope = await source.verify({
-      rawBody: rawBodyText,
-      rawBodyBytes: rawBody,
-      headers: webhookHeaders,
-      receivedAt: nowIso(),
-      maxBytes,
-      now: Date.now(),
-      verificationSecret: signingSecret,
-      replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300) * 1_000,
-    });
-    const configuredEventTypes = parseJson<Record<string, unknown>>(connection.config_json, {}).eventTypes;
-    const allowedEventTypes = Array.isArray(configuredEventTypes)
-      ? configuredEventTypes.filter((value): value is string => typeof value === "string")
-      : [];
-    if (allowedEventTypes.length > 0 && !allowedEventTypes.includes(envelope.eventType)) {
-      throw new ApiError(422, "webhook_event_not_allowed", "This webhook connection does not accept that event type");
-    }
-    const receiptId = newId();
-    const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/webhook-${envelope.bodyHash}.json`;
-    const normalized = source.normalize(context, envelope, payloadKey);
-    if (!normalized) throw unsupportedWebhookEvent(this.env, {
-      provider: connection.connector_type, connectionId: connection.id, eventType: envelope.eventType,
-    });
-    if (connection.scope === "workspace" && normalized.targetUserIds.length > 0) {
-      const uniqueTargets = [...new Set(normalized.targetUserIds)];
-      const members = await this.env.DB.prepare(
-        `SELECT user_id FROM workspace_members
-         WHERE workspace_id = ? AND status = 'active'
-           AND user_id IN (${uniqueTargets.map(() => "?").join(", ")})`,
-      ).bind(connection.workspace_id, ...uniqueTargets).all<{ user_id: string }>();
-      if ((members.results ?? []).length !== uniqueTargets.length) {
-        throw new ApiError(422, "invalid_target_user", "Every webhook target must be an active member of this workspace");
-      }
-    }
-    await this.env.PAYLOADS.put(payloadKey, rawBody, {
-      httpMetadata: { contentType: "application/json" },
-    });
-    const receivedAt = nowIso();
-    // The claim sweeps this connection's expired receipts in the same object
-    // transaction, which is what the separate DELETE ahead of the insert
-    // used to do in its own round trip.
-    const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
-      await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
-        workspaceId: connection.workspace_id,
-        receiptId,
-        connectionId,
-        signatureHash: envelope.receiptKey ?? envelope.deliveryId,
-        receivedAt,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
-      }),
-    );
-    const derived = await this.deriveWebhookActivities({
-      provider: "generic_webhook", connection, context, adapter: this.registry().get("generic_webhook"), source, normalized, envelope,
-    });
-    const persisted = await persistNormalizedActivity(this.env, normalized, "generic_webhook");
-    for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "generic_webhook");
-    return {
-      duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
-      activityId: persisted.activityId,
-    };
-  }
-
-  private async findIdempotentWebhookConnection(
-    scope: Scope,
-    idempotencyKey: string,
-  ): Promise<StoredConnection | null> {
-    const auth = this.requireAuth();
-    return this.env.DB.prepare(
-      `SELECT * FROM connector_connections
-       WHERE workspace_id = ? AND connector_type = 'generic_webhook'
-         AND scope = ? AND COALESCE(owner_user_id, '') = ?
-         AND status != 'disabled'
-         AND json_extract(config_json, '$.creationIdempotencyKey') = ?
-       LIMIT 1`,
-    ).bind(
-      auth.workspaceId,
-      scope,
-      scope === "personal" ? auth.userId : "",
-      idempotencyKey,
-    ).first<StoredConnection>();
-  }
-
-  private async webhookConnectionResult(connection: StoredConnection, signingSecret?: string) {
-    let secret = signingSecret;
-    if (!secret) {
-      const context = await this.context(connection);
-      secret = typeof context.credentials.signingSecret === "string"
-        ? context.credentials.signingSecret
-        : undefined;
-    }
-    if (!secret) throw new ApiError(500, "webhook_secret_unavailable", "The webhook signing secret is unavailable");
-    const item = (await this.list()).find((candidate) => candidate.id === connection.id);
-    if (!item) throw new ApiError(500, "webhook_connection_unavailable", "The webhook connection could not be loaded");
-    return {
-      connection: item,
-      endpoint: new URL(`/ingest/webhook/${connection.id}`, this.env.PUBLIC_API_BASE_URL).toString(),
-      signingSecret: secret,
-      signatureFormat: "t=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>",
-    };
-  }
-
-  private assertWebhookCreationReplay(connection: StoredConnection, input: CreateWebhookInput): void {
-    const config = parseJson<Record<string, unknown>>(connection.config_json, {});
-    const storedEventTypes = Array.isArray(config.eventTypes)
-      ? config.eventTypes.filter((value): value is string => typeof value === "string").sort()
-      : [];
-    const requestedEventTypes = [...new Set(input.eventTypes)].sort();
-    if (
-      connection.scope !== input.scope
-      || String(connection.display_name ?? "") !== input.displayName
-      || JSON.stringify(storedEventTypes) !== JSON.stringify(requestedEventTypes)
-    ) {
-      throw new ApiError(409, "idempotency_key_reused", "This idempotency key was already used with different webhook settings");
-    }
-  }
-
   private registry() {
     return connectorRegistryForEnv(this.env);
   }
@@ -4431,13 +4165,11 @@ export class ConnectionService {
  * `connector_operation_finished` happened to share the millisecond, which works
  * only while traffic is this thin.
  *
- * Naming the event type is safe for two different reasons, depending on the
- * connector. For one Rally ships, it is published vocabulary: the type is in
- * the manifest and `connector_operation_finished` already logs it. For
- * `generic_webhook` there is no manifest to check it against — the type is
- * whatever the workspace's own sender put in the body — so what makes it safe
- * is that it is the caller's own string going back to the caller that signed
- * the request, with `redact` bounding it in the log.
+ * Naming the event type is safe because the delivery that carries it is the
+ * provider's own, signed by it and verified before this runs: the type is the
+ * provider's published vocabulary rather than anything a caller chose, and
+ * `connector_operation_finished` already logs it. Being refused means it is
+ * not in the connector's manifest, so the manifest is not what makes it safe.
  *
  * The `details` carry it too: a provider dashboard replaying a delivery shows
  * the response body, and "Rally does not model the fireflies event
@@ -4493,8 +4225,7 @@ function parseJson<T>(value: unknown, fallback: T): T {
 }
 
 export function modelPluginIdBase(connectorType: string): string {
-  const provider = connectorType === "generic_webhook" ? "webhook" : connectorType;
-  const safe = provider
+  const safe = connectorType
     .toLowerCase()
     .replace(/[^a-z0-9_]+/gu, "_")
     .replace(/^_+|_+$/gu, "")

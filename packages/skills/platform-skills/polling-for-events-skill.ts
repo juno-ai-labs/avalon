@@ -45,9 +45,8 @@ is the person's you are working for or an Organization connection. When
 another person's own account should start the Sidekick, load
 \`setting-up-a-filtered-trigger\` as well: the topic goes in that person's
 source filter, which they approve, and the trigger stays a plain
-\`connector_activity\` one. Use \`webhook\` when the
-event belongs to a webhook connection the Organization has already set up.
-Inspect which resource types and filter fields the event supports.
+\`connector_activity\` one. Inspect which resource types and filter fields the
+event supports.
 
 For a change-triggered request, use a suitable event by default: it reacts to
 the matching change and avoids repeated unchanged checks. Registering the
@@ -158,9 +157,10 @@ all of them is almost always what the person wanted, not one message each.
   thing being asked about. Read the event types first; keep the interval for
   what inspection rules out.
 - **An interval under ten minutes because the person said "right away".** Use
-  the floor and say so. What they actually want is a webhook: draft one when the
-  workspace already has a webhook connection declaring that event, and otherwise
-  say that wiring one up is a conversation with the team.
+  the floor and say so, in words. If step 1 found a declared event that fits,
+  that is what they want instead; otherwise name the gap step 1 established
+  (no such event, or a resource Rally could not resolve) and say the interval
+  is the closest Rally can come.
 - **Reaching for \`resource_watch\`.** Nothing starts a Sidekick from it. Use the
   source's declared events, or an interval.
 - **A run that posts to say it found nothing.** Post nothing; say so in one line in the run's own conversation instead.`;

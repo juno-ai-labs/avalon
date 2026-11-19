@@ -1,7 +1,6 @@
 import { ConnectorProductCatalog, GOOGLE_DRIVE_CAPABILITIES, GOOGLE_MAIL_CALENDAR_CAPABILITIES } from '@rally/contracts';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
-import { Webhook } from 'lucide-react';
 export const PERSONAL_CONNECT_LABEL = 'Connect for me';
 
 type ProductId = keyof typeof ConnectorProductCatalog;
@@ -26,7 +25,7 @@ function fromCatalog<Id extends ProductId>(id: Id) {
   };
 }
 
-/** Products the catalog gives a mark; a webhook has none, and Settings draws a glyph for it. */
+/** Products the catalog gives a mark. */
 type MarkedProductId = { [Id in ProductId]: Product<Id>['iconName'] extends null ? never : Id }[ProductId];
 
 /** The same card with the product's mark. */
@@ -68,8 +67,6 @@ export const connectorProviders = [
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
   },
   { ...withMark('custom-mcp'), capabilities: [] },
-  // The catalog gives a webhook no mark; Settings draws a generic glyph.
-  { ...fromCatalog('generic-webhook'), icon: Webhook, capabilities: [] },
   { ...withMark('x'), capabilities: ['x.read'] },
 ] as const;
 
@@ -77,7 +74,7 @@ export type ConnectorProviderCatalogEntry = (typeof connectorProviders)[number];
 
 export type OAuthConnectorProviderCatalogEntry = Exclude<
   ConnectorProviderCatalogEntry,
-  { provider: 'custom_mcp' | 'generic_webhook' | 'x' }
+  { provider: 'custom_mcp' | 'x' }
 >;
 
 export function connectorProviderById(id: string) {
@@ -88,6 +85,5 @@ export function isOAuthConnectorProvider(
   provider: ConnectorProviderCatalogEntry,
 ): provider is OAuthConnectorProviderCatalogEntry {
   return provider.provider !== 'custom_mcp'
-    && provider.provider !== 'generic_webhook'
     && provider.provider !== 'x';
 }

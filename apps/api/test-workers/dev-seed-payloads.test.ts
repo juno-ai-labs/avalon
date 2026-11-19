@@ -43,7 +43,7 @@ describe("the seeded Launch plan artifact's versions", () => {
   const ARTIFACT = "00000000-0000-7000-8000-000000000041";
   /** Launch plan's creator in the fixture. */
   const SAMANTHA = "00000000-0000-7000-8000-000000000003";
-  /** The fixture's webhook connection. */
+  /** The fixture's connection, disabled: it exists to author a version. */
   const CONNECTION = "00000000-0000-7000-8000-000000000061";
   const RUN = "00000000-0000-7000-8000-0000000000d1";
 
@@ -160,7 +160,7 @@ describe("the seeded Launch plan artifact's versions", () => {
         revision_author_connection_id = ?, revision_cause = 'refetched' WHERE id = ?`, CONNECTION, ARTIFACT);
     });
     expect(await authors()).toEqual([
-      { version: 3, author: { kind: "connector", connectionId: CONNECTION }, authorName: "Incident updates fixture" },
+      { version: 3, author: { kind: "connector", connectionId: CONNECTION }, authorName: "Linear fixture" },
       { version: 2, author: { kind: "member", userId: SAMANTHA }, authorName: "Member" },
       { version: 1, author: { kind: "system" }, authorName: null },
     ]);

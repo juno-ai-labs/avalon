@@ -27,7 +27,6 @@ const PersonIdSchema = IdSchema.brand<"PersonId">();
  */
 export const ConnectorTypeSchema = deferredZodSchema(() => z.enum([
   "google",
-  "generic_webhook",
   "github",
   "ashby",
   "fireflies",
@@ -461,13 +460,6 @@ export const ConnectorActivityTriggerDescriptorV2Schema = deferredZodSchema(() =
     resourceType: NonEmptyStringSchema,
   })),
   digestible: z.boolean(),
-  /**
-   * The payload's own keys are the filter fields. A generic webhook carries
-   * whatever its caller posts, so no list can be declared ahead of it; a rule
-   * may then name any metadata key with any operator, and the event's
-   * flattened metadata is what the leaf is read against.
-   */
-  openFilterFields: z.boolean().optional(),
 }));
 
 export type ExternalEventPredicateLeafV1 = z.infer<typeof ExternalEventPredicateLeafV1Schema>;

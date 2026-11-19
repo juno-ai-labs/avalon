@@ -272,8 +272,8 @@ A company draws its own mark, from `@thesvg/react`.
 [`using-company-brand-icons.md`](using-company-brand-icons.md) owns that — where
 a mark comes from, why it is imported one subpath at a time, and why it is
 monochrome. Rally's own mark, the two
-virtual groups, the public web, and an unbranded webhook are not companies and
-keep their existing artwork.
+virtual groups and the public web are not companies and keep their existing
+artwork.
 
 **The mark belongs to the connector, not to this feed.** `connectorBrandMark`
 maps a connector's own type to its mark, and every surface that draws a
@@ -778,7 +778,7 @@ It deliberately does **not** cover:
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
 | `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the settled-total response boundary and a steer not being one, the two seam checks, a partially loaded response withholding its total until the next settled total, a stretch held open by a live timer or by a plugin run still marked active and closing once it settles, a final answer that folds nothing keeping its total in the header, and the derived id. A stretch's own total: the union of its rows' spans rather than the sum of their durations, the response total still winning where the drawer is the whole response, an upper-bound row making the stretch one, a row that cannot say when it worked making the drawer say nothing, and the spans surviving both grouping passes. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, the absent orb, and the thinking row's brain. The accordion: closed and open, the unknown and recovered totals, and the open flag taken from the feed. |
-| `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
+| `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark. |
 
 The trap is the elapsed-time format: `formatDuration` zero-pads the seconds of a
 minute, so the string is `4m 02s`, not `4m 2s`.

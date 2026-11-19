@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { COPY_FEEDBACK_MS, useCopy } from '../lib/use-copy';
-import { CopyButton, CopyField, CopyStatus } from './copy-button';
+import { CopyButton, CopyStatus } from './copy-button';
 
 const copyText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>(async () => undefined));
 vi.mock('../lib/platform', () => ({
@@ -97,24 +97,5 @@ describe('CopyButton', () => {
     const button = screen.getByRole('button', { name: 'Copy public link' });
     expect(button).toBeDisabled();
     expect(button).toHaveClass('site-data-export');
-  });
-});
-
-describe('CopyField', () => {
-  it('shows the value read-only under its caption with the copy control beside it', async () => {
-    show(<CopyField copyLabel="Copy endpoint" label="Endpoint URL" value="https://api.example.test/ingest/fireflies/1" />);
-    const input = screen.getByLabelText('Endpoint URL');
-    expect(input).toHaveValue('https://api.example.test/ingest/fireflies/1');
-    expect(input).toHaveAttribute('readonly');
-    expect(input).not.toHaveAttribute('type', 'password');
-    fireEvent.click(screen.getByRole('button', { name: 'Copy endpoint' }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith('https://api.example.test/ingest/fireflies/1'));
-  });
-
-  it('masks a secret and takes a more specific field name where the caption is ambiguous', () => {
-    show(<CopyField copyLabel="Copy signing secret" inputLabel="Fireflies signing secret" label="Signing secret" secret value="whsec_one" />);
-    const input = screen.getByLabelText('Fireflies signing secret');
-    expect(input).toHaveAttribute('type', 'password');
-    expect(input).toHaveValue('whsec_one');
   });
 });

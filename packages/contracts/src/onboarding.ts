@@ -65,9 +65,8 @@ export const UpdateAccountOnboardingSchema = deferredZodSchema(() => z.strictObj
 }));
 /**
  * Connectors the onboarding picker may offer, derived from the connection-card
- * catalog plus the three identities that have no card because they are not a
- * named provider: a Custom MCP server, an inbound webhook, and Rally's own
- * read-only X access.
+ * catalog plus the two identities that have no card because they are not a
+ * named provider: a Custom MCP server and Rally's own read-only X access.
  *
  * Derived rather than listed: this enum was a hand-kept copy of those ids, and
  * when Fireflies was added to the catalog and to the picker it was not added
@@ -75,7 +74,7 @@ export const UpdateAccountOnboardingSchema = deferredZodSchema(() => z.strictObj
  * selection rejected and could connect nothing at all. A new connection card is
  * now selectable in onboarding by construction.
  */
-export const OnboardingConnectorIdSchema = deferredZodSchema(() => z.enum([...ConnectorConnectionCardIds, 'custom-mcp', 'generic-webhook', 'x']));
+export const OnboardingConnectorIdSchema = deferredZodSchema(() => z.enum([...ConnectorConnectionCardIds, 'custom-mcp', 'x']));
 export const OnboardingConnectorSelectionSchema = deferredZodSchema(() => z.templateLiteral([z.enum(['workspace', 'you']), ':', OnboardingConnectorIdSchema]));
 export const OnboardingJourneySchema = z.object({
   path: z.enum(['creator', 'member']),

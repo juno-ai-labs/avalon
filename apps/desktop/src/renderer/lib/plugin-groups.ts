@@ -7,7 +7,7 @@ import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
  * A brand draws its own mark, from `plugin-marks.ts`. The rest are the shapes
  * no company owns: the two virtual groups, the mail mark an agent-to-agent
  * message wears and the two a worker's outcome does, multimodal generation,
- * automations, the public web, an unbranded webhook, and the plug a connector
+ * automations, the public web, and the plug a connector
  * with no mark of its own falls back to.
  */
 export type PluginGroupIcon =
@@ -21,8 +21,7 @@ export type PluginGroupIcon =
   | 'image-generation'
   | 'plug'
   | 'rally'
-  | 'web'
-  | 'webhook';
+  | 'web';
 
 /**
  * The glyph for one of the backend's own icon names.
@@ -41,7 +40,6 @@ export function pluginGroupIconForContract(icon: AutomationPluginIcon): PluginGr
     case 'brand-notion': return 'notion';
     case 'brand-slack': return 'slack';
     case 'linear': return 'linear';
-    case 'webhook': return 'webhook';
     case 'world-search': return 'web';
     case 'plug': return 'plug';
   }
@@ -335,7 +333,6 @@ function connectorTypeForName(displayName: string): string | null {
   // Exactly "X", which is the connector's whole manifest name. A prefix match
   // on one letter would claim every later connector that starts with it.
   if (name === 'x') return 'x';
-  if (name.includes('webhook')) return 'generic_webhook';
   return null;
 }
 
@@ -344,7 +341,6 @@ function connectorIconForName(displayName: string): PluginGroupIcon {
   const connectorType = connectorTypeForName(displayName);
   const mark = connectorType ? connectorBrandMark(connectorType, displayName) : null;
   if (mark) return mark;
-  if (connectorType === 'generic_webhook') return 'webhook';
   // Not a connector at all: Rally's own named plugins reach here too.
   if (displayName.toLowerCase().startsWith('web')) return 'web';
   return 'plug';

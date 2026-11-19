@@ -504,7 +504,7 @@ function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): Har
           if (blocker === "sidekick_evaluator_rules_required") {
             throw new Error(
               "Call set_evaluator_rules with at least one rule before submitting a ready draft "
-              + "that has a connector_activity, semantic_activity or webhook trigger",
+              + "that has a connector_activity or semantic_activity trigger",
             );
           }
           if (blocker === "sidekick_activity_source_unbound") {
@@ -517,8 +517,8 @@ function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): Har
             // into an edit.
             const { declared, unbound } = unboundEvaluatorRules(draft.triggers, draftState.evaluatorRules ?? null);
             throw new Error(
-              "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity, "
-              + "semantic_activity or webhook trigger in this draft. "
+              "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity "
+              + "or semantic_activity trigger in this draft. "
               + `This draft's triggers declare ${describeSourceBindings(declared)}. `
               + `${describeUnboundRules(unbound)}. `
               + "Call set_evaluator_rules again with rules that name the triggers' bindings, "
@@ -703,27 +703,13 @@ function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): Har
             {
               for (const [leafIndex, leaf] of evaluator.when.allOf.entries()) {
                 const field = (descriptor.filterFields ?? []).find((candidate) => candidate.key === leaf.attribute);
-                // An open descriptor's fields are the payload's own keys, which
-                // nobody declared: the leaf is checked for shape only, the same
-                // rule the accept-side evaluator applies. The two must agree,
-                // or a rule the conversation could write is refused at accept,
-                // or one it could not write is admitted there.
-                if (descriptor.openFilterFields === true && leaf.attribute.includes(".")) {
-                  issues.push({
-                    code: "custom",
-                    path: ["evaluators", index, "when", "allOf", leafIndex, "attribute"],
-                    message: "Name the payload key bare, without a metadata. prefix: the event's metadata keys are the filter fields themselves.",
-                    input: leaf.attribute,
-                  });
-                  continue;
-                }
+                // The same rule the accept-side evaluator applies. The two must
+                // agree, or a rule the conversation could write is refused at
+                // accept, or one it could not write is admitted there.
                 if (
-                  descriptor.openFilterFields !== true
-                  && (
-                    !field
-                    || !(field.operators ?? []).includes(leaf.operator)
-                    || (leaf.kind !== "presence" && leaf.kind !== field.valueType)
-                  )
+                  !field
+                  || !(field.operators ?? []).includes(leaf.operator)
+                  || (leaf.kind !== "presence" && leaf.kind !== field.valueType)
                 ) {
                   issues.push({
                     code: "custom",

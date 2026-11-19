@@ -194,55 +194,6 @@ afterEach(() => {
 });
 
 describe("automation-creator plugin catalog", () => {
-  it("lists a generic webhook connection by its activity triggers, with no tools, and inspects it", async () => {
-    const localDb = localDatabase();
-    insertConnection(localDb, {
-      id: "00000000-0000-4000-8000-000000000201",
-      connectorType: "generic_webhook",
-      scope: "workspace",
-      ownerUserId: null,
-      modelPluginId: "plugin_webhook",
-      configJson: JSON.stringify({ eventTypes: ["order.created"] }),
-    });
-    const input = workflowInput();
-
-    const pluginsList = await automationCreatorTool(localDb, input, "plugins_list");
-    const listed = await pluginsList.execute({}, { toolCallId: "list-webhook" } as never);
-    const entries = (listed.output as {
-      plugins: Array<{ pluginId: string; tools: unknown[]; activityTriggerCount: number }>;
-    }).plugins;
-    const webhookEntry = entries.find((entry) => entry.pluginId === "plugin_webhook");
-    // A generic webhook has no outbound tools by design and exists only to be
-    // an automation's trigger: it earns its catalog entry by its activity
-    // triggers alone, not by having anything to call.
-    expect(webhookEntry).toBeDefined();
-    expect(webhookEntry?.tools).toEqual([]);
-    expect(webhookEntry?.activityTriggerCount).toBeGreaterThan(0);
-
-    const pluginInspect = await automationCreatorTool(localDb, input, "plugin_inspect");
-    const inspected = await pluginInspect.execute(
-      { pluginId: "plugin_webhook" },
-      { toolCallId: "inspect-webhook" } as never,
-    );
-    expect(inspected.output).toMatchObject({
-      plugin: {
-        pluginId: "plugin_webhook",
-        tools: [],
-        // A webhook connection's triggers are its configured event types, with the payload's own keys as filter fields.
-        activityTriggers: [expect.objectContaining({ eventType: "order.created", openFilterFields: true })],
-      },
-    });
-
-    // A connector with neither tools nor an event source would be excluded by
-    // the same `eventCapable` check this test's break exercises, but no
-    // adapter under packages/connectors is built that way today: every one of
-    // google, github, granola, linear, notion, slack, and x declares at least
-    // one tool, and generic_webhook (checked above) declares activity
-    // triggers instead. There is nothing to seed for that arm without
-    // inventing a connector, so it is left unexercised here rather than
-    // faked.
-  });
-
   it("advertises a connector's events only to a connection whose scope can receive them", async () => {
     const localDb = localDatabase();
     insertConnection(localDb, {
@@ -254,11 +205,10 @@ describe("automation-creator plugin catalog", () => {
     });
     insertConnection(localDb, {
       id: "00000000-0000-4000-8000-000000000212",
-      connectorType: "generic_webhook",
+      connectorType: "notion",
       scope: "personal",
       ownerUserId: USER_ID,
-      modelPluginId: "plugin_webhook",
-      configJson: JSON.stringify({ eventTypes: ["order.created"] }),
+      modelPluginId: "plugin_notion",
     });
     const input = workflowInput();
 
@@ -276,11 +226,12 @@ describe("automation-creator plugin catalog", () => {
     expect(granolaEntry?.activityTriggerCount).toBe(0);
     expect(granolaEntry?.activityTriggersUnavailable).toMatch(/workspace connection/u);
 
-    // Narrowed per connector, not per scope: a personal webhook receives its
-    // own deliveries and keeps every trigger it configured.
-    const webhookEntry = entries.find((entry) => entry.pluginId === "plugin_webhook");
-    expect(webhookEntry?.activityTriggerCount).toBe(1);
-    expect(webhookEntry).not.toHaveProperty("activityTriggersUnavailable");
+    // Narrowed per connector, not per scope: a personal Notion connection
+    // receives its own events and keeps every trigger its manifest declares.
+    const notionEntry = entries.find((entry) => entry.pluginId === "plugin_notion");
+    // Every one Notion's manifest declares.
+    expect(notionEntry?.activityTriggerCount).toBe(31);
+    expect(notionEntry).not.toHaveProperty("activityTriggersUnavailable");
   });
 
   it("keeps every trigger on a workspace connection of the same connector", async () => {
@@ -477,23 +428,22 @@ describe("automation-creator plugin catalog", () => {
       `INSERT INTO workspace_members (workspace_id, user_id, role, status)
        VALUES (?, ?, 'member', 'active')`,
     ).run(WORKSPACE_ID, USER_ID);
-    // A generic webhook's events reach no container at all. Its resources are
+    // Ashby's events reach no container at all. Its resources are
     // therefore offerable to nobody, and an empty answer is the honest one:
     // the tool's own description tells the model to write the rule with a
     // filter field instead of hunting for an id that cannot exist.
     insertConnection(localDb, {
       id: "00000000-0000-4000-8000-000000000501",
-      connectorType: "generic_webhook",
+      connectorType: "ashby",
       scope: "workspace",
       ownerUserId: null,
-      modelPluginId: "plugin_webhook",
-      configJson: JSON.stringify({ eventTypes: ["order.created"] }),
+      modelPluginId: "plugin_ashby",
     });
     localDb.prepare(
       `INSERT INTO resources
          (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
           title, created_at, updated_at)
-       VALUES (?, ?, ?, 'webhook_payload', 'generic_webhook', 'order-1',
+       VALUES (?, ?, ?, 'ashby_candidate', 'ashby', 'candidate-1',
                'Automation catalog order', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')`,
     ).run("00000000-0000-4000-8000-000000000502", WORKSPACE_ID, "00000000-0000-4000-8000-000000000501");
 
@@ -537,7 +487,7 @@ describe("automation-creator plugin catalog", () => {
     );
 
     // The folder the model wanted is one wording away. Answering this the same
-    // as the webhook case above is how a search miss reaches a person as "the
+    // as the Ashby case above is how a search miss reaches a person as "the
     // automation system cannot bind this" — the sentence that produced the
     // incident this whole path exists to stop repeating.
     expect(result.output).toEqual({ searchableResourceTypes: ["granola_folder"], resources: [] });

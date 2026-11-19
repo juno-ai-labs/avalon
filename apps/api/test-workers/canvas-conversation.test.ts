@@ -1186,6 +1186,26 @@ describe("a Canvas's artifacts", () => {
     expect(await resources.isAttached({ resourceId: log.resourceId })).toBe(true);
   });
 
+  it("opens a Canvas whose Organization keeps a retired connector's disabled connection, without listing it", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const RETIRED = "00000000-0000-7000-8000-0000000cb0a1";
+    const LIVE = "00000000-0000-7000-8000-0000000cb0a2";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const insert = (id: string, status: string, pluginId: string) => state.storage.sql.exec(
+        `INSERT INTO connector_connections (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+           granted_scopes_json, status, created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'github', 'workspace', NULL, ?, '[]', ?, ?, ?, ?)`,
+        id, WORKSPACE_ID, `${pluginId} fixture`, status, NOW, NOW, pluginId);
+      insert(RETIRED, "disabled", "plugin_retired_webhook");
+      insert(LIVE, "healthy", "plugin_live_github");
+      // Retirement refuses a new row of the type and a revival, not this: a
+      // disabled row of a type the contract no longer names, as 154 left one.
+      state.storage.sql.exec(`UPDATE connector_connections SET connector_type = 'generic_webhook' WHERE id = ?`, RETIRED);
+    });
+    const chat = await new ConversationService(TEST_ENV, auth(CREATOR)).client(canvasId, true);
+    expect((await chat.boot()).workstream.connections.map((connection) => connection.id)).toEqual([LIVE]);
+  });
+
   it("pushes stored-data status from listed database-backed artifacts, independently of the newest artifact or presence", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const { canvasId: otherCanvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });

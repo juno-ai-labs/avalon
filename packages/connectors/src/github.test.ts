@@ -814,6 +814,8 @@ describe("GitHub connector", () => {
       eventType: "github.pull_request_comment.created",
       resourceType: "github_pull_request",
       providerResourceId: "acme/widget#12",
+      // The comment, named as its resource hint names it.
+      item: { type: "github_pull_request_comment", id: "acme/widget#12/comments/88" },
     });
     const discovery = discoverGitHubWebhookResources(delivery);
     expect(discovery.resources).toEqual(expect.arrayContaining([
@@ -821,6 +823,53 @@ describe("GitHub connector", () => {
       expect.objectContaining({ resourceType: "github_pull_request", providerResourceId: "acme/widget#12" }),
       expect.objectContaining({ resourceType: "github_pull_request_comment", providerResourceId: "acme/widget#12/comments/88" }),
     ]));
+  });
+
+  describe("names the comment or review an event is about as its resource hint names it", () => {
+    const repository = {
+      id: 1, name: "widget", full_name: "acme/widget", html_url: "https://github.com/acme/widget", owner: { login: "acme" },
+    };
+    const pullRequest = { id: 6, number: 12, title: "Ship it", html_url: "https://github.com/acme/widget/pull/12" };
+    const delivery = (event: string, payload: Record<string, unknown>) => ({
+      event, action: "created", deliveryId: `github-item-${event}`, installationId: "42",
+      payload: { installation: { id: 42 }, repository, sender: { id: 7, login: "ada" }, ...payload },
+      rawContentHash: "a".repeat(64), receivedAt: "2026-08-01T12:00:01.000Z",
+    });
+    it.each([
+      ["issue_comment on a plain issue", delivery("issue_comment", {
+        issue: { id: 5, number: 12, title: "Broken", html_url: "https://github.com/acme/widget/issues/12" },
+        comment: { id: 88, body: "Same here", html_url: "https://github.com/acme/widget/issues/12#issuecomment-88" },
+      }), { type: "github_issue_comment", id: "acme/widget#12/comments/88" }],
+      ["pull_request_review", delivery("pull_request_review", {
+        pull_request: pullRequest,
+        review: { id: 99, state: "approved", html_url: "https://github.com/acme/widget/pull/12#pullrequestreview-99" },
+      }), { type: "github_pull_request_review", id: "acme/widget#12/reviews/99" }],
+      ["pull_request_review_comment", delivery("pull_request_review_comment", {
+        pull_request: pullRequest,
+        comment: { id: 77, body: "Nit", html_url: "https://github.com/acme/widget/pull/12#discussion_r77" },
+      }), { type: "github_pull_request_review_comment", id: "acme/widget#12/review-comments/77" }],
+    ])("%s", (_name, input, item) => {
+      expect(normalizeGitHubWebhook(workspaceConnection([]), input)?.item).toEqual(item);
+      // The same id the resource catalog records for it, so a run's key and
+      // the catalog's resource are one id.
+      expect(discoverGitHubWebhookResources(input).resources)
+        .toContainEqual(expect.objectContaining({ resourceType: item.type, providerResourceId: item.id }));
+    });
+
+    it.each([
+      ["a comment with no id", delivery("issue_comment", {
+        issue: { id: 5, number: 12, title: "Broken", html_url: "https://github.com/acme/widget/issues/12" },
+        comment: { body: "Same here" },
+      })],
+      ["a review on a pull request with no number", delivery("pull_request_review", {
+        pull_request: { id: 6, title: "Ship it" },
+        review: { id: 99, state: "approved" },
+      })],
+    ])("names no item for %s", (_name, input) => {
+      const activity = normalizeGitHubWebhook(workspaceConnection([]), input);
+      expect(activity?.eventType).toMatch(/^github\./u);
+      expect(activity).not.toHaveProperty("item");
+    });
   });
 
   it("normalizes merged pull requests as a distinct filterable activity", () => {

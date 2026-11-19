@@ -4,7 +4,7 @@ description: Give Rally the tools from any MCP server you run or trust, and deci
 nav_title: Custom MCP
 ---
 
-The last connector is the most open-ended. If your team runs its own tools, or uses a service that has no card in Settings, you can often still connect it to Rally through MCP. Like the inbound webhook, this page leans a little technical.
+The last connector is the most open-ended. If your team runs its own tools, or uses a service that has no card in Settings, you can often still connect it to Rally through MCP. This page leans a little technical.
 
 MCP (Model Context Protocol) is a standard way for a tool to tell an AI what it can do, and to let the AI do it. A service that speaks MCP runs an MCP server: a web address that lists its tools and carries them out when asked. Point Rally at one and Rally can use its tools in your Canvases and Sidekicks, alongside everything else in this chapter.
 

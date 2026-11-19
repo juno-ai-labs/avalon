@@ -32,6 +32,14 @@ export const SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS = [
   sourceWake(),
 ] as const;
 
+function parsedJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
 /** What a person lets in from one connection, already checked as still theirs to give. */
 export interface EligibleSidekickSource {
   userId: string;
@@ -81,10 +89,20 @@ export function sidekickSourceRegistrations(input: {
     model_plugin_id: string | null; granted_scopes_json: string; config_json: string | null;
   }>(`SELECT id,connector_type,scope,owner_user_id,model_plugin_id,granted_scopes_json,config_json
         FROM connector_connections WHERE workspace_id=? AND status<>'disabled' ORDER BY id`, workspaceId).toArray();
+  // Aliases are reused only on a live connection, so only those rows are read,
+  // and a row whose stored evaluator no longer parses is passed over rather
+  // than refusing every reconciliation of that Sidekick: a retired
+  // connector's rows (Canva, the generic webhook) name a `connectorType` the
+  // evaluator schema no longer admits, and the next retirement's will too.
+  // Passing one over only means its id is not reused.
   const existing = storage.sql.exec<{ registration_id: string; evaluator_json: string }>(
     `SELECT registration_id,evaluator_json FROM workspace_external_event_registrations
-      WHERE automation_id=? ORDER BY state='active' DESC,updated_at DESC,registration_id`, sidekickId,
-  ).toArray().map((row) => ({ id: row.registration_id, evaluator: ExternalEventEvaluatorV1Schema.parse(JSON.parse(row.evaluator_json)) }));
+      WHERE automation_id=? AND connection_id IN (SELECT id FROM connector_connections WHERE status<>'disabled')
+      ORDER BY state='active' DESC,updated_at DESC,registration_id`, sidekickId,
+  ).toArray().flatMap((row) => {
+    const evaluator = ExternalEventEvaluatorV1Schema.safeParse(parsedJson(row.evaluator_json));
+    return evaluator.success ? [{ id: row.registration_id, evaluator: evaluator.data }] : [];
+  });
   const registeredTypes = new Set(registry.list().map((manifest) => manifest.type));
   const letsIn = (connection: { id: string; owner_user_id: string | null }, eventType: string, requested = false) =>
     connection.owner_user_id !== null

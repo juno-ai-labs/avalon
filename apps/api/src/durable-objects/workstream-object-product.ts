@@ -2081,12 +2081,20 @@ export class WorkstreamObjectProductService {
     return attached ? WorkstreamResourceSchema.parse(attached) : null;
   }
 
+  /**
+   * The connections a Canvas's detail carries, for a viewer who cannot read
+   * `GET /connections` (a guest). A disabled row is left out, as that list
+   * leaves it out: nothing here acts on one, and a disabled row may be of a
+   * connector type the contract no longer names — a retired connector's rows
+   * are kept disabled — which would fail the parse and the whole detail.
+   */
   private async connections(viewerUserId: string): Promise<WorkstreamDetail["connections"]> {
     const workspaceId = this.root().parent_workspace_key;
     const result = await this.workspaceDatabase(workspaceId).prepare(
       `SELECT connection.*
          FROM connector_connections connection
         WHERE connection.workspace_id = ?
+          AND connection.status <> 'disabled'
           AND (connection.scope = 'workspace' OR connection.owner_user_id = ?)
         ORDER BY connection.display_name`,
     ).bind(workspaceId, viewerUserId).all<Record<string, unknown>>();

@@ -271,8 +271,8 @@ answering requests to open it. See
 [Who can see what](../02-canvases/08-who-can-see-what.md).
 
 **Sidekick.** An AI agent your team shares. You describe its job once, and it
-runs on a schedule, when something happens in another tool, by email or
-webhook, or whenever someone asks it in its conversation. Old name:
+runs on a schedule, when something happens in another tool, by email, or
+whenever someone asks it in its conversation. Old name:
 Automation. See
 [What a Sidekick is](../03-sidekicks/01-what-a-sidekick-is.md).
 
@@ -305,7 +305,7 @@ Canvases. Threads were removed, and their links no longer open. The work they
 held now happens in a [Canvas](#c).
 
 **Trigger.** What starts a Sidekick: a time, an interval, an event in another
-tool, a webhook, an email, or starting it by hand. See
+tool, an email, or starting it by hand. See
 [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
 
 ## U

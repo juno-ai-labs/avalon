@@ -93,7 +93,7 @@ const ACTOR = { kind: "actor" } as const;
 /** `/connections/<segment>` routes whose segment is a route name rather than a connection id. */
 const CONNECTION_COLLECTION_SEGMENTS = new Set([
   "ashby", "custom-mcp", "fireflies", "github", "google", "granola", "linear", "notion",
-  "oauth-attempts", "slack", "webhook", "x", "catalog",
+  "oauth-attempts", "slack", "x", "catalog",
 ]);
 
 function connectionPublications(pathname: string): WorkspaceSyncPublication[] {

@@ -162,7 +162,6 @@ export const RALLY_HEADERS = Object.freeze({
   ROOM_ACCEPT_MS: "x-rally-room-accept-ms",
   ROOM_INSTANCE_AGE_MS: "x-rally-room-instance-age-ms",
   SESSION_ID: "x-rally-session-id",
-  SIGNATURE: "x-rally-signature",
   SOCKET_ADMISSION_AUTHORITY_GENERATION: "x-rally-socket-admission-authority-generation",
   SOCKET_ADMISSION_ROLE: "x-rally-socket-admission-role",
   SOCKET_ADMISSION_VERSION: "x-rally-socket-admission-version",

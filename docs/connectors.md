@@ -206,7 +206,7 @@ serve, or, for a connection serving several (a Google grant of mail and Drive
 together), the provider's name, which for Google is Google Workspace. Names
 written before a product's name changed keep the old first half;
 the account half is all that is read back. A product whose connections a person
-names (a custom MCP server, an inbound webhook) reads the whole name.
+names (a custom MCP server) reads the whole name.
 
 `foldConnectorProductStates` is pure: given product ids, the rows a caller may
 see and the providers this deployment registers, it returns each product's
@@ -1099,33 +1099,6 @@ Its health check verifies reachability and authentication and deliberately reads
 
 The loadable `rally:web` plugin exposes `web_search` and `web_fetch` through Firecrawl. Search returns bounded ranked links; fetch accepts only safe public HTTP(S) URLs and returns bounded clean Markdown. The plugin is omitted entirely when the regional `FIRECRAWL_API_KEY` secret is absent.
 
-### Generic webhook
-
-Each connection receives a unique secret and URL. Send compact JSON with a Unix timestamp and signature header:
-
-```text
-X-Rally-Signature: t=<seconds>,v1=<hex HMAC-SHA256 of "<seconds>.<raw body>">
-```
-
-Rally validates time, signature, replay receipt, body schema, scope, and dedupe key before normalizing an activity. Transcript providers can use this connector, but the product must not label it a native Granola integration.
-
-Settings exposes personal and administrator-only workspace webhook creation. Creation accepts an idempotency key so a retried response returns the same endpoint and still-current one-time secret. The regional API lets the owner of a personal webhook rotate its secret and requires an administrator for a workspace webhook; desktop Settings deliberately narrows every visible Refresh action to workspace administrators. Rotation keeps the endpoint stable and invalidates the old secret immediately, so Settings cannot let its confirmation dialog close while the replacement secret is still being requested.
-
-The request body must be a JSON object no larger than the regional provider-webhook limit. The supported fields are:
-
-- `provider_event_id` or `id`: stable source delivery identity, up to 500 characters. If both are absent, Rally derives an identity from the normalized signature.
-- `event_type`: source event name, up to 500 characters. Omission becomes `webhook.received`; a connection configured with allowed event types rejects names outside that allowlist.
-- `resource_type` and `provider_resource_id`: optional stable source resource identity.
-- `occurred_at`: optional ISO 8601 timestamp with an explicit offset.
-- `title`, `summary`, and `text` or `text_snippet`: bounded human-readable evidence. Only the compact normalized snippet enters activity metadata; the exact signed body remains in regional payload storage.
-- `actor` and `subject`: optional JSON objects describing the source actor and object.
-- `entity_keys`: up to 100 stable correlation keys; `dedupe_key`: an optional stable idempotency key.
-- `target_user_ids`: for workspace connections only, up to 100 active members of that same Rally workspace. Personal connections always target their owner and ignore supplied targets.
-- `external_people`: up to 10,000 distinct external-person references after deduplication. Generic-webhook claims remain unverified source evidence and can never create a reusable verified identity mapping.
-- `metadata`: optional provider-specific JSON metadata.
-
-Rally verifies the HMAC over the exact received bytes before UTF-8 decoding or JSON parsing. Invalid signatures return `401`, malformed or schema-invalid bodies return `400`, disallowed events or non-member targets return `422`, identity/dedupe collisions return `409`, oversized bodies return `413`, and new deliveries return `202` (`200` when the same delivery is already known). Senders should retry network failures and `5xx` responses with exponential backoff using the same identity and exact body; they must not reuse an identity or dedupe key with changed content.
-
 ### Unsigned webhook subscription handshakes
 
 Use Notion's setup flow as the reference pattern when a provider sends an
@@ -1134,8 +1107,7 @@ verification**, especially when the provider's dashboard requires an operator to
 paste that plaintext back. This is narrower than ordinary webhook verification:
 GitHub and Linear start with developer-configured signing secrets, Slack starts
 with its app signing secret, Granola returns a Standard Webhooks signing secret
-while Rally creates the endpoint, and generic webhooks are created by Rally.
-Those connectors do not need this handshake.
+while Rally creates the endpoint. Those connectors do not need this handshake.
 
 For a provider that does match the pattern:
 
@@ -1201,7 +1173,7 @@ change, not a last-seen heartbeat. Real workerd coverage lives in `resource-upda
 
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
 
-- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, GitHub, Granola, Linear, Notion, and generic webhook use this facet.
+- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, Fireflies, GitHub, Granola, Linear, Notion, and Slack use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
 
 **A connector that will no longer take a *credential* in one of its scopes says
@@ -1440,8 +1412,8 @@ adapter's own, stored at ingest.
 
 Connector setup intent records only connector, personal/workspace scope, setup
 method, and bounded capability count. The regional service owns terminal OAuth
-outcomes and successful direct connection creation. Test, reconnect, disconnect,
-and webhook-secret rotation report previous/applied health and result; a distinct
+outcomes and successful direct connection creation. Test, reconnect and
+disconnect report previous/applied health and result; a distinct
 health transition is emitted only when health actually changes. Activity ingest
 reports canonical connector/activity type, bounded item count, and
 accepted/duplicate/filtered/failed result after admission. Connection IDs are
@@ -1457,6 +1429,8 @@ configuration that was actually established.
 Every rule below was learned from a defect in production or in review, and each names the failure that produced it. A new adapter is expected to satisfy all of them; several are enforced by the compiler or by `apps/api/test/connector-credential-freshness.test.ts`, which enumerates the registry so a connector is enrolled by existing rather than by someone remembering it.
 
 **A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, the spelling that says so without depending on the sanitizer; since `@juno-ai/bind` 14 the flat `type: ["string", "null"]` reaches the model as the same union, and `apps/api/test/tool-schema-sanitization.test.ts` asserts the delivered null branch for every property of every tool rather than only the cursors. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
+
+**An event names its item when the item is not its resource.** `NormalizedActivity.item` is `{ type, id }` for the provider's own item inside the resource: a Gmail message in its thread (`gmail_message`), a comment or review on a GitHub issue or pull request, named as that adapter's resource hints name it. Absent, the resource is the item. It is ids only, never content: it is what a Sidekick run is told the event is about, the key a run records it under. It is derived from the payload the activity already carries, so the payload hash and content fingerprint leave it out, and an event stored before its adapter set one is still the same event when it is delivered again. `entityKeys` are not that field: they are the raw provider ids an event is matched to registered resources by, and must keep matching `resources.provider_resource_id`. *A Gmail Sidekick keyed its records on message ids it was never shown, and refused 32 of 102 runs, including a real customer thread.* Guarded by `apps/api/test/workspace-connector-event-hash.test.ts` (the hash and fingerprint leave it out), `github.test.ts`'s item cases (an item's id is the id its resource hint records), and `apps/api/test-workers/connector-people.test.ts` (it is stored, read back, copied with a restored repeat, and backfilled for Gmail).
 
 **An event a connection cannot receive is never advertised to it.** A connector whose `normalize` refuses a connection scope declares that scope out of `activityConnectionScopes`, so no surface offers it a trigger on that connection. *A personal Granola connection advertised its four triggers, and the Sidekick drafted on one applied, activated, and never fired; nothing in the product distinguished that from a Sidekick that had nothing to do yet.*
 
@@ -1569,6 +1543,14 @@ now guards it.
 
 ## Failure modes and limits
 
+- **An item longer than its columns allow fails the event's write.**
+  `workspace_connector_events.item_type` is bounded to 1–200 characters and
+  `item_id` to 1–2,000 by their CHECKs, and the two are set together or not at
+  all; the activity contract carries no maximum of its own, as with
+  `resource_type` and `provider_resource_id`. An adapter builds the id from
+  provider ids it already bounds, so a write that trips one is an adapter bug,
+  and it surfaces as the ingestion's constraint failure rather than a stored
+  event without its item.
 - **A first provider rejection buys one refresh and one repeat; a second is the
   real answer.** What counts as a refusal is each adapter's own vocabulary through
   `isProviderCredentialRejection`, never the `unauthorized` code alone — adapters
@@ -1625,12 +1607,6 @@ now guards it.
   defensively at every read and write site, a new connector should keep its own
   truncation at or under 300/2,000 characters so a conversation never depends
   solely on a downstream guard to stay openable.
-- **Generic-webhook responses are specified**: `401` invalid signature, `400`
-  malformed or schema-invalid, `422` disallowed event or non-member target, `409`
-  identity or dedupe collision, `413` oversized, `202` new delivery, `200` a
-  delivery already known. Senders retry network failures and `5xx` with exponential
-  backoff using the same identity and exact body, and must not reuse an identity or
-  dedupe key with changed content.
 - **A GitHub delivery that fails in the consumer is not redelivered by GitHub.**
   The receiver already answered `202`, so the Queue's retries — backed off by
   attempt, or by a rate limit's Retry-After — are the only ones, and after them
@@ -1644,6 +1620,12 @@ now guards it.
   monitored user, list, or stream rule from which a safe feed could be constructed.
 
 ## Testing
+
+`apps/api/test/workspace-connector-event-hash.test.ts` proves an event stored
+before its adapter named an `item` hashes and fingerprints as the same event
+delivered again with one, and that the hash still tells two events apart. The
+Gmail and GitHub normalizer tests (`packages/connectors/src/index.test.ts`,
+`github.test.ts`) assert the item each names.
 
 `apps/api/test-workers/resource-update-cost.test.ts` covers no-op discovery, each
 independent change condition, mixed batches, and URL/metadata merge behavior.
@@ -1789,6 +1771,78 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-19 — An event names its item; the generic webhook connector and `webhook` trigger are removed
+
+**What changed:** `NormalizedActivity` gains an optional `item: { type, id }`,
+stored in `workspace_connector_events.item_type` and `item_id` (WorkspaceDO
+migration 153, which also backfills a stored Gmail event's item from the message
+id already in its subject). Gmail names the message in its thread, and GitHub
+the comment or review on its issue or pull request. A Sidekick run's opening
+names the item and the resource it sits in, after the event's summary.
+
+The generic webhook connector is gone: its adapter and signature scheme, its
+catalog entry, its creation, secret-rotation and ingress routes, its Settings
+card and its help page, with the open filter fields only it declared and the
+`webhook` plugin icon. So is the Sidekick `webhook` trigger type, which existed
+only for it. WorkspaceDO migration 154 disables every generic webhook connection
+and clears its credentials, which held its signing secret; removes its event
+registrations and replay receipts; and strips from each Sidekick's projection
+and stored revisions every `webhook` trigger, every evaluator, trigger, rule and
+plugin binding naming a generic webhook, and the generic webhooks' plugin ids in
+custom tools. A revision left with custom tools and no trigger is marked not
+ready, so it still parses. Triggers refuse a new generic webhook connection, a
+revival or a registration. Reconciling a Sidekick's sources passes over a stored
+registration whose evaluator no longer parses, and a Canvas's detail leaves
+disabled connections out, so a retired connector's rows break neither.
+
+**Why:** A Gmail Sidekick keyed its records on message ids, and its runs were
+never shown one: the id was in the subject, which never reaches a run. Over two
+days 32 of its 102 runs refused to write, among them a real customer thread.
+Granola closed the same gap for itself on 2026-09-17 by putting `noteId` in its
+metadata; every other connector kept it.
+
+The owner asked for the generic webhook connector to be removed; the product
+reasoning behind the request is not recorded. A production count before the
+removal found no generic webhook connections and no Sidekick using one.
+
+**Considered and rejected:**
+- Handing the run the subject, which the 2026-09-17 entry rejected and which
+  stays rejected: for GitHub, Linear and Notion it is the whole item, body
+  included.
+- Handing the run the entity keys. They are ids, but they are the resource
+  matching index: raw provider ids beside the Organization, parent and app-user
+  ids, with nothing saying which one is the item. Reshaping them would break
+  matching for every connector but Google.
+- Putting the ids in metadata, as Granola did. Metadata is compared on replay,
+  and is per connector by construction.
+- Keeping the `webhook` trigger type for read compatibility, as
+  `AutomationRunTriggerV1Schema` keeps `inbound_email`. A trigger is active
+  configuration rather than run history: kept, it would still be offered to
+  the drafting model by the type it parses as. The migration rewrites the
+  stored revisions instead.
+- Narrowing the `connector_type` CHECK vocabularies: it would rebuild
+  `connector_connections` and every dependent for a value the triggers already
+  refuse.
+- Deleting the removed registrations instead of reading around them:
+  `workspace_external_event_deliveries` references them with no `ON DELETE`
+  action, so the delete would abort on any registration that ever delivered.
+
+**Consequences:** An adapter whose events are about something inside their
+resource names it in `item`; one whose resource is the item sets nothing. The
+field stays out of the payload hash and the content fingerprint, because it is
+derived; one that carried new information would have to be hashed.
+
+Reintroducing a generic webhook connector needs a migration that drops the
+three `generic_webhook_*_retired` triggers first, and the triggers 154 stripped
+do not come back: a Sidekick that only listened for webhooks is left with no
+trigger, active but started by nothing, until someone edits it. A later
+migration that rebuilds `connector_connections` drops the refusal triggers on
+it with the table and must recreate them, Canva's and the generic webhook's.
+Regional D1 `connector_ingress_routes` rows for generic webhook connections keep
+`status = 'active'` with nothing left that reads them for that connector type.
+
+Shipped in #1675.
 
 ### 2026-11-17 — A poll refused on its grant fails once, not four times
 

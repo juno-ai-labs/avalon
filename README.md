@@ -11,8 +11,8 @@ tools.
   published artifact have separate sharing settings, so people can use the
   result without joining the Chat.
 - **Sidekicks** are shared agents you configure in plain language. They can
-  run on a schedule, on events from connected tools, by email or webhook, or
-  on request. A run can update an artifact's data, publish a new version,
+  run on a schedule, on events from connected tools, by email, or on
+  request. A run can update an artifact's data, publish a new version,
   send a result through a connected tool, or report back in its conversation.
   Instruction-only Sidekicks give Rally reusable guidance in Canvases.
 

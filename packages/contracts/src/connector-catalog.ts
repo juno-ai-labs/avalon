@@ -75,7 +75,7 @@ type ConnectorProduct = {
   /**
    * What tells one of its connections from another. `account`: the provider
    * account the connection's name carries after ` · `. `name`: the whole name,
-   * which a person typed (a custom server, a webhook).
+   * which a person typed (a custom server).
    */
   instance: "account" | "name";
   /** A stable mark name for clients; null when the client draws its own. */
@@ -224,17 +224,6 @@ export const ConnectorProductCatalog = {
     cardScopes: [],
     instance: "name",
     iconName: "model-context-protocol",
-  },
-  "generic-webhook": {
-    name: "Inbound webhook",
-    description: "Signed inbound activity from systems without a native connector.",
-    families: ["other"],
-    providerType: "generic_webhook",
-    capabilityPrefixes: [],
-    scopes: ["personal", "workspace"],
-    cardScopes: [],
-    instance: "name",
-    iconName: null,
   },
 } as const satisfies Record<string, ConnectorProduct>;
 

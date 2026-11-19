@@ -67,7 +67,7 @@ as them**, and the Sidekick can only use tools that need nobody's access.
 
 | The run was started by | It acts as |
 | --- | --- |
-| A schedule, an event, a webhook or an email | Anyone on the Delegation allowed list who has the access the step needs |
+| A schedule, an event or an email | Anyone on the Delegation allowed list who has the access the step needs |
 | A message from someone on the list | The same: anyone on the list |
 | A message from someone not on the list | That person only, with their own access |
 

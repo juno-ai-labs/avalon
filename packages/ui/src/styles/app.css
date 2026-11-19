@@ -3014,9 +3014,6 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto;
 }
 .settings-custom-mcp-header-row .form-field { margin: 0; }
-.webhook-secret-result { display: grid; gap: 10px; padding: 14px; }
-.webhook-secret-result > p { margin: 0; }
-.webhook-secret-result > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); overflow-wrap: anywhere; }
 .connection-provider-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; flex: none; height: 7px; width: 7px; }
 /* The one saturated green: `success-base` is tuned for text and fills and at
    7px read as grey on the dark surface. The halo lifts the dot without growing
@@ -5319,8 +5316,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    it with the copy control beside it rather than carrying a sentence under it.
    The control is `.icon-button`'s 30px against the field's taller box, so the
    row centres the two. */
-.copy-field { align-items: center; column-gap: 6px; grid-template-columns: minmax(0, 1fr) auto; }
-.copy-field > label { grid-column: 1 / -1; }
 .granola-key-guide { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); margin-bottom: 16px; padding: 13px 14px; }
 .granola-key-guide h3 { color: var(--av-sys-color-text-default); font-size: var(--av-cmp-control-font-size); margin: 0; }
 .granola-key-guide ol { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 9px 0; padding-left: 19px; }

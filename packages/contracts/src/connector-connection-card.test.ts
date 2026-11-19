@@ -109,7 +109,7 @@ describe("connector connection card contract", () => {
       "fireflies", "granola", "linear", "slack", "notion",
     ]);
     // Made in Settings only: an administrator's key, or a server somebody configures.
-    for (const connectorId of ["x", "custom-mcp", "generic-webhook"]) {
+    for (const connectorId of ["x", "custom-mcp"]) {
       expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId, scope: "workspace" }).success).toBe(false);
     }
     expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "ashby", scope: "personal" }).success).toBe(true);
@@ -143,7 +143,6 @@ describe("the card that connects the account a source's events come from", () =>
     // Mail and Drive are two connections: no one card connects both.
     ["google", ["email.received", "drive.file_changed"], null],
     ["granola", ["meeting.completed"], "granola"],
-    ["generic_webhook", ["webhook.received"], null],
   ] as const)("names %s %j as %s", (connectorType, eventTypes, expected) => {
     expect(sourceConnectionCardId(connectorType, eventTypes)).toBe(expected);
   });

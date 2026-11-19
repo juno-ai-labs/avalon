@@ -196,20 +196,11 @@ function validatePredicate(
   if (predicate.kind === "always") return;
   for (const [leafIndex, leaf] of predicate.allOf.entries()) {
     const path = ["when", "allOf", leafIndex] as const;
-    // An open descriptor names no fields: the caller's payload keys are the
-    // vocabulary, and a leaf on a key the event lacks is simply a miss.
-    // A dotted key on an open descriptor would compile and never match: the
-    // event context indexes metadata by its bare keys.
-    if (descriptor.openFilterFields === true && leaf.attribute.includes(".")) {
+    const field = descriptor.filterFields.find((candidate) => candidate.key === leaf.attribute);
+    if (!field || !field.operators.includes(leaf.operator)) {
       throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "sidekick_evaluator_invalid");
     }
-    const field = descriptor.openFilterFields === true
-      ? null
-      : descriptor.filterFields.find((candidate) => candidate.key === leaf.attribute) ?? undefined;
-    if (field === undefined || (field !== null && !field.operators.includes(leaf.operator))) {
-      throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "sidekick_evaluator_invalid");
-    }
-    if (field !== null && leaf.kind !== "presence" && leaf.kind !== field.valueType) {
+    if (leaf.kind !== "presence" && leaf.kind !== field.valueType) {
       throw evaluatorIssue(evaluatorIndex, [...path, "kind"], "sidekick_evaluator_invalid");
     }
     if (leaf.kind === "person_id" || leaf.kind === "person_id_array") {

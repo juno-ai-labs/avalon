@@ -8,7 +8,6 @@ import {
   IconClock,
   IconPlug,
   IconStack2,
-  IconWebhook,
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
@@ -24,7 +23,6 @@ export type SuggestedPromptIcon =
   | 'brand-slack'
   | 'linear'
   | 'plug'
-  | 'webhook'
   | 'world-search';
 
 export interface SuggestedPromptItem {
@@ -52,7 +50,6 @@ const promptIconByKey: Record<SuggestedPromptIcon, TablerIcon> = {
   'brand-slack': IconBrandSlack,
   linear: IconStack2,
   plug: IconPlug,
-  webhook: IconWebhook,
   'world-search': IconWorldSearch,
 };
 

@@ -36,11 +36,12 @@ interface AttemptRow extends Record<string, SqlStorageValue> {
 /**
  * Expired receipts a single claim may drain from the connection's backlog.
  *
- * Not a number chosen here: it is the bound the generic-webhook prune has
- * shipped with since receipts existed (`ORDER BY expires_at ASC LIMIT 100` in
- * `connection-service.ts`), carried over so the cutover changes which
- * connections get swept — all of them, rather than only generic ones — without
- * also changing how much one delivery pays for it. Raising it is a decision
+ * Not a number chosen here: it is the bound the generic-webhook prune shipped
+ * with from when receipts existed until that connector was removed
+ * (`ORDER BY expires_at ASC LIMIT 100` in `connection-service.ts`), carried
+ * over so the cutover changed which connections get swept — all of them,
+ * rather than only generic ones — without also changing how much one delivery
+ * pays for it. Raising it is a decision
  * with evidence behind it by then: a connection whose backlog outruns its
  * delivery rate is visible as receipts that stop shrinking.
  */
@@ -304,8 +305,8 @@ export function bindWorkspaceConnectorOAuthAttemptTelemetry(
  * `(connection_id, signature_hash)` left behind would answer every redelivery
  * `duplicate` forever, which is precisely the Granola bug this is fixing. Only
  * then does the backlog drain, in a batch bounded by `RECEIPT_SWEEP_BATCH` —
- * the bound the generic-webhook prune already shipped with, carried over
- * unchanged rather than re-chosen here. It has to stay bounded: the connections
+ * the bound the since-removed generic-webhook prune shipped with, carried
+ * over unchanged rather than re-chosen here. It has to stay bounded: the connections
  * whose receipts grew without bound are exactly the ones whose first claim
  * after this deploys would otherwise delete the entire accumulated history
  * inside the same transaction as the claim, and a transaction that exceeds the
