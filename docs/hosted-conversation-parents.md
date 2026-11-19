@@ -207,11 +207,15 @@ archive it ([`engineering-mcp.md`](engineering-mcp.md)).
   `await` reads again: another call may have changed the row meanwhile.
 - **Every statement on the four shared tables names the parent id**, whatever
   its kind. Without it a read or write reaches every parent in the
-  Organization.
+  Organization. The one exception is `hostedTerminalDeadlines` without a
+  parent: the Organization's schedule reads every parent's Terminal deadline
+  on purpose, and only reads.
 - **Every `sidekick_*` statement names `sidekick_id`, and a Sidekick's alarm
   entries are keyed `<sidekickId>:`.** Without it a pause or a cancel reaches
   every Sidekick in the Organization; `cancelSidekickAlarms` cancels by that
-  prefix, never by kind.
+  prefix, never by kind. The `terminal` entry is the Organization schedule's,
+  keyed by the bare parent id for a Canvas and a Sidekick alike, and is not a
+  Sidekick alarm.
 - **A Sidekick's alarm is re-armed by the facade, once per call.**
   `HostedSidekick` writes entries; it does not arm the native alarm.
 - **Parent kind is carried, never probed.** A lookup that tries a namespace to

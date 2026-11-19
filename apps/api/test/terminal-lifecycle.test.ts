@@ -418,6 +418,28 @@ describe("Terminal scheduled lifecycle", () => {
       .toEqual({ sandbox_id: "provider-1" });
   });
 
+  it("keeps an unsaved archive whose final-diff capture fails rather than deleting it", async () => {
+    const { objectStore, provider } = fixture("archived", {
+      warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
+    });
+    const preserveFinalDiff = vi.fn(async () => { throw new Error("terminal_final_diff_failed:exit_128"); });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserveFinalDiff))
+      .rejects.toThrow();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ sandbox_id: "provider-1" });
+  });
+
+  it("still warm-stops a sandbox whose final-diff capture fails, leaving the diff for expiry", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    const preserveFinalDiff = vi.fn(async () => { throw new Error("terminal_final_diff_failed:exit_128"); });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserveFinalDiff))
+      .resolves.toEqual({ transition: "stopped" });
+    expect(provider.stopSandbox).toHaveBeenCalledOnce();
+  });
+
   it("defers a yielded run's lifecycle until its retained command deadline", async () => {
     const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",

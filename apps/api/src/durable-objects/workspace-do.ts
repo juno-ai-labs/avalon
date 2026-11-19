@@ -7736,7 +7736,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       notificationIntents: this,
       // The schedule carries one deadline per parent; which conversation it
       // belongs to is the hosted parent's knowledge, read from its rows in
-      // this object. A retired Thread has none.
+      // this object. A retired Thread or a deleted Canvas has none.
       dueTerminalSubstreams: async (workstreamId, through) => {
         const parent = await this.hostedConversationParent(workstreamId, workspaceId);
         if (!parent) return [];

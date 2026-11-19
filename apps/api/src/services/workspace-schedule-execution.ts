@@ -87,9 +87,9 @@ export interface WorkspaceScheduleContext {
   directory: WorkspaceScheduleDirectory;
   notificationIntents: WorkspaceScheduleNotificationIntents;
   /**
-   * The conversations of one work stream whose Terminal deadline has come
-   * due, earliest first. The directory carries one deadline per work stream;
-   * the work stream's own object knows which of its conversations it is.
+   * The conversations of one Canvas or Sidekick whose Terminal deadline has
+   * come due, earliest first. The schedule carries one deadline per parent;
+   * the parent's own rows know which of its conversations it is.
    */
   dueTerminalSubstreams(workstreamId: string, through: Date): Promise<string[]>;
 }
@@ -360,10 +360,9 @@ export const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKi
 /**
  * Everything this workspace's alarm is waiting on, with its due instant.
  *
- * The work-stream half comes from the directory rather than from a table here:
- * a Terminal sandbox's deadline is written by the work stream that owns it and
- * republished into `channels`, which is the only index
- * the workspace has of when a sandbox is next due.
+ * The Terminal half comes from the hosted parents rather than from a table
+ * here: each conversation projects its sandbox deadline into its Canvas or
+ * Sidekick parent's `sidekick_child_projections` (`hostedTerminalDeadlines`).
  */
 export async function workspaceScheduleTargets(
   ctx: WorkspaceScheduleContext,
@@ -481,8 +480,8 @@ export async function recordWorkspaceScheduleFailure(
 /**
  * How long a Terminal deadline the pass could not act on is held.
  *
- * Its due time is `next_terminal_action_at` in the workspace directory, which
- * only the work stream's own directory effect moves, off the Queue. A sandbox
+ * Its due time is the conversation's projected `nextTerminalActionAt`, which
+ * only that conversation's own directory effect moves, off the Queue. A sandbox
  * a live run holds keeps its deadline until the run settles; a transition this
  * pass just made keeps it until that effect lands; a transition another pass
  * has claimed keeps it until that claim settles or lapses. Each re-derives the
@@ -521,10 +520,10 @@ async function reconcileTerminalSandbox(
   // release the provider session for it.
   const provider = createTerminalProviderRpcClient(ctx.env.TERMINAL_PROVIDER, configuration);
   try {
-    // A work stream created before conversations reported their own deadlines
-    // lists none; its sandbox, if any, is the main conversation's.
-    const due = await ctx.dueTerminalSubstreams(workstreamId, now);
-    const substreams = due.length > 0 ? due : ["0"];
+    // Entries come from the same projections, so an empty list means the
+    // deadline moved or the parent is gone; the end-of-alarm reconcile
+    // re-derives or drops the entry.
+    const substreams = await ctx.dueTerminalSubstreams(workstreamId, now);
     let outcome: ScheduledAlarmOutcome = undefined;
     for (const substreamId of substreams) {
       outcome = soonerTerminalOutcome(

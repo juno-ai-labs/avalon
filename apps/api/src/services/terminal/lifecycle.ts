@@ -27,6 +27,9 @@ import { unlistedResourceMetadata } from "../resource-listing";
 
 const MAX_WORKSPACE_BACKUP_BYTES = 50 * 1_048_576;
 
+/** The code a final-diff capture throws when its command exits non-zero. */
+const FINAL_DIFF_FAILED = "terminal_final_diff_failed";
+
 export interface TerminalWorkspaceBackup {
   resourceId: string;
   title: string;
@@ -278,7 +281,11 @@ export async function reconcileDueTerminalSandbox(
         providerStopped = false;
       }
       await renewClaim();
-      await preserveBeforeExpiry?.(claimedSandboxId, row.generation);
+      // A warm stop deletes nothing, so a failed capture does not hold it: the
+      // diff stays unrecorded and expiry restores the sandbox to try again.
+      await preserveBeforeExpiry?.(claimedSandboxId, row.generation).catch((error: unknown) => {
+        if (!(error instanceof Error && error.message.startsWith(`${FINAL_DIFF_FAILED}:`))) throw error;
+      });
       if (!providerStopped) {
         await renewClaim();
         await provider.stopSandbox(claimedSandboxId);
@@ -396,7 +403,10 @@ export function createTerminalFinalDiffPreserver(
         "if [ \"$(wc -c < \"$tmp\")\" -le 10485760 ]; then cat \"$tmp\"; else printf 'AVALON_DIFF_SUMMARY\\n'; git diff --stat --no-ext-diff HEAD | sed -n '1,2000p'; fi",
       ].join("\n"),
     });
-    if (result.exitCode !== 0 || !result.stdout) return;
+    // A failed capture is named rather than read as "nothing to save": expiry
+    // deletes the sandbox right after this, so it must see the failure.
+    if (result.exitCode !== 0) throw new Error(`${FINAL_DIFF_FAILED}:exit_${result.exitCode}`);
+    if (!result.stdout) return;
     const summaryOnly = result.stdout.startsWith("AVALON_DIFF_SUMMARY\n");
     const content = summaryOnly ? result.stdout.slice("AVALON_DIFF_SUMMARY\n".length) : result.stdout;
     const bytes = new TextEncoder().encode(content);

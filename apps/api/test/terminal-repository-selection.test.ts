@@ -325,6 +325,27 @@ describe("Terminal model repository selection", () => {
     expect(insertedResourceMetadata(resourceInserts)).not.toHaveProperty("listing");
   });
 
+  it("names a final-diff capture that exits non-zero instead of reading it as nothing to save", async () => {
+    const regional = preRetirementProductSqliteDatabase();
+    databases.push(regional);
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
+    const payloadPut = vi.fn(async () => undefined);
+    const env = createTestEnv({
+      DB: sqliteD1(regional),
+      AVALON_REGION: "global",
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
+    });
+    const provider = {
+      runUtilityCommand: vi.fn(async () => ({ exitCode: 128, stdout: "", stderr: "fatal: bad revision" })),
+    } satisfies Pick<TerminalSandboxProvider, "runUtilityCommand">;
+
+    await expect(createTerminalFinalDiffPreserver(env, provider, W, S)("provider-1", 1))
+      .rejects.toThrow("terminal_final_diff_failed:exit_128");
+    expect(payloadPut).not.toHaveBeenCalled();
+  });
+
   it("keeps repository-replacement backup ownership in WorkspaceDO after D1 retirement", async () => {
     const regional = preRetirementProductSqliteDatabase();
     databases.push(regional);

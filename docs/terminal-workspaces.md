@@ -548,10 +548,11 @@ through it. The main conversation's derivation is unchanged, so its rows never
 match.
 
 A sandbox under a Sidekick is reached the same way: the Sidekick parent keeps
-its conversations' deadlines beside a Canvas's, so the sweep advances it. The
-workspace policy-change walk still does not reach it. Daytona's own auto-stop
-after fifteen idle minutes, and deletion thirty days after that stop, remain the
-provider backstop. Later activations reopen the same sandbox while it is available;
+its conversations' deadlines beside a Canvas's, so the sweep advances it, and
+the workspace policy-change walk (`terminalSandboxParents`) lists Sidekicks
+beside Canvases. Daytona's own auto-stop after fifteen idle minutes, and, for a
+Sidekick's sandbox, deletion thirty days after that stop, remain the provider
+backstop. Later activations reopen the same sandbox while it is available;
 acquisition rechecks permissions and network policy before reuse. Existing
 per-activation sandboxes from before sharing retain their provider cleanup
 policy; they are not copied into the shared wizard sandbox. Published resources
@@ -1556,7 +1557,10 @@ projection hook. An Organization alarm's full reconcile replaces the whole
 kind, so it has to derive the same entries, or it clears what the hook wrote.
 
 Expiry now restores an archive once before deleting it when no final diff was
-ever recorded. Before this, expiry only deleted an archive, on the assumption
+ever recorded, and a capture that exits non-zero throws
+`terminal_final_diff_failed` instead of reading as nothing to save, so expiry
+keeps the sandbox and retries; a warm stop, which deletes nothing, still
+proceeds without the diff. Before this, expiry only deleted an archive, on the assumption
 that Rally's own warm stop had saved the diff. That holds when Rally stops the
 sandbox first, but it fails for every sandbox Daytona archived while the
 schedule was dark, and Canvas sandboxes are never deleted by Daytona

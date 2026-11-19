@@ -53,30 +53,31 @@ async function terminalAlarms(): Promise<Record<string, string>> {
 it("schedules each Canvas's and Sidekick's earliest sandbox deadline, and keeps it through the full reconcile", async () => {
   const backgroundAgent = crypto.randomUUID();
   const sidekickRun = crypto.randomUUID();
-  await project(canvasId, "0", 1, "2026-11-20T10:00:00.000Z");
-  await project(canvasId, backgroundAgent, 1, "2026-11-20T09:00:00.000Z");
-  await project(sidekickId, sidekickRun, 1, "2026-11-21T08:00:00.000Z");
+  await project(canvasId, "0", 1, "2099-11-20T10:00:00.000Z");
+  await project(canvasId, backgroundAgent, 1, "2099-11-20T09:00:00.000Z");
+  await project(sidekickId, sidekickRun, 1, "2099-11-21T08:00:00.000Z");
   expect(await terminalAlarms()).toEqual({
-    [canvasId]: "2026-11-20T09:00:00.000Z",
-    [sidekickId]: "2026-11-21T08:00:00.000Z",
+    [canvasId]: "2099-11-20T09:00:00.000Z",
+    [sidekickId]: "2099-11-21T08:00:00.000Z",
   });
 
   // The whole index is re-derived at the end of every Organization alarm;
   // that pass has to find the same deadlines rather than clear them.
   await workspace().refreshSchedule(workspaceId);
   expect(await terminalAlarms()).toEqual({
-    [canvasId]: "2026-11-20T09:00:00.000Z",
-    [sidekickId]: "2026-11-21T08:00:00.000Z",
+    [canvasId]: "2099-11-20T09:00:00.000Z",
+    [sidekickId]: "2099-11-21T08:00:00.000Z",
   });
 
   // A sandbox advanced past its last deadline reports none.
   await project(canvasId, backgroundAgent, 2, null);
   expect(await terminalAlarms()).toEqual({
-    [canvasId]: "2026-11-20T10:00:00.000Z",
-    [sidekickId]: "2026-11-21T08:00:00.000Z",
+    [canvasId]: "2099-11-20T10:00:00.000Z",
+    [sidekickId]: "2099-11-21T08:00:00.000Z",
   });
   await project(canvasId, "0", 2, null);
   await project(sidekickId, sidekickRun, 2, null);
+  expect(await terminalAlarms()).toEqual({});
   await workspace().refreshSchedule(workspaceId);
   expect(await terminalAlarms()).toEqual({});
 });
@@ -92,11 +93,11 @@ it("indexes deadlines an Organization already held at v152, and wakes it once to
     migrate(152, 1_000);
     sql.exec(`INSERT INTO workspace_identity VALUES (1, 'workspace-1', 'global', 'wnam', 1, 1)`);
     const projections: [string, string, string | null | undefined][] = [
-      ["canvas-1", "0", "2026-11-20T10:00:00.000Z"],
-      ["canvas-1", "agent-1", "2026-11-20T09:00:00.000Z"],
+      ["canvas-1", "0", "2099-11-20T10:00:00.000Z"],
+      ["canvas-1", "agent-1", "2099-11-20T09:00:00.000Z"],
       ["canvas-1", "agent-2", null],
       ["canvas-2", "0", undefined],
-      ["sidekick-1", "run-1", "2026-11-21T08:00:00.000Z"],
+      ["sidekick-1", "run-1", "2099-11-21T08:00:00.000Z"],
     ];
     for (const [parentId, substreamId, deadline] of projections) {
       const effect = { kind: "directory_common", state: "idle", ...(deadline === undefined ? {} : { nextTerminalActionAt: deadline }) };
@@ -107,8 +108,8 @@ it("indexes deadlines an Organization already held at v152, and wakes it once to
     migrate(153, 2_000);
 
     expect(hostedTerminalDeadlines(sql)).toEqual([
-      { parentId: "canvas-1", dueAt: "2026-11-20T09:00:00.000Z" },
-      { parentId: "sidekick-1", dueAt: "2026-11-21T08:00:00.000Z" },
+      { parentId: "canvas-1", dueAt: "2099-11-20T09:00:00.000Z" },
+      { parentId: "sidekick-1", dueAt: "2099-11-21T08:00:00.000Z" },
     ]);
     expect(sql.exec(`SELECT COUNT(*) AS n FROM sidekick_child_projections`).one()).toEqual({ n: 5 });
     expect(sql.exec(`SELECT kind, alarm_key FROM _internal_durable_alarms WHERE kind = 'schedule_bootstrap'`).toArray())
