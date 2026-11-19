@@ -32,8 +32,8 @@
 /support/connectors/ashby  /help/connecting-your-tools/ashby/  301
 /support/connectors/fireflies/  /help/connecting-your-tools/fireflies/  301
 /support/connectors/fireflies  /help/connecting-your-tools/fireflies/  301
-/support/connectors/canva/  /help/connecting-your-tools/canva/  301
-/support/connectors/canva  /help/connecting-your-tools/canva/  301
+/support/connectors/canva/  /help/connecting-your-tools/  301
+/support/connectors/canva  /help/connecting-your-tools/  301
 /support/connectors/granola/  /help/connecting-your-tools/granola/  301
 /support/connectors/granola  /help/connecting-your-tools/granola/  301
 /support/connectors/linear/  /help/connecting-your-tools/linear/  301
@@ -46,6 +46,8 @@
 /support/connectors/inbound-webhook  /help/connecting-your-tools/  301
 /help/connecting-your-tools/inbound-webhook/  /help/connecting-your-tools/  301
 /help/connecting-your-tools/inbound-webhook  /help/connecting-your-tools/  301
+/help/connecting-your-tools/canva/  /help/connecting-your-tools/  301
+/help/connecting-your-tools/canva  /help/connecting-your-tools/  301
 /support/connectors/x/  /help/connecting-your-tools/x/  301
 /support/connectors/x  /help/connecting-your-tools/x/  301
 /support/connectors/custom-mcp/  /help/connecting-your-tools/custom-mcp-server/  301
