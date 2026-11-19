@@ -186,7 +186,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
   const server = new McpServer({
     name: "Rally",
     version: "1.0.0",
-    description: "Create, update, share and maintain Rally Canvases: shared conversations with Rally and the documents, sheets, sites and other artifacts they generate.",
+    description: "Create, update, share and maintain Rally Canvases: shared conversations with Rally, each with the one artifact it makes, such as a document, a sheet or a site.",
   }, {
     instructions: RALLY_MCP_SERVER_INSTRUCTIONS,
   });
@@ -257,7 +257,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("create_canvas", {
     title: "Create a Canvas",
-    description: "Create a Canvas in the person's Organization. With a prompt, it is sent to the new Canvas's Chat as the person's first message and Rally starts working on it; without one the Canvas starts empty. With sidekick, a Sidekick is also made for the new Canvas to keep it up to date (see add_canvas_sidekick). Without a title Rally names it from its first message. Only the creator can open a new Canvas until its audience is changed. Guests cannot create Canvases.",
+    description: "Create a Canvas in the person's Organization. With a prompt, it is sent to the new Canvas's Chat as the person's first message and Rally starts working on it; without one the Canvas starts empty. With sidekick, a Sidekick is also made for the new Canvas to keep it up to date (see add_canvas_sidekick). Without a title Rally names it from its first message. A new Canvas opens to the Organization's default editor audience, everyone in the Organization unless an admin chose the creator only; get_canvas shows its visibility. Guests cannot create Canvases.",
     inputSchema: {
       operationId: OperationId,
       title: CreateCanvasRequestSchema.shape.title,
@@ -282,7 +282,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("add_canvas_sidekick", {
     title: "Add a Sidekick to a Canvas",
-    description: "Make a Sidekick for a Canvas the person can open, so the Canvas is kept up to date on a schedule or on events without anyone asking. The Sidekick is attached to this Canvas: its runs can read and post in the Canvas's Chat and update its artifacts, everyone in the Canvas can change or archive it by asking in the Chat, and archiving the Canvas archives it. It runs as the person, with their connected accounts. This call makes the Sidekick and hands your instructions to Rally's setup agent for it, which chooses the trigger and saves it; until then get_canvas shows it as draft. It is not a way to change an existing Sidekick: for that, ask in the Canvas's Chat.",
+    description: "Make a Sidekick for a Canvas the person can open, so the Canvas is kept up to date on a schedule or on events without anyone asking. The Sidekick is attached to this Canvas: its runs can read and post in the Canvas's Chat and update its artifact, everyone in the Canvas can change or archive it by asking in the Chat, and archiving the Canvas archives it. It runs as the person, with their connected accounts. This call makes the Sidekick and hands your instructions to Rally's setup agent for it, which chooses the trigger and saves it; until then get_canvas shows it as draft. It is not a way to change an existing Sidekick: for that, ask in the Canvas's Chat.",
     inputSchema: { canvasId: CanvasId, operationId: SidekickOperationId, instructions: SidekickInstructions },
     annotations: { ...write, openWorldHint: true },
   }, ({ canvasId, operationId, instructions }) => tool("add_canvas_sidekick", async () => {
@@ -406,7 +406,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("publish_file", {
     title: "Publish a file to a Canvas",
-    description: "Publish a document, spreadsheet, image, PDF or other file you made (a Claude or ChatGPT artifact, a file in an OpenCode workspace) into a Canvas as one of its artifacts, as the person. Its Canvas artifact audience controls who can use it; editors can ask Rally to change it. Use get_artifact_link for the shareable URL after background propagation. Give the file's extension in the name so Rally knows its type.",
+    description: "Publish a document, spreadsheet, image, PDF or other file you made (a Claude or ChatGPT artifact, a file in an OpenCode workspace) into a Canvas as its artifact, as the person. A Canvas holds one artifact: the same name again is a new version of it, and another name takes the place of the artifact the Canvas held. Its Canvas artifact audience controls who can use it; editors can ask Rally to change it. Use get_artifact_link for the shareable URL after background propagation. Give the file's extension in the name so Rally knows its type.",
     inputSchema: {
       canvasId: CanvasId,
       name: Name,

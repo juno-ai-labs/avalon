@@ -5,8 +5,10 @@ description: Publish work made here into a Rally Canvas through the Rally MCP se
 
 # Publishing to Rally
 
-Publishing puts something you already made into a Canvas as one of its
-artifacts, byte for byte, as the person. Everyone who can open the Canvas sees
+Publishing puts something you already made into a Canvas as its artifact,
+byte for byte, as the person. A Canvas holds one artifact: the same name
+again is a new version of it, and another name takes the place of the
+artifact the Canvas held. Everyone who can open the Canvas sees
 it, and Rally can read and work on it there. Publishing is better than pasting
 into a message: the artifact keeps its type, its versions and its address.
 

@@ -156,7 +156,7 @@ same `operationId` (stated once, in that parameter's description).
 
 `publish_file` and `publish_site` bring something made outside Rally (a
 Claude or ChatGPT artifact, a file in an OpenCode workspace) into a Canvas as
-one of its artifacts, exactly as written. `POST /canvases/:id/artifacts`
+its artifact, exactly as written. `POST /canvases/:id/artifacts`
 (`CanvasPublicationService`) takes a `file` (one document, as text or base64)
 or a `site`. It authorizes the person as a reader who can take part in the
 Canvas, then writes through `resource-publication.ts`, the writes Rally's own

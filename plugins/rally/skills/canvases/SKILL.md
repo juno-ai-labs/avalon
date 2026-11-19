@@ -6,15 +6,15 @@ description: Work with Rally Canvases through the Rally MCP server. Use when the
 # Rally Canvases
 
 A **Canvas** in Rally is a shared conversation with Rally (its **Chat**) and
-the artifacts that conversation generates: documents, spreadsheets, images,
-PDFs and reactive sites. Everyone the Canvas is shared with can read the Chat and
+the one artifact that conversation makes: a document, spreadsheet, image,
+PDF or reactive site. Everyone the Canvas is shared with can read the Chat and
 take part. The Rally tools act in one Organization as the person who connected
 Rally, with exactly their permissions.
 
 ## Finding a Canvas
 
 1. `list_canvases` with a `query` taken from the title the person used.
-2. `get_canvas` on the match for its artifacts, participants, and whether the
+2. `get_canvas` on the match for its artifact, participants, and whether the
    person can manage it.
 3. Ask before creating a new Canvas when a close match exists.
 
@@ -26,7 +26,7 @@ Rally, the agent inside the Canvas, does the work. You ask it:
    launch plan", "Turn the table into a chart").
 2. Rally answers asynchronously. `read_canvas_chat` to follow along; if it is
    still working, wait and read again rather than resending.
-3. `get_canvas` shows each artifact's new version; `read_artifact` reads one.
+3. `get_canvas` shows the artifact's new version; `read_artifact` reads it.
 
 To start something new, `create_canvas` with a `prompt` creates the Canvas
 and sends the prompt as the first message in one step.
