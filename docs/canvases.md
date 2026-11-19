@@ -1,8 +1,8 @@
 # Canvases
 
 A **Canvas** is the shared home for work in Rally: a conversation with Rally
-that everyone in the Canvas can read and take part in, and the artifacts that
-conversation generates — a document, spreadsheet, image, PDF, archive or
+that everyone in the Canvas can read and take part in, and the one artifact
+that conversation makes — a document, spreadsheet, image, PDF, archive or
 reactive site. A Canvas is a conversation first. Its id is the parent id of its
 `canvas`-kind conversation. A Canvas holds one artifact
 ([One artifact](#one-artifact)), and a new Canvas has none until its Chat
@@ -487,8 +487,8 @@ Zero or more Sidekicks are attached to a Canvas, each by one row of
 `sidekick_conversation_attachments`
 ([`automation-lifecycle.md`](automation-lifecycle.md#attached-conversations)
 owns the row and what it grants). An attached Sidekick's runs read and post in
-the Chat, publish new versions of the Canvas's artifacts, and write rows into
-an artifact that stores data. A person's own Canvas, with no writer Sidekick,
+the Chat, publish new versions of the Canvas's artifact, and write rows into
+it when it stores data. A person's own Canvas, with no writer Sidekick,
 is updated this way.
 
 Attaching changes who can open nothing. The Canvas admits who it admitted, and
@@ -1105,6 +1105,38 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-19 — Prompts and tool text stopped describing the retired product
+
+**What changed.** An audit of every model-facing prompt, skill, tool
+description and refusal against the code. The standing `# Sites` policy no
+longer says "a request for a new thing is a new site at a new path, even where
+one already exists": it defers to the Canvas's host-provided message. The
+Canvas Chat's agents guidance says `sidekicks_list` returns every attached
+Sidekick, not only the ones the Canvas made. The Terminal message for a
+Sidekick says a run's publications go into an attached Canvas, not "its home
+conversation". The MCP server's instructions, tools and skills say a Canvas
+holds one artifact, that a person's publish of another name takes its place,
+and that a new Canvas opens to the Organization's default editor audience.
+The wizard's `suggestedScope` description no longer says scope decides whose
+connections a run uses. Tool text that said work stream, thread or workspace
+for a conversation or the Organization now uses those words.
+
+**Why.** Each of these told a model a rule the code refuses or no longer has.
+The `# Sites` sentence is in every run's system prompt and contradicted
+`CANVAS_DEFINITION`: a model following it publishes a second path into a
+Canvas and is refused `canvas_artifact_held`. The rest were left behind by the
+Threads removal, the one-artifact rule and the 2026-11-14 change that made a
+Canvas manage every Sidekick attached to it.
+
+**Considered and rejected.** Restating the one-artifact rule in the `# Sites`
+policy: it is already in `CANVAS_DEFINITION`, and a second copy drifts. Renaming
+the addressing classifier's "collaborative workstream": its eval baselines were
+measured on that wording, so it is a classifier change to re-measure.
+
+**Consequences.** The standing system prompt went from 8,493 to 8,498 bytes,
+two under its 8,500-byte ceiling, so the next addition has to remove text first. A prompt that describes where a publish lands points at
+the host-provided Canvas message instead of describing it.
 
 ### 2026-11-19 — One definition of a Canvas, and a publish is never storage
 
