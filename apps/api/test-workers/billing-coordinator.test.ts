@@ -166,7 +166,12 @@ it('creates a no-card signup trial through the actor and refreshes payment readi
   await expect.poll(async () => env.DB.prepare('SELECT status, payment_method_ready FROM billing_accounts WHERE workspace_id = ?').bind(ORG).first()).toEqual({ status: 'trialing', payment_method_ready: 0 });
   expect(await env.DB.prepare('SELECT plan FROM workspaces WHERE id = ?').bind(ORG).first()).toEqual({ plan: 'growth' });
   expect(await env.DB.prepare('SELECT subscription_id FROM billing_signup_trials WHERE workspace_id = ?').bind(ORG).first()).toEqual({ subscription_id: 'sub_signup' });
-  await expect(Promise.resolve(stub().overages(ORG, true))).rejects.toMatchObject({ code: 'billing_overage_unavailable' });
+  // The deferred refresh writes D1 before it releases the actor, and the actor
+  // rejects rather than queues a second call: wait for the lock, not the row.
+  const overageOutcome = () => Promise.resolve(stub().overages(ORG, true)).then(() => 'accepted', (error: { code?: string }) => error.code);
+  let outcome: string | undefined;
+  await expect.poll(async () => (outcome = await overageOutcome())).not.toBe('billing_busy');
+  expect(outcome).toBe('billing_overage_unavailable');
   ready = true;
   const app = new Hono<HonoAppEnv>(); app.onError(errorHandler); app.route('/webhook', stripeWebhookRoutes);
   const body = JSON.stringify({ type: 'customer.updated', data: { object: { id: 'cus_1' } } });
