@@ -788,7 +788,7 @@ export class WorkspaceService {
         throw new ApiError(
           409,
           "last_workspace_owner",
-          "This is the only owner of this workspace. Make somebody else an owner first.",
+          "This is the only owner of this organization. Make somebody else an owner first.",
         );
       }
       if (assigned === "member" && Number(remaining?.administrators ?? 0) === 0) {
