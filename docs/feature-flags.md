@@ -201,22 +201,11 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 
 ### 2026-11-19 — Move the primary default to GPT-6.1 Sol
 
-**What changed:** The primary model group now defaults to `openai/gpt-6.1-sol`.
-Canvas and Sidekick runs, and direct Canvas structured calls, inherit
-it. Resource naming stays on GPT-6.1 Terra through the faster group. An unpinned
-conversation with no deployment override switches on its next run.
-
-**Why:** The team chose Sol for the default agent loop. The quality, latency and
-cost reasons for leaving Terra were not recorded here.
-
-**Alternatives:** Terra stays reachable through `OPENROUTER_PRIMARY_MODEL`,
-`AGENT_MODEL_ROUTING_JSON` and pins. Any comparison between the two was not
-recorded.
-
-**What future changes must respect:** Explicit environment routes and
-conversation pins keep precedence. This is the OpenRouter GPT-6.1 Sol, not the
-Azure-only GPT-5.6 Sol, so direct OpenRouter Canvas structured calls stay
-allowed.
+Canvas and Sidekick runs now default to `openai/gpt-6.1-sol`; resource naming
+stays on Terra through the faster group. The reason for leaving Terra was not
+recorded. Pins and explicit routes keep precedence. A primary default must
+support sanitized tool calls and image input with fallbacks disabled, so a
+fallback cannot hide an unsupported request shape.
 
 ### 2026-11-10 — Organization-owned model selector visibility
 
