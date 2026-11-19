@@ -364,7 +364,9 @@ embedding children (`search_embedding_batch_v1`) share the regional activity
 Queue with unrelated jobs. Inspect and replay only the failed search messages;
 never purge the whole Queue. A display job can be replayed unchanged at any
 time: it carries only the conversation address and reads the current title and
-archive state when it runs. Malformed embedding jobs retry and eventually
+archive state when it runs. A display job for a Chat that has since been erased
+(a discarded blank Canvas) reads no display and is acknowledged; it does not
+retry. Malformed embedding jobs retry and eventually
 dead-letter rather than falling through to the legacy-message acknowledgment. Publish a replacement durably before acknowledging
 or removing its failed predecessor.
 
@@ -739,6 +741,30 @@ with `--class=WorkspaceDO`. Constructors still apply migrations on ordinary
 wakeups; the CLI provides the eager fleet pass without the retired tracker.
 
 ## Changelog
+
+### 2026-11-19 — Settle a display job for an erased Chat instead of dead-lettering it
+
+**What changed:** `AgentLoopDO.searchConversationDisplay` answers `null` when the
+object has no identity, rather than throwing
+`search_projection_identity_mismatch`. The consumer already acknowledges a
+`null` display without patching.
+
+**Why:** A blank Canvas discarded seconds after it was opened had its Chat
+erased (`eraseBlankConversation` deletes all storage) while a
+`search_conversation_projection_v1` job for it was still queued. Every delivery
+then met an object with no identity, threw the mismatch, and the job
+dead-lettered after its retries (production, 2026-11-19 09:56 UTC). The
+`null` answer was already the consumer's contract for "this conversation no
+longer answers"; the identity check reached the throw first.
+
+**Considered and rejected:** Acknowledging `search_projection_identity_mismatch`
+in the consumer. The same error marks a job routed to the wrong live
+conversation, which is a real fault and should keep failing loudly. Only the
+no-identity case is answered.
+
+**Consequences:** A display job for any never-created or erased conversation now
+settles silently. A live conversation whose identity disagrees with the job
+still throws.
 
 ### 2026-11-15 — Back off a failed search delivery before redelivering it
 

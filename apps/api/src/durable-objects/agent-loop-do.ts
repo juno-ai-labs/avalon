@@ -6050,7 +6050,11 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   /** Internal Queue consumer entrypoint: the display a conversation's indexed rows must carry now. */
   async searchConversationDisplay(input: unknown): Promise<ConversationDisplay | null> {
     await this.storageReady;
-    this.searchProjectionIdentity(SearchConversationProjectionMessageSchema.parse(input));
+    const request = SearchConversationProjectionMessageSchema.parse(input);
+    // An erased Chat has no identity and nothing left to display: answering
+    // null lets the job settle instead of retrying into the dead-letter queue.
+    if (this.objectStore.identity() === null) return null;
+    this.searchProjectionIdentity(request);
     return this.currentConversationDisplay();
   }
 
