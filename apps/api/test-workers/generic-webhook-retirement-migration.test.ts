@@ -4,7 +4,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { AutomationDraftSchema } from "@rally/contracts";
 import { createConnectorRegistry } from "@rally/connectors";
 import { expect, it } from "vitest";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-schema-migrations";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { sidekickSourceRegistrations } from "../src/durable-objects/sidekick-source-registrations";
 
@@ -68,6 +68,32 @@ const rules = {
   ],
 };
 
+/** A tool that reads Linear, and one that only the webhook served. */
+const linearTool = {
+  name: "issue_lookup", description: "Looks an issue up.", inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+  code: "export default async () => ({})", requiredPlugins: ["plugin_webhook", "plugin_linear"],
+};
+const webhookTool = { ...linearTool, name: "deploy_lookup", requiredPlugins: ["plugin_webhook"] };
+/**
+ * A ready revision whose only trigger is a `webhook` naming no plugin, so
+ * only its type says it goes, and whose tools then need a trigger it no
+ * longer has. Its rule names no plugin either: only its binding key ties it
+ * to the removed trigger.
+ */
+const toolDefinition = {
+  ...definition,
+  triggers: [{ type: "webhook", sourceBindingKey: "releases", eventTypes: ["release.published"] }],
+  recommendedPlugins: definition.recommendedPlugins,
+  customTools: [linearTool, webhookTool],
+  ready: true,
+};
+const toolRules = {
+  schemaVersion: 1,
+  evaluators: [
+    { evaluatorKey: "releases", source: { sourceBindingKey: "releases", event: { kind: "event_type", eventType: "release.published" } }, when: { kind: "always" } },
+  ],
+};
+
 function connection(sql: SqlStorage, id: string, type: string, pluginId: string): void {
   sql.exec(
     `INSERT INTO connector_connections (id, workspace_id, connector_type, scope, owner_user_id, display_name,
@@ -119,6 +145,12 @@ it("retires the generic webhook at WorkspaceDO 154: connections disabled, webhoo
        VALUES (?, 1, ?, 'hash', ?, 0, 1)`,
       SIDEKICK, JSON.stringify(definition), JSON.stringify(rules),
     );
+    sql.exec(
+      `INSERT INTO sidekick_revisions (sidekick_id, definition_revision, definition_json, definition_hash, evaluator_rules_json, ready, created_at)
+       VALUES (?, 2, ?, 'hash', ?, 1, 2)`,
+      SIDEKICK, JSON.stringify(toolDefinition), JSON.stringify(toolRules),
+    );
+    sql.exec("UPDATE connector_connections SET next_poll_at = 5 WHERE id = ?", WEBHOOK);
     registration(sql, webhookEvaluator);
     registration(sql, linearEvaluator);
     for (const [id, connectionId] of [["00000000-0000-7000-8000-0000000ab010", WEBHOOK], ["00000000-0000-7000-8000-0000000ab011", LINEAR]]) {
@@ -142,8 +174,8 @@ it("retires the generic webhook at WorkspaceDO 154: connections disabled, webhoo
     const one = <T extends Record<string, SqlStorageValue>>(query: string, ...binds: unknown[]) =>
       sql.exec<T>(query, ...binds).one();
 
-    expect(one("SELECT status, encrypted_credentials, credential_iv FROM connector_connections WHERE id = ?", WEBHOOK))
-      .toEqual({ status: "disabled", encrypted_credentials: null, credential_iv: null });
+    expect(one("SELECT status, encrypted_credentials, credential_iv, next_poll_at FROM connector_connections WHERE id = ?", WEBHOOK))
+      .toEqual({ status: "disabled", encrypted_credentials: null, credential_iv: null, next_poll_at: null });
     expect(one("SELECT status, encrypted_credentials FROM connector_connections WHERE id = ?", LINEAR))
       .toEqual({ status: "healthy", encrypted_credentials: "sealed" });
 
@@ -157,7 +189,7 @@ it("retires the generic webhook at WorkspaceDO 154: connections disabled, webhoo
     expect(JSON.parse(directory.connector_bindings_json)).toEqual({ plugin_linear: LINEAR });
 
     const revision = one<{ definition_json: string; evaluator_rules_json: string }>(
-      "SELECT definition_json, evaluator_rules_json FROM sidekick_revisions WHERE sidekick_id = ?", SIDEKICK,
+      "SELECT definition_json, evaluator_rules_json FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision = 1", SIDEKICK,
     );
     const purged = JSON.parse(revision.definition_json) as unknown;
     expect(purged).toEqual({
@@ -168,6 +200,22 @@ it("retires the generic webhook at WorkspaceDO 154: connections disabled, webhoo
     // The stored revision reads again: a `webhook` trigger is no longer a trigger type.
     expect(AutomationDraftSchema.safeParse(purged).success).toBe(true);
     expect(JSON.parse(revision.evaluator_rules_json)).toEqual({ schemaVersion: 1, evaluators: [rules.evaluators[1]] });
+
+    const toolRevision = one<{ definition_json: string; evaluator_rules_json: string; ready: number }>(
+      "SELECT definition_json, evaluator_rules_json, ready FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision = 2", SIDEKICK,
+    );
+    const toolPurged = JSON.parse(toolRevision.definition_json) as unknown;
+    expect(toolPurged).toEqual({
+      ...toolDefinition,
+      triggers: [],
+      recommendedPlugins: [{ pluginId: "plugin_linear", recommendedTools: [], reason: "Issues" }],
+      customTools: [{ ...linearTool, requiredPlugins: ["plugin_linear"] }],
+      ready: false,
+    });
+    expect(toolRevision.ready).toBe(0);
+    const toolParse = AutomationDraftSchema.safeParse(toolPurged);
+    expect(toolParse.error?.issues ?? []).toEqual([]);
+    expect(JSON.parse(toolRevision.evaluator_rules_json)).toEqual({ schemaVersion: 1, evaluators: [] });
 
     expect(sql.exec("SELECT registration_id, state FROM workspace_external_event_registrations ORDER BY registration_id").toArray())
       .toEqual([{ registration_id: WEBHOOK_EVALUATOR, state: "removed" }, { registration_id: LINEAR_EVALUATOR, state: "active" }]);
