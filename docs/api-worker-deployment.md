@@ -216,6 +216,12 @@ A missing binding or failed health check stops the release through the existing 
 
 ## Testing
 
+- `pnpm --filter @rally/api check:object-startup-boundary` bundles
+  `src/worker-events.ts` (the HTTP app, queue consumers and crons) with
+  Wrangler and fails if `agent-loop-do.ts` or `workspace-do.ts` is in the graph.
+  CI runs it beside the telemetry check. It changes nothing for today's single
+  Worker; it keeps a front-door split possible.
+
 - `pnpm --filter @rally/api check:telemetry-startup-boundary` reads Wrangler's
   emitted bundles and requires the PostHog SDK, core, and adapter modules to be
   absent from configured regional APIs. The provider build and production-entrypoint
@@ -385,9 +391,9 @@ conversion, once per isolate. Nothing enforces deferral for new contracts
 schemas yet, so a new schema is eager until someone wraps it. Calling
 `.extend()` or `.shape` on a deferred schema fails typecheck. Either make that
 schema eager again or unwrap it inside the deriving schema's own deferred
-factory, as the style guide says. Don't cast at the call site. Import the
-migration list from `workspace-do-schema-migrations.ts`, not `workspace-do.ts`,
-anywhere outside the object; nothing checks this yet. `@rally/connectors` and
+factory, as the style guide says. Don't cast at the call site.
+`check:object-startup-boundary` now fails CI if either object's module comes back
+into the HTTP/queue/cron graph. `@rally/connectors` and
 `@rally/agent-harness` each cost about 100–130 ms alone and have not had the
 contracts sweep.
 
