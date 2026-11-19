@@ -10,6 +10,42 @@ reviewer's map through the change.
 pre-fills a new PR with this shape. The template is the layout; this document is
 the specification behind it, and the two are updated together.
 
+## This repository is public
+
+`juno-ai-labs/avalon` is a public repository. Anyone on the internet can read
+every pull request title, description, comment, review, commit message, branch
+name, and attached screenshot or log, and GitHub keeps edit history, so deleting
+something later does not take it back. Write every one of them for that reader.
+
+Never put any of the following into a pull request or its commits:
+
+- **Personal information**: names, email addresses, phone numbers, or anything
+  else that identifies a real user, customer, or employee, and any content from
+  their Canvases, Sidekicks, connectors, or messages.
+- **Device identifiers**: hardware or install IDs, serial numbers, UDIDs, push
+  tokens, Expo or EAS device and build IDs, hostnames, IP addresses, or MAC
+  addresses.
+- **Resource IDs**: real organization, workspace, user, Canvas (`workstream`),
+  Sidekick (`automation`), artifact, or session IDs; Cloudflare account, zone,
+  D1, KV, R2, or Durable Object IDs; provider IDs such as Slack team, channel, or
+  user IDs, Linear issue IDs, or Stripe customer and invoice IDs; and request or
+  trace IDs from production or staging.
+- **Secrets**, as [`security.md`](security.md) already forbids.
+
+This is stricter than the logging policy. [`runbook.md`](runbook.md) keeps
+identifiers in logs because operators need them and logs are private; a pull
+request is neither. When a description needs to point at a specific record,
+write a placeholder (`<org-id>`, `<canvas-id>`) or use a value from the local
+seed data, and describe the case in words ("an organization with two regions and
+a paused Sidekick"). Crop or blur screenshots taken against real accounts, and
+cut identifiers out of pasted logs and error output before they go in
+**Validation** or **Reviewer notes**.
+
+If one slips in, edit it out at once and tell the team in private. The edit
+history still holds the old text until someone with write access deletes that
+revision, and a value in a pushed commit stays in the branch history until the
+commit is rewritten.
+
 ## Required sections
 
 Every PR description **must** include these sections, in this order, as Markdown
