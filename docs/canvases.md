@@ -427,7 +427,10 @@ one sentence set, `CANVAS_DEFINITION` (`packages/prompts/api/canvas-definition.t
 which the Chat's, a run's and the wizard's guidance each carry: a Canvas is one
 Chat and the one artifact it makes, everything goes inside that artifact, and a
 publish is never storage, so no file is published on its own beside it. The
-wizard is also told never to save a step that does. `canvas_artifacts` keeps its
+wizard is also told never to save a step that does. In a Chat, a request for
+something other than the artifact is put to the person first (replace it, put
+it inside, or keep it in the Chat), and `replaceCanvasArtifact` follows their
+choice. `canvas_artifacts` keeps its
 `(canvas_id, resource_id)` key, so a Canvas converted from a Thread may hold
 several until one replaces them, and any listed one republishes.
 
@@ -1106,10 +1109,14 @@ why the refresh lease shares the owning object's transaction.
 
 ## Changelog
 
-### 2026-11-19 — Prompts and tool text stopped describing the retired product
+### 2026-11-19 — One definition of a Canvas, a publish is never storage, and prompts match the product
 
-**What changed.** An audit of every model-facing prompt, skill, tool
-description and refusal against the code. The standing `# Sites` policy no
+**What changed.** `CANVAS_DEFINITION` defines a Canvas for the model once, and
+the Canvas Chat, Sidekick run and wizard guidance all carry it. The wizard is
+told never to save a step that publishes a file on its own, and a run to fold
+such a step into the artifact. `building-live-sites`, `publishing-a-feed` and
+`creating-a-podcast-episode` say the same where they teach publishing. The Chat is told that a request for something other than the Canvas's artifact, such as a document while it holds a site, is first put to the person: replace the artifact, put the new thing inside it, or keep it in the Chat. It sets `replaceCanvasArtifact` only when they chose to replace, and the `canvas_artifact_held` refusal says the same. Every model-facing prompt, skill, tool
+description and refusal was also checked against the code. The standing `# Sites` policy no
 longer says "a request for a new thing is a new site at a new path, even where
 one already exists": it defers to the Canvas's host-provided message. The
 Canvas Chat's agents guidance says `sidekicks_list` returns every attached
@@ -1122,44 +1129,30 @@ The wizard's `suggestedScope` description no longer says scope decides whose
 connections a run uses. Tool text that said work stream, thread or workspace
 for a conversation or the Organization now uses those words.
 
-**Why.** Each of these told a model a rule the code refuses or no longer has.
-The `# Sites` sentence is in every run's system prompt and contradicted
-`CANVAS_DEFINITION`: a model following it publishes a second path into a
-Canvas and is refused `canvas_artifact_held`. The rest were left behind by the
-Threads removal, the one-artifact rule and the 2026-11-14 change that made a
-Canvas manage every Sidekick attached to it.
-
-**Considered and rejected.** Restating the one-artifact rule in the `# Sites`
-policy: it is already in `CANVAS_DEFINITION`, and a second copy drifts. Renaming
-the addressing classifier's "collaborative workstream": its eval baselines were
-measured on that wording, so it is a classifier change to re-measure.
-
-**Consequences.** The standing system prompt went from 8,493 to 8,498 bytes,
-two under its 8,500-byte ceiling, so the next addition has to remove text first. A prompt that describes where a publish lands points at
-the host-provided Canvas message instead of describing it.
-
-### 2026-11-19 — One definition of a Canvas, and a publish is never storage
-
-**What changed.** `CANVAS_DEFINITION` defines a Canvas for the model once, and
-the Canvas Chat, Sidekick run and wizard guidance all carry it. The wizard is
-told never to save a step that publishes a file on its own, and a run to fold
-such a step into the artifact. `building-live-sites`, `publishing-a-feed` and
-`creating-a-podcast-episode` say the same where they teach publishing.
-
 **Why.** A podcast Sidekick's wizard saved "keep final audio resources" so a
 retry could skip re-rendering. Every run then published its finished MP3 on its
 own. Before runs stopped making Canvases, each such publish made a Canvas
 nobody asked for; after, it would be refused `canvas_artifact_held`, whose
 remedy `replaceCanvasArtifact` would drop the feed's site. The skills already
 said media goes inside the site, but nothing said a publish is not a save, and
-each prompt described the one-artifact rule in its own words.
+each prompt described the one-artifact rule in its own words. Replacing an artifact unasked loses what the Canvas was for, and the person is the one who knows whether the new thing belongs inside it. This is a question about what they want, not approval of a tool call: the tool policy is unchanged. Each audit fix removed text that told a model a rule the code refuses or no longer has.
+The `# Sites` sentence is in every run's system prompt and contradicted
+`CANVAS_DEFINITION`: a model following it publishes a second path into a
+Canvas and is refused `canvas_artifact_held`. The rest were left behind by the
+Threads removal, the one-artifact rule and the 2026-11-14 change that made a
+Canvas manage every Sidekick attached to it.
 
 **Considered and rejected.** A durable scratch store for intermediate files:
 the retry already has the section recordings `generate_audio` saved, and
-re-joining them is cheap, so no new primitive is needed for this case.
+re-joining them is cheap, so no new primitive is needed for this case. Restating the one-artifact rule in the `# Sites`
+policy: it is already in `CANVAS_DEFINITION`, and a second copy drifts. Renaming
+the addressing classifier's "collaborative workstream": its eval baselines were
+measured on that wording, so it is a classifier change to re-measure.
 
 **Consequences.** A new prompt that publishes into a Canvas carries
-`CANVAS_DEFINITION` rather than restating the rule.
+`CANVAS_DEFINITION` rather than restating the rule. The standing system prompt went from 8,493 to 8,498 bytes,
+two under its 8,500-byte ceiling, so the next addition has to remove text first. A prompt that describes where a publish lands points at
+the host-provided Canvas message instead of describing it.
 
 ### 2026-11-19 — A Sidekick run never creates a Canvas
 
