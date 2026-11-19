@@ -769,6 +769,8 @@ describe("adding members, and the invitations still waiting from before", () => 
         member: { userId: expect.any(String), email: "nancy@example.com", role: "admin" } });
       expect(membership(database, added.member.userId)).toEqual({ role: "admin", access_class: "member", status: "active" });
       expect(resend.mock.calls[0]![0].subject).toBe("Owner added you to Avalon Studio on Rally");
+      // Open Settings windows drop the invitation the add revoked, as after the app's own add.
+      expect(publishWorkspaceSync).toHaveBeenCalledWith(env, invitationRow.workspace_id, ["member_directory", "invitation_directory"]);
     } finally { database.close(); }
   });
 
