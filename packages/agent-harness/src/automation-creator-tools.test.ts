@@ -477,7 +477,7 @@ describe("set_evaluator_rules and a resource the rule is not about", () => {
   });
 });
 
-describe("set_evaluator_rules on a trigger whose filter fields are open", () => {
+describe("set_evaluator_rules on a trigger's declared filter fields", () => {
   function hostWithTrigger(descriptor: Record<string, unknown>) {
     const staged: unknown[] = [];
     const state = host({
@@ -529,19 +529,7 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
     }],
   };
 
-  it("lets a rule name a payload key nobody declared", async () => {
-    const { state, staged } = hostWithTrigger({ openFilterFields: true });
-
-    // The accept-side evaluator checks an open descriptor's leaves for shape
-    // only. The drafting check has to agree, or the one rule an open descriptor is for
-    // (a condition on the caller's own keys) is refused before it is written.
-    await expect(toolNamed(createAutomationsPlugin(state).tools, "set_evaluator_rules")
-      .execute(serviceIsCheckout, toolContext))
-      .resolves.toMatchObject({ output: { accepted: true } });
-    expect(staged).toHaveLength(1);
-  });
-
-  it("still holds a closed descriptor to its declared fields", async () => {
+  it("holds a rule to the fields its trigger declares", async () => {
     const { state, staged } = hostWithTrigger({});
 
     await expect(toolNamed(createAutomationsPlugin(state).tools, "set_evaluator_rules")
@@ -599,9 +587,11 @@ describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
           label: "deploy.finished",
           description: "A delivery of deploy.finished from this source.",
           eventFamilies: [],
-          filterFields: [],
+          filterFields: [{
+            key: "service", label: "Service", description: "The deployed service.",
+            valueType: "string", operators: ["equals"], sensitive: false,
+          }],
           resourceRelationships: [],
-          openFilterFields: true,
           digestible: false,
         }],
         tools: [],
@@ -659,18 +649,6 @@ describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
       expect((rules as { evaluators: Array<{ source: Record<string, unknown> }> }).evaluators[0]!.source)
         .not.toHaveProperty("resourceId");
     }
-  });
-
-  it("refuses a dotted key on an open descriptor, since the payload's keys are bare", async () => {
-    const { state, staged } = deployHost();
-    const tools = createAutomationsPlugin(state).tools;
-
-    // A dotted attribute would compile and then never match anything: the
-    // event context indexes metadata by its bare keys.
-    await expect(toolNamed(tools, "set_evaluator_rules")
-      .execute(rule("00000000-0000-4000-8000-000000000000", "metadata.service"), toolContext))
-      .rejects.toThrow(/without a metadata\. prefix/u);
-    expect(staged).toHaveLength(0);
   });
 });
 

@@ -3038,7 +3038,6 @@ export function executeAutomationCreatorDiscoveryTool(
           ...(trigger.resourceRelationships?.length
             ? { resourceRelationships: trigger.resourceRelationships }
             : {}),
-          ...(trigger.openFilterFields ? { openFilterFields: true } : {}),
         })),
         ...(activityTriggersUnavailable ? { activityTriggersUnavailable } : {}),
       },

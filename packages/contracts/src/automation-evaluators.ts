@@ -460,14 +460,6 @@ export const ConnectorActivityTriggerDescriptorV2Schema = deferredZodSchema(() =
     resourceType: NonEmptyStringSchema,
   })),
   digestible: z.boolean(),
-  /**
-   * The payload's own keys are the filter fields: a connector whose events
-   * carry whatever their caller posts declares no list ahead of them, so a rule
-   * may name any metadata key with any operator, and the event's flattened
-   * metadata is what the leaf is read against. No connector Rally ships sets it
-   * since the generic webhook was removed (docs/connectors.md#2026-11-19).
-   */
-  openFilterFields: z.boolean().optional(),
 }));
 
 export type ExternalEventPredicateLeafV1 = z.infer<typeof ExternalEventPredicateLeafV1Schema>;
