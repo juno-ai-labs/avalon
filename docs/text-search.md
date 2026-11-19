@@ -459,8 +459,11 @@ before its first write; other provider failures are not treated as empty results
 
 A search never waits for a canonical owner: an undecided candidate is omitted and
 filled after the response. A `search_conversation_projection_v1` job that
-dead-letters leaves a conversation's previous title, or an archived conversation's
-rows, visible to admitted readers until it is redriven; a text rewrite that
+reaches an erased Chat (the only way a published job can meet an object with no
+identity: a discarded blank Canvas) reads no display and is acknowledged
+without patching; the Chat was blank, so no indexed row is left stale. A
+`search_conversation_projection_v1` job that dead-letters leaves a
+conversation's previous title, or an archived conversation's rows, visible to admitted readers until it is redriven; a text rewrite that
 dead-letters leaves its row omitted, because a row carries no display until it is
 rewritten. The display rewrite itself is lazy: migration 52 requeues a
 conversation's turns when its AgentLoopDO next wakes, and WorkspaceDO
@@ -739,6 +742,25 @@ with `--class=WorkspaceDO`. Constructors still apply migrations on ordinary
 wakeups; the CLI provides the eager fleet pass without the retired tracker.
 
 ## Changelog
+
+### 2026-11-19 — Settle a display job for an erased Chat instead of dead-lettering it
+
+**What changed:** `AgentLoopDO.searchConversationDisplay` answers `null` when the
+object has no identity, so the consumer acknowledges the job without patching.
+A live object whose identity differs still throws
+`search_projection_identity_mismatch`.
+
+**Why:** Discarding a blank Canvas archives its Chat, which publishes a display
+job, and then erases the Chat's storage. The job met an object with no identity,
+threw, and dead-lettered after its retries (production, 2026-11-19 09:56 UTC).
+The erased Chat was blank, so it had no indexed rows and acknowledging loses no
+patch.
+
+**Considered and rejected:** Acknowledging `search_projection_identity_mismatch`
+in the consumer. It also marks a job routed to the wrong live conversation,
+which must keep failing loudly.
+
+Shipped in #1669.
 
 ### 2026-11-15 — Back off a failed search delivery before redelivering it
 

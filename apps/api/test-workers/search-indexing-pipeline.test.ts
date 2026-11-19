@@ -644,6 +644,26 @@ describe('index-served display attributes', () => {
     await consume([job], {}, false, false);
     expect(messages().map((row) => row.archived)).toEqual([true, true]);
   });
+
+  it('acknowledges a display job for a conversation with no identity, such as an erased Chat, and patches nothing', async () => {
+    // A never-created object has the same empty storage an erased Chat is left with.
+    const job = { type: 'search_conversation_projection_v1', region: 'global', workspaceId, parentId, substreamId: '0' };
+    const result = await consume([job], {}, false, false);
+    expect(result.retryMessages).toEqual([]);
+    expect(result.explicitAcks).toEqual(['search-0']);
+    expect(writes.filter(({ body }) => body.patch_by_filter)).toEqual([]);
+  });
+
+  it('retries a display job that reaches a conversation with a different identity', async () => {
+    const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName('global', workspaceId, parentId, '0'));
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: crypto.randomUUID() });
+    });
+    const job = { type: 'search_conversation_projection_v1', region: 'global', workspaceId, parentId, substreamId: '0' };
+    const result = await consume([job], {}, false, false);
+    expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
+    expect(writes.filter(({ body }) => body.patch_by_filter)).toEqual([]);
+  });
 });
 
 
