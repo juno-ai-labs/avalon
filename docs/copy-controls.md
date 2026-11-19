@@ -1,8 +1,7 @@
 # Copy controls
 
 Every place the desktop renderer offers to put a value on the clipboard for a
-person — a webhook endpoint, a signing secret, a Canvas's
-email address or id, a run's request id, a site's public link, a table as CSV,
+person — a Canvas's email address or id, a run's request id, a site's public link, a table as CSV,
 a note's summary or transcript, a code block — renders the same control: an
 icon beside the value, named by its tooltip, whose glyph says what the copy
 did. One hook under it holds the outcome and the timer that clears it.
@@ -18,8 +17,8 @@ saying "Copy endpoint" where the field already says what it is.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/use-copy.ts` | `useCopy` — the one copy-to-clipboard behaviour: the write, the `idle` / `copied` / `failed` state it settles into, and the reset timer. `COPY_FEEDBACK_MS` is how long an outcome shows. |
-| `apps/desktop/src/renderer/components/copy-button.tsx` | `CopyButton` — the icon control every copy affordance renders, and `CopyField` — a caption, the value in a read-only field, and the control beside it. |
-| `packages/ui/src/styles/app.css` | `.copy-button-copied` and `.copy-button-failed` colour the outcome's glyph; `.copy-field` lays the field and its control on one row; `.copy-detail` is the older "value beside its control" row the inspector rail and the run-failure notice share. |
+| `apps/desktop/src/renderer/components/copy-button.tsx` | `CopyButton` — the icon control every copy affordance renders. |
+| `packages/ui/src/styles/app.css` | `.copy-button-copied` and `.copy-button-failed` colour the outcome's glyph; `.copy-detail` is the "value beside its control" row the inspector rail and the run-failure notice share. |
 
 ## How it works
 
@@ -48,12 +47,6 @@ closes it on the press — so the glyph is what the person is looking at, and a
 `role="status"` live region beside the button announces the outcome for a
 screen reader. The region is always mounted and empty while idle, so it exists
 before it has something to say.
-
-`CopyField` is the composition for a value shown to be copied rather than read:
-a `<label>` over a read-only `<input>`, the control in the same grid row, and
-`secret` to mask the value. No screen renders one since the inbound-webhook
-result, which showed an endpoint and a secret, was removed with the generic
-webhook connector; it stays for the next value shown once.
 
 ## Invariants
 
@@ -94,8 +87,7 @@ assistant's is its loop's identity and ordinal
 (`workstream:<parent>:substream:<0|id>:loop:turn:<n>`); the contract admits
 exactly those for `resourceType: "message"` and a UUID for every other
 resource. A surface
-decides that: beside the value in a `.copy-detail` row, in a `CopyField`, or in
-a toolbar. Menu items and the code block's header keep their own elements and
+decides that: beside the value in a `.copy-detail` row, or in a toolbar. Menu items and the code block's header keep their own elements and
 share only the behaviour; the code block does so because markdown renders
 wherever a card is drawn, including one drawn for export with no tooltip
 provider above it.
@@ -105,9 +97,6 @@ provider above it.
 - **The clipboard refuses.** The control shows `failed`, announces it, and the
   next click retries. Nothing is logged: the reason is the platform's and the
   person's next click is the recovery.
-- **A masked secret cannot be copied by hand.** Chromium blocks copying from a
-  password field, so `CopyField`'s control is a secret's only way off the
-  screen; a persistent failure there has no fallback short of connecting again.
 - **`COPY_FEEDBACK_MS` is two seconds.** A design constant rather than a
   defensive limit: long enough to be seen, short enough that a second copy from
   the same control reads as a second event.
@@ -117,7 +106,7 @@ provider above it.
 | Command | What it proves |
 | --- | --- |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-copy.test.tsx` | The hook: writes through the bridge or the clipboard it is handed, settles into `copied` or `failed` without rejecting, resolves an on-demand value, reports only on success, resets after the interval, and leaves no timer behind on unmount. |
-| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.test.tsx` | The control: an icon named by its label with a tooltip, the outcome in its name, class and live region, the failed state's retry, and `CopyField`'s read-only and masked fields. |
+| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.test.tsx` | The control: an icon named by its label with a tooltip, the outcome in its name, class and live region, and the failed state's retry. |
 
 Artifact and attachment title menus use `useCopy` for their copy tile and keep
 a `CopyStatus` live region outside the menu so the outcome survives closing it.
