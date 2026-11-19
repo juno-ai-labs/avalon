@@ -27,7 +27,6 @@ export async function createCanvas(env: Env, input: {
   creatorUserId: string;
   title?: string;
   canvasId?: string;
-  writer?: { sidekickId: string; runId: string };
   /** The caller's id has a D1 anchor; see `CanvasCreateRequestSchema.anchored`. */
   anchored?: boolean;
 }): Promise<{ canvasId: string; created: boolean }> {
@@ -40,14 +39,11 @@ export async function createCanvas(env: Env, input: {
   const made = await workspace.canvasCreate({
     workspaceId, canvasId: requestedId, title, createdByUserId: asUserId(input.creatorUserId),
     authorityGeneration: authority.generation,
-    ...(input.writer ? { writer: input.writer } : {}),
     ...(input.anchored ? { anchored: true } : {}),
     // Made with no title, it is "Untitled Canvas", settled, until its first
     // message starts naming it (`HostedCanvas.onChildProjection`).
   });
-  // A run's second create answers with the Canvas its first made.
-  const canvasId = made.canvasId;
-  const created = made.created;
+  const { canvasId, created } = made;
   await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, canvasId, "canvas");
   await provisionWorkstreamObject(env, {
     workspaceId,

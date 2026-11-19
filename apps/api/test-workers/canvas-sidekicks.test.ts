@@ -40,6 +40,21 @@ function workspace(): DurableObjectStub<WorkspaceDO> {
 }
 
 /** In the object rather than over RPC, so a refusal is the thrown error and not an unhandled remote rejection. */
+/**
+ * A Canvas a Sidekick run made before runs stopped making Canvases: its
+ * writer named on the row, and attached to the Sidekick as such a Canvas was.
+ */
+async function runMadeCanvas(sidekickId: string, title: string): Promise<string> {
+  const canvasId = asWorkstreamId(crypto.randomUUID());
+  await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId, title, createdByUserId: CREATOR, authorityGeneration: 1 });
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`UPDATE canvas_directory SET writer_sidekick_id = ?, writer_run_id = ? WHERE canvas_id = ?`,
+      sidekickId, crypto.randomUUID(), canvasId);
+  });
+  await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: sidekickId, userId: CREATOR, reference: canvasId });
+  return canvasId;
+}
+
 async function refusal(run: (instance: WorkspaceDO) => Promise<unknown>): Promise<string | null> {
   return runInDurableObject(workspace(), async (instance: WorkspaceDO) => {
     try {
@@ -259,8 +274,7 @@ describe("a Sidekick a Canvas's Chat made", () => {
     expect(await manages(OUTSIDER)).toBe(false);
     // A Canvas its run made admits whoever reads the Sidekick, so it would make every reader a manager.
     await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "workspace" } });
-    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: asWorkstreamId(crypto.randomUUID()), title: "Digest",
-      createdByUserId: CREATOR, authorityGeneration: 1, writer: { sidekickId: MADE_ELSEWHERE, runId: crypto.randomUUID() } });
+    await runMadeCanvas(MADE_ELSEWHERE, "Digest");
     expect(await manages(OUTSIDER)).toBe(false);
     // Managing is the whole of it, archive included.
     await workspace().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE,
@@ -386,19 +400,8 @@ describe("where a Sidekick's run may publish", () => {
     expect(await waterlines()).toEqual(after);
   });
 
-  it("opens a Canvas a run makes to the Organization's default, like one a person makes", async () => {
-    await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "workspace" } });
-    const runCanvas = asWorkstreamId(crypto.randomUUID());
-    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, title: "Digest", createdByUserId: CREATOR,
-      authorityGeneration: 1, writer: { sidekickId: MADE_ELSEWHERE, runId: crypto.randomUUID() } });
-    const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, actor: member(CREATOR) });
-    expect(detail.visibility).toBe("workspace");
-  });
-
   it("includes the Canvas an earlier run of it made", async () => {
-    const runCanvas = asWorkstreamId(crypto.randomUUID());
-    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, title: "Digest", createdByUserId: CREATOR,
-      authorityGeneration: 1, writer: { sidekickId: MADE_ELSEWHERE, runId: crypto.randomUUID() } });
+    const runCanvas = await runMadeCanvas(MADE_ELSEWHERE, "Digest");
     expect(await publishInto(MADE_ELSEWHERE, runCanvas)).toBeNull();
     expect(await publishInto(MADE_HERE, runCanvas)).toBe("canvas_not_attached_to_sidekick");
   });
@@ -413,8 +416,7 @@ describe("where a Sidekick's run may publish", () => {
         .toEqual([{ canvasId: CANVAS_ID, title: "Inbox", artifacts: [] }]);
     }
     // A Canvas each of its own runs made is not repeated to every later run.
-    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: asWorkstreamId(crypto.randomUUID()), title: "Run output",
-      createdByUserId: CREATOR, authorityGeneration: 1, writer: { sidekickId: MADE_HERE, runId: crypto.randomUUID() } });
+    await runMadeCanvas(MADE_HERE, "Run output");
     expect((await told(CREATOR)).map((canvas) => canvas.title)).toEqual(["Inbox"]);
   });
 });

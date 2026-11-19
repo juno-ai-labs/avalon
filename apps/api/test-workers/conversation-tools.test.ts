@@ -929,9 +929,14 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     await seedSidekick("0");
     // The author's alone: the colleague cannot open it.
     await seedRoom(SIDE_ROOM(), "Side room");
-    // Made by one of the Sidekick's runs, which makes the Sidekick its writer.
-    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: WRITTEN(),
-      title: "Weekly agenda", writer: { sidekickId: AUTOMATION_ID, runId: crypto.randomUUID() } });
+    // Made by one of the Sidekick's runs before runs stopped making Canvases:
+    // the Sidekick is its writer, and it was attached as it was made.
+    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: WRITTEN(), title: "Weekly agenda" });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE canvas_directory SET writer_sidekick_id = ?, writer_run_id = ? WHERE canvas_id = ?`,
+        AUTOMATION_ID, crypto.randomUUID(), WRITTEN());
+    });
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, userId: AUTHOR_ID, reference: WRITTEN() });
   }
 
   it("lists the Sidekick's own conversation, the Canvas it writes and the Canvases attached to it, as each person may open them", async () => {

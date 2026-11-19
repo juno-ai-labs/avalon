@@ -135,11 +135,11 @@ the same rule a Sidekick's audience is, over a Canvas's facts:
   audience and so can open every Canvas; a creator who leaves does not strand
   one.
 
-A new Canvas, whether a person or a Sidekick run makes it, starts with the
-Organization's **Default Editor Audience**: `workspace` (Everyone in the
-Organization) unless an administrator chose `creator` under Settings →
-Organization preferences. A run's Canvas also admits its writer Sidekick's
-audience. Its artifact audience starts at the editors, which
+A new Canvas starts with the Organization's **Default Editor Audience**:
+`workspace` (Everyone in the Organization) unless an administrator chose
+`creator` under Settings → Organization preferences. Only a person makes a
+Canvas. One a Sidekick run made before 2026-11-19 also admits its writer
+Sidekick's audience. Its artifact audience starts at the editors, which
 `canvasArtifactVisibilityFloor` raises to `workspace` for an Organization-wide
 Canvas, and stays unchosen, so a publishing agent's `set_artifact_audience`
 default (public for a site) still applies
@@ -453,30 +453,24 @@ no longer shows until its instructions change.
 ### From a Sidekick run
 
 A Sidekick run (a child of the Sidekick, whose substream id is the run id)
-publishes into a Canvas, the Sidekick's output (`resolveTerminalPublicationHome`).
-Its first publish creates the run's Canvas: the person the run acts as is its
-creator, or the Sidekick's author when it acts as the Sidekick itself, the Sidekick its writer, the publish's `displayName` its title, and
-whoever the Sidekick is shared with can open it. Every later publish of the
-run finds that Canvas (`canvasForSidekickRun`; `HostedCanvas.create` answers a
-second create for the same run with the first Canvas), and the create attaches
-the Canvas to the Sidekick. A run asked to update a
-Canvas names it with `publish_resource`'s `canvas` argument, which must be a
-Canvas attached to this Sidekick (`canvas_not_attached_to_sidekick` otherwise);
-anything but a Sidekick run naming one is refused (`canvas_argument_unsupported`).
+publishes into a Canvas attached to its Sidekick (`resolveTerminalPublicationHome`).
+**A run never creates a Canvas.** It publishes into the Canvas it names with
+`publish_resource`'s `canvas` argument, which must be attached to this Sidekick
+(`canvas_not_attached_to_sidekick` otherwise), or, naming none, into the
+Canvas the Sidekick was made in (its `made_here` attachment;
+`canvasForSidekickRun`). A Sidekick made outside any Canvas that names none is
+refused `canvas_required`, and the refusal tells the run to name one from
+`ATTACHED CANVASES`. Anything but a Sidekick run naming a Canvas is refused
+(`canvas_argument_unsupported`).
 For a run a schedule or an event started the attachment is enough: it
 publishes as the Sidekick itself. A run a person asked for, from the Run
 button or by a message, publishes only where that person can open the Canvas
 now (`canvas_access_denied`), and so does a background agent's conversation,
 which is no run
 ([who a run acts as](automation-lifecycle.md#who-a-run-acts-as)).
-A run that acts as the Sidekick itself and has no Canvas of its own yet needs
-somebody to create one as. That is the Sidekick's author. When the Sidekick's
-directory row names no author, the first publish that names no `canvas` is
-refused `canvas_creator_unavailable`
-(`apps/api/src/services/terminal/authority.ts`), and the refusal tells the
-run to publish into a Canvas from `ATTACHED CANVASES` by naming it in
-`canvas`. A publish into an attached Canvas needs no creator and is not
-refused.
+Canvases runs made before this rule still carry `writer_sidekick_id` and
+`writer_run_id`, and are attached to their Sidekick, so later runs can name
+them.
 The run's own conversation is attached too, so the run can read back what it
 published. "The Canvases it writes to" is `canvasesWrittenBy`, a join from the
 Sidekick's attachments to the directory, on the Sidekick's detail as
@@ -494,7 +488,8 @@ is updated this way.
 
 Attaching changes who can open nothing. The Canvas admits who it admitted, and
 the Sidekick's audience is its own; `writer_sidekick_id` alone carries a
-Sidekick's audience into a Canvas, and only for a Canvas a run made.
+Sidekick's audience into a Canvas, and only for a Canvas a run made before
+runs stopped making them.
 
 `POST /canvases/:id/sidekicks` (`CanvasService.addSidekick`) makes one for the
 Canvas on behalf of a client that is not its Chat, the
@@ -1105,6 +1100,32 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-19 — A Sidekick run never creates a Canvas
+
+**What changed.** `resolveTerminalPublicationHome` no longer calls
+`createCanvas`. A run that names no `canvas` publishes into the Canvas its
+Sidekick was made in (`made_here`); with none, it is refused
+`canvas_required`. `createCanvas` and `HostedCanvas.create` lost their
+`writer` option, so no path makes a Sidekick-written Canvas, and
+`canvas_creator_unavailable` is gone with the branch it guarded.
+
+**Why.** The model almost never names `canvas`, so every run's first
+publish made a new Canvas. A podcast Sidekick made in one Canvas produced a
+new "… finished podcast audio" Canvas per run, cluttering the Canvases list
+and splitting its output away from the Canvas people set it up in. The PRD's
+"a Sidekick's output is a Canvas" never asked for a Canvas per run.
+
+**Considered and rejected.** Keeping the create and steering the model to
+name a Canvas in its prompt: the model would still skip it, and the clutter is
+the failure people see. Falling back to the newest attached Canvas: which
+one that is changes as people attach Canvases, and the Canvas the Sidekick was
+made in is the one its author chose.
+
+**Consequences.** Only a person makes a Canvas. Canvases runs already made
+keep their writer columns, audience and attachment; nothing was migrated.
+`writer_sidekick_id` and `writer_run_id` are now written only by those old
+rows, and a future change can drop them once no Canvas carries one.
 
 ### 2026-11-16 — Open published artifacts from their Canvas
 
