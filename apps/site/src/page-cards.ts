@@ -45,9 +45,9 @@ export const pageCards: readonly PageCard[] = [
     scene,
   })),
   {
-    path: '/off-the-beaten-path/',
+    path: '/developer-mode/',
     eyebrow: 'Beyond the inbox',
-    title: 'Off the beaten path',
+    title: 'Developer mode',
     description: 'Email is where most people start. Rally also builds dashboards, small apps, podcast feeds and websites that react to the tools you already use.',
     scene: 'canvas',
   },
@@ -76,7 +76,7 @@ export const pageCards: readonly PageCard[] = [
     path: '/marketplace/',
     eyebrow: 'Rally Marketplace',
     title: 'Start from something\nalready reactive.',
-    description: 'Templates for developers, product managers, parents and recruiters. Pick one, and Rally builds it with you and keeps it current.',
+    description: 'Templates for the work you run from email, and for developers, product managers and parents. Pick one, and Rally builds it with you and keeps it current.',
     scene: 'canvas',
   },
   {

@@ -21,7 +21,7 @@ the three.js figure to [`landing-technology-schematic.md`](landing-technology-sc
 The migrated pages stay light in either system appearance. Shared type and
 palette belong in `site-theme.css`; normal secondary text must remain readable
 on paper, sunken surfaces and sage. The homepage owns its composition in
-`home.css`; the illustrative Canvas on `/off-the-beaten-path/` is played by
+`home.css`; the illustrative Canvas on `/developer-mode/` is played by
 `canvas-example.ts`. Reading pages use
 `reading.css`, with `trust.css` and `help.css` retaining their own layouts.
 
@@ -39,7 +39,7 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   invariants.
 - **Illustrative actions:** The example Canvas, a chat beside one artifact with
   no app sidebar, window bar or artifact toolbar, lives on
-  `/off-the-beaten-path/`, with its capability list and prompt list. Its three
+  `/developer-mode/`, with its capability list and prompt list. Its three
   examples (a Gmail pipeline dashboard, a Granola feature-request board with
   voting, a podcast feed) each draw their own artifact in that page's HTML. The
   GTM example's chat also shows the Sidekick's delegation card, in the app's own
@@ -49,7 +49,7 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   swaps local markup to version 2 (`data-new` rows appear, `data-v2` text
   replaces the original). They do not run jobs or connect to tools. Preserve
   that distinction and the acquisition action IDs.
-- **What a reactive artifact can do:** `/off-the-beaten-path/` lists reactive
+- **What a reactive artifact can do:** `/developer-mode/` lists reactive
   artifact capabilities as a numbered list (`.step-list` in `home.css`, which
   the homepage's "How it works" steps share). Each item names a capability the
   product ships today, not an outcome.
@@ -62,7 +62,7 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   time by `reading-card.ts` from local static TTF derivatives, avoiding
   network/system font dependencies. Help, blog posts and marketplace templates
   draw theirs from their own front matter. Every hand-written page (home, the
-  audience pages, `/off-the-beaten-path/`, Canvases, Sidekicks, `/start-fast/`, the marketplace and blog indexes, and the
+  audience pages, `/developer-mode/`, Canvases, Sidekicks, `/start-fast/`, the marketplace and blog indexes, and the
   Trust Center) has an entry in `page-cards.ts`, which the `rally-page-cards`
   plugin draws to `<page>/social.png` and tags into the page's head. The build
   fails if a card's title is not its page's `<h1>`, or if a page names its own
@@ -106,7 +106,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/landing.css` | The earlier product and start-fast system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
-| `apps/site/for/`, `apps/site/src/for/`, `apps/site/src/story.ts`, `apps/site/src/story.css`, `apps/site/off-the-beaten-path/index.html` | The audience pages, the story player and kit, and the page for everything else: [`site-audience-pages.md`](site-audience-pages.md) |
+| `apps/site/for/`, `apps/site/src/for/`, `apps/site/src/story.ts`, `apps/site/src/story.css`, `apps/site/developer-mode/index.html` | The audience pages, the story player and kit, and the page for everything else: [`site-audience-pages.md`](site-audience-pages.md) |
 | `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace and one page per template at `/marketplace/<slug>/`, rendered at build time from `packages/skills/marketplace-skills/` (`loadCanvasTemplates`), with a client-side category filter. Styles build on `home.css` |
 | `apps/site/src/connector-marks.ts` | Connector marks and Rally plugin glyphs for the marketplace's chips, rendered from the app's components to static SVG at build time |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
@@ -325,7 +325,7 @@ in light and dark, before a change ships, as the repository's rule on visible ch
 ([`site-audience-pages.md`](site-audience-pages.md) owns that change and its
 reasons). What this document described on the homepage moved with it: the
 three-example Canvas, the capability list and the prompt list are on
-`/off-the-beaten-path/`, `home.ts` became `canvas-example.ts`, and
+`/developer-mode/`, `home.ts` became `canvas-example.ts`, and
 `.reactive-list` became `.step-list` because the homepage's "How it works" now
 shares it. Every link preview's sign-off changed from "Reactive artifacts,
 shared with your team." to "Your inbox, as one page that updates itself.", and
@@ -337,7 +337,7 @@ true and still sells to the earlier audience, so it was moved rather than
 deleted.
 
 **Consequences:** The pencil-site boundaries above apply to
-`/off-the-beaten-path/` exactly as they did to the homepage. The help card
+`/developer-mode/` exactly as they did to the homepage. The help card
 design version was bumped for the new sign-off, so every help card has a new
 URL.
 

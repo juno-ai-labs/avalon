@@ -25,6 +25,14 @@ import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS } from './connectors';
  * of each category is what an empty Canvas shows under Popular.
  */
 export const CANVAS_TEMPLATE_FILES = [
+  'wholesalers/order-board.md',
+  'agencies/client-wall.md',
+  'legal/legal-docket.md',
+  'accountants/client-document-checklist.md',
+  'recruiters/recruiting-desk.md',
+  'recruiters/recruiting-market-map.md',
+  'brokers/todays-follow-ups.md',
+  'event-planners/event-countdown.md',
   'developers/pr-dashboard.md',
   'developers/email-notification-screener.md',
   'developers/repository-changes-podcast.md',
@@ -33,7 +41,6 @@ export const CANVAS_TEMPLATE_FILES = [
   'parents/school-notifications-and-calendar.md',
   'parents/shared-grocery-list.md',
   'parents/family-calendar-feed.md',
-  'recruiters/recruiting-market-map.md',
 ] as const;
 
 export const CANVAS_TEMPLATE_ROOT = new URL('./', import.meta.url);

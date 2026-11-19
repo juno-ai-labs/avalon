@@ -148,7 +148,7 @@ export default defineConfig({
         canvases: `${projectRoot}canvases/index.html`,
         sidekicks: `${projectRoot}sidekicks/index.html`,
         marketplace: `${projectRoot}marketplace/index.html`,
-        offTheBeatenPath: `${projectRoot}off-the-beaten-path/index.html`,
+        developerMode: `${projectRoot}developer-mode/index.html`,
         // One hand-written page per audience, at `for/<slug>/index.html`.
         ...Object.fromEntries(audiences.map(({ slug }) => [`for-${slug}`, `${projectRoot}${audiencePath(slug).slice(1)}index.html`])),
         technology: `${projectRoot}src/technology.ts`,

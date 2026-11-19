@@ -18,7 +18,7 @@ stories are drawn with. The look of the pencil pages belongs to
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/src/audiences.ts` | The audiences, in homepage order: slug, name, one line, and the headline and pitch of each page's link preview. Also the homepage grid, the "other audiences" list and `/for/sitemap.xml`. |
+| `apps/site/src/audiences.ts` | The audiences, in homepage order: slug, name, one line, the Marketplace template its page starts, and the headline and pitch of each page's link preview. Also the homepage grid, the "other audiences" list and `/for/sitemap.xml`. |
 | `apps/site/for/<slug>/index.html` | One audience's page. Hand-written, not rendered from a template. |
 | `apps/site/src/for/<slug>.css` | That page's own layout, artifacts and motion. Imports `home.css`. |
 | `apps/site/src/story.ts` | The story player: steps, tabs, pause, the stage's height, the `story:step` event. |
@@ -27,7 +27,8 @@ stories are drawn with. The look of the pencil pages belongs to
 | `apps/site/src/home-story.html` | The homepage's hero story: one slide per audience, each a different kind of page. |
 | `apps/site/src/word-swap.ts`, `apps/site/src/home.ts` | The homepage headline's two words, which follow the hero story's slide. `home.ts` loads it before the player. |
 | `apps/site/src/home-header.ts` | The header of every pencil page. |
-| `apps/site/off-the-beaten-path/index.html` | The page for everything that is not an inbox: the general-purpose pitch and the three-example Canvas, played by `src/canvas-example.ts`. |
+| `packages/skills/marketplace-skills/<category>/` | Each audience's template: the request its page's buttons start a new person on ([`desktop-shell.md`](desktop-shell.md)). |
+| `apps/site/developer-mode/index.html` | The page for everything that is not an inbox: the general-purpose pitch and the three-example Canvas, played by `src/canvas-example.ts`. |
 
 ## How it works
 
@@ -46,7 +47,15 @@ Each page has its own layout, its own artifacts and its own motion. What they
 share is the promise (Gmail in, one page out, five minutes), the pencil look,
 and the parts below.
 
-Adding an audience is a row in `audiences.ts` and the two files. The row puts
+Every sign-up button on an audience page links to that audience's Marketplace
+template on the web app, `/app/templates/<template>`
+([`links.md`](links.md#template-links)). The link signs the person up and opens
+a Canvas whose first message is already the request for their page (an order
+board, a docket, a checklist), so the first thing a new person does is answer
+Rally's one or two questions, not work out what to type. That is what stands
+behind "five minutes".
+
+Adding an audience is a row in `audiences.ts`, its template and the two files. The row puts
 the page in the homepage grid, the footer, the other pages' lists, the sitemap
 and `llms.txt`, registers it as a build entry, and draws its link preview from
 `headline` and `pitch`. The build fails if `headline` is not the page's `<h1>`.
@@ -168,12 +177,12 @@ homepage story uses only the kit.
 - **Plain words on the homepage and audience pages.** No "Canvas", "Sidekick",
   "reactive" or "artifact": these readers have not met the product. The
   product's own names appear on `/canvases/`, `/sidekicks/` and
-  `/off-the-beaten-path/`. Verified by review.
+  `/developer-mode/`. Verified by review.
 - **A story reads with no script, and at any width.** Drawn at its last step;
   nothing is hidden unless the player has run (`.story.is-live`). No fixed
   widths that overflow a 390px screen. Verified visually.
 - **Text wraps on its own.** No `<br>` and no other forced break on the
-  homepage, the audience pages or `/off-the-beaten-path/`: headings use
+  homepage, the audience pages or `/developer-mode/`: headings use
   `text-wrap: balance`, paragraphs `pretty`, and a `max-width` sets the measure.
   A hand-placed break is right at one width and wrong at the rest, and these
   pages are read on phones first. Verified visually.
@@ -187,22 +196,27 @@ homepage story uses only the kit.
   dev server and is blocked in production. Sizes that vary go through classes
   or attributes (`kit-meter[data-fill]`), and motion through the stylesheet or
   the Web Animations API.
-- **Sign-up links are tracked.** A link to the web app carries
-  `data-site-action="web-app-hero"` (or `sign-in-header` in the header), so its
+- **Sign-up links start the audience's template, and are tracked.** Every link
+  to the web app on an audience page is its row's template link and carries
+  `data-site-action="web-app-template"` (`sign-in-header` in the header), so its
   click and the signup that follows are joined; the page's path says which
-  audience it was. Guard: `tags every tracked landing link`.
+  audience it was. A template renamed or dropped from the catalog would send
+  every visitor to an empty Canvases home, because a slug the catalog does not
+  hold starts nothing. Guard: `starts each audience page from its own
+  Marketplace template`.
 - **A page's headline is its row's `headline`.** Guard: the `rally-page-cards`
   build plugin.
 
 ## Boundary
 
 This module owns `/for/`, the homepage's hero story, the story player and the
-kit. It does not own the app: every page sends people to the web app's front
-door, and nothing here starts a person in a prepared conversation. The web app
-drops a query on its root at sign-in ([`links.md`](links.md#template-links)),
-so an audience is not passed along in the URL; a Marketplace template per
-audience (`/app/templates/<slug>`) is how a page would hand someone a
-ready-made first request.
+kit. It does not own the app. An audience page hands a person to the app
+through its template link and nothing else: the web app drops a query on its
+root at sign-in ([`links.md`](links.md#template-links)), so nothing is passed in
+the URL beside the template's own path. The templates' words are product
+content that the app's Marketplace also offers; they live with the other
+templates and follow [`writing-skills.md`](writing-skills.md). The homepage and
+`/developer-mode/` still open the web app's front door.
 
 Examples are illustrations. They run no jobs and read no mail.
 
@@ -238,7 +252,8 @@ artifacts" to "connect Gmail, get a dashboard in five minutes", in plain words
 with no product vocabulary. Seven audiences (wholesalers, agencies, in-house
 legal, accountants, recruiters, brokers, event planners) each got a
 hand-written page at `/for/<slug>/`. The homepage's three-example Canvas, its
-capability list and its general pitch moved to `/off-the-beaten-path/`. A story
+capability list and its general pitch moved to `/developer-mode/`, named as a
+nod to the readers it is for. A story
 player and kit replaced the homepage's hero drawing.
 
 **Why:** The product owner chose one first use to sell: people who run their
@@ -252,10 +267,15 @@ It was built first and thrown away: the product owner asked that no page be a
 copy of another with the nouns changed, in layout, artifacts or motion. Pages
 are files so that each can be shaped to its reader. Passing the audience to the
 web app in a query was also dropped, because the app loses a root query at
-sign-in and the click's path already names the audience.
+sign-in and the click's path already names the audience. Sending every audience
+to the app's front door was the first version: it left a new person in an empty
+app to work out what to ask, so each page now starts a Marketplace template
+written for it.
 
 **Consequences:** Seven pages means seven places a claim can go stale; the
-invariants above are the list to check each against. Shared behavior belongs in
+invariants above are the list to check each against. A page and its template
+describe the same thing in two places, so a change to what a page promises is
+a change to its template's request too. Shared behavior belongs in
 `story.ts` and the kit, never copied between pages, and a page's own look
 belongs in its own stylesheet. The earlier hero carousel (`live-examples.ts`,
 `live-carousel.ts`) still serves `/start-fast/` and is untouched.

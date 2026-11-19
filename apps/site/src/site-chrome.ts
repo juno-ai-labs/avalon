@@ -107,7 +107,7 @@ export function renderSiteFooter({ casaLink = true }: { casaLink?: boolean } = {
     '<a href="/canvases/">Canvases</a>',
     '<a href="/sidekicks/">Sidekicks</a>',
     '<a href="/marketplace/">Marketplace</a>',
-    '<a href="/off-the-beaten-path/">Off the beaten path</a>',
+    '<a href="/developer-mode/">Developer mode</a>',
     '<a href="/#pricing">Pricing</a>',
   ];
   const who = audiences.map(({ slug, short }) => `<a href="${audiencePath(slug)}">${escape(short)}</a>`);
@@ -144,7 +144,7 @@ export function renderLlmsTxt(): string {
 ## Product
 
 - [Rally home](${ORIGIN}/): connect Gmail and get a dashboard in five minutes; who it is for, how it works, pricing
-- [Off the beaten path](${ORIGIN}/off-the-beaten-path/): what Rally builds beyond inbox pages: dashboards, small apps, podcast feeds and websites that react to events in connected tools
+- [Developer mode](${ORIGIN}/developer-mode/): what Rally builds beyond inbox pages: dashboards, small apps, podcast feeds and websites that react to events in connected tools
 - [Canvases](${ORIGIN}/canvases/): the conversation with Rally and the pages it makes beside it, kept up to date from your email and connected tools, and shared with a team
 - [Sidekicks](${ORIGIN}/sidekicks/): shared helpers that run on a schedule or when something happens, and keep pages up to date
 - [Help Center](${ORIGIN}/help/): the Rally manual, from installing Rally to running an Organization. Its own index of every page, each published as Markdown: ${ORIGIN}/help/llms.txt

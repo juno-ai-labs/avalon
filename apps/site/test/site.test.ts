@@ -9,7 +9,7 @@ import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { handoffAppLink, handoffDevice, handoffHeading, handoffPlan } from '../src/link-handoff';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
-import { audiences, renderAudienceSitemap } from '../src/audiences';
+import { audienceStartLink, audiences, renderAudienceSitemap } from '../src/audiences';
 import { blogPosts, renderBlogSitemap, renderSiteChrome } from '../src/site-chrome';
 import { renderConnectorMark, renderPluginGlyph } from '../src/connector-marks';
 import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS } from '../../../packages/skills/marketplace-skills/connectors';
@@ -183,12 +183,13 @@ describe('public Rally site', () => {
     const home = renderSiteChrome(readProjectFile('index.html'));
     const variant = renderSiteChrome(readProjectFile('start-fast/index.html'));
     const marketplace = renderSiteChrome(readProjectFile('marketplace/index.html'));
-    const others = ['off-the-beaten-path/index.html', ...audiences.map(({ slug }) => `for/${slug}/index.html`)]
-      .map((file) => renderSiteChrome(readProjectFile(file)));
+    const offPath = renderSiteChrome(readProjectFile('developer-mode/index.html'));
+    const audiencePages = audiences.map(({ slug }) => renderSiteChrome(readProjectFile(`for/${slug}/index.html`)));
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
-    for (const id of [...ids(home), ...ids(variant), ...ids(marketplace), ...others.flatMap(ids)]) expect(siteActionForLink(id), id).not.toBeNull();
+    for (const id of [...ids(home), ...ids(variant), ...ids(marketplace), ...ids(offPath), ...audiencePages.flatMap(ids)]) expect(siteActionForLink(id), id).not.toBeNull();
     // Every page that sells sends people to sign up through a counted link.
-    for (const page of others) expect(ids(page)).toContain('web-app-hero');
+    expect(ids(offPath)).toContain('web-app-hero');
+    for (const page of audiencePages) expect(ids(page)).toContain('web-app-template');
     // A tag removed in a redesign is just as silent: every tracked link must still be on the home page,
     // or, for a template card's link, on the marketplace. Not the variant, so it can't hide a tag the home page lost.
     for (const id of Object.keys(SITE_ACTION_LINKS)) expect([...ids(home), ...ids(marketplace)], id).toContain(id);
@@ -210,10 +211,27 @@ describe('public Rally site', () => {
       '/trust/subprocessors/', '/trust/cookies/', '/trust/acceptable-use/',
     ]);
     expect(column('Blog')).toEqual(['/blog/', `/blog/${blogPosts[0]?.slug ?? ''}/`]);
-    expect(column('Product')).toEqual(['/canvases/', '/sidekicks/', '/marketplace/', '/off-the-beaten-path/', '/#pricing']);
+    expect(column('Product')).toEqual(['/canvases/', '/sidekicks/', '/marketplace/', '/developer-mode/', '/#pricing']);
     expect(column('Who it’s for')).toEqual([
       '/for/wholesalers/', '/for/agencies/', '/for/legal/', '/for/accountants/', '/for/recruiters/', '/for/brokers/', '/for/event-planners/',
     ]);
+  });
+
+  it('starts each audience page from its own Marketplace template, and from no other door', () => {
+    const catalog = marketplaceTemplates().map(({ slug }) => slug);
+    expect(audiences.map(({ slug, template }) => `${slug} ${template}`)).toEqual([
+      'wholesalers order-board', 'agencies client-wall', 'legal legal-docket', 'accountants client-document-checklist',
+      'recruiters recruiting-desk', 'brokers todays-follow-ups', 'event-planners event-countdown',
+    ]);
+    for (const { slug, template } of audiences) {
+      // A template that left the catalog would send every visitor to the Canvases home with nothing started.
+      expect(catalog, template).toContain(template);
+      const page = renderSiteChrome(readProjectFile(`for/${slug}/index.html`));
+      const starts = [...page.matchAll(/<a\b[^>]*data-site-action="web-app-template"[^>]*>/gu)].map(([tag]) => /href="([^"]+)"/u.exec(tag)?.[1]);
+      expect(starts.length, slug).toBeGreaterThanOrEqual(2);
+      expect(new Set(starts), slug).toEqual(new Set([audienceStartLink(template)]));
+      expect(audienceStartLink(template)).toBe(`https://app.rallywith.ai/app/templates/${template}`);
+    }
   });
 
   it('lists every audience in the homepage grid, ending on the page for everything else', () => {
@@ -222,7 +240,7 @@ describe('public Rally site', () => {
       'Wholesalers and small sellers /for/wholesalers/', 'Agencies and freelancers /for/agencies/', 'In-house legal teams /for/legal/',
       'Accountants and bookkeepers /for/accountants/', 'Recruiters and staffing shops /for/recruiters/',
       'Real estate, mortgage and insurance brokers /for/brokers/', 'Wedding and event planners /for/event-planners/',
-      'Something else? /off-the-beaten-path/',
+      'Something else? /developer-mode/',
     ]);
   });
 
@@ -362,7 +380,7 @@ describe('public Rally site', () => {
     expect(renderSiteChrome(renderTemplatePage(template('recruiting-market-map'))))
       .toMatch(/<p>Built into Rally, so there is nothing to set up:<\/p><ul [^>]*aria-label="Rally plugins it uses"><li><a href="\/help\/working-with-rally\/research-and-the-web\/"><span class="connector-mark" aria-hidden="true"><svg [\s\S]*?<\/svg><\/span>Web search<\/a><\/li><\/ul>/u);
     expect([...renderMarketplaceSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc).slice(0, 2))
-      .toEqual(['https://rallywith.ai/marketplace/pr-dashboard/', 'https://rallywith.ai/marketplace/email-notification-screener/']);
+      .toEqual(['https://rallywith.ai/marketplace/order-board/', 'https://rallywith.ai/marketplace/client-wall/']);
   });
   it("draws every connector a template may recommend with the app's own mark, as static SVG", () => {
     for (const { mark, name } of TEMPLATE_CONNECTORS) {
@@ -385,10 +403,11 @@ describe('public Rally site', () => {
   it('builds the marketplace from the app Marketplace templates, in catalog order', () => {
     const cards = renderSiteChrome('<!-- rally:marketplace-cards -->');
     expect([...cards.matchAll(/<h3>([^<]+)<\/h3>/gu)].map(([, name]) => name)).toEqual([
+      'Order board', 'Client wall', 'Legal docket', 'Client document checklist',
+      'Recruiting desk', 'Recruiting market map', 'Today’s follow-ups', 'Event countdown',
       'PR dashboard', 'Email notification screener', 'Repository changes podcast',
       'Granola feature requests', 'Competitor change monitor',
       'School notifications and calendar', 'Shared grocery list', 'Family calendar feed',
-      'Recruiting market map',
     ]);
     expect(cards).toContain('<li class="market-card" data-categories="developers"><div class="market-card-body"><p class="market-kind">For developers</p><h3>PR dashboard</h3>');
     // Each card's links: its recommended connectors' help pages, Start from this, then More info.
@@ -417,6 +436,6 @@ describe('public Rally site', () => {
       ['/marketplace/shared-grocery-list/', 'More info'],
     ]);
     expect([...renderSiteChrome('<!-- rally:marketplace-filters -->').matchAll(/data-filter="([^"]+)"/gu)].map(([, tag]) => tag))
-      .toEqual(['all', 'developers', 'product-managers', 'parents', 'recruiters']);
+      .toEqual(['all', 'wholesalers', 'agencies', 'legal', 'accountants', 'recruiters', 'brokers', 'event-planners', 'developers', 'product-managers', 'parents']);
   });
 });

@@ -20,24 +20,34 @@ export interface Audience {
   readonly headline: string;
   /** The link preview's pitch. */
   readonly pitch: string;
+  /**
+   * The Marketplace template its page starts: a file name without `.md` under
+   * `packages/skills/marketplace-skills/`. The page's sign-up buttons link to
+   * `/app/templates/<template>` on the web app, which signs the person up and
+   * opens a Canvas that has already asked Rally for this audience's page.
+   */
+  readonly template: string;
   /** Which of the shared drawings its link preview carries, so seven previews in a row are not one picture. */
   readonly scene: 'canvas' | 'sidekick' | 'together';
 }
 
 /** In the order the homepage lists them. */
 export const audiences: readonly Audience[] = [
-  { slug: 'wholesalers', name: 'Wholesalers and small sellers', short: 'Wholesalers', line: 'Orders, quotes and supplier back-and-forth in one place.', headline: 'Every order in your inbox, on one board.', pitch: 'Connect Gmail and get an order board in five minutes: orders, quotes and supplier deliveries, kept up to date by your mail.', scene: 'canvas' },
-  { slug: 'agencies', name: 'Agencies and freelancers', short: 'Agencies', line: 'Client requests, open threads and overdue replies on one page.', headline: 'Which client did you forget to answer?', pitch: 'Connect Gmail and get a wall of your clients in five minutes: who’s waiting on you, for how long, and what they asked.', scene: 'together' },
-  { slug: 'legal', name: 'In-house legal teams', short: 'Legal teams', line: 'Contract reviews, NDA requests, and who’s waiting on whom.', headline: 'Every open matter, and whose turn it is.', pitch: 'Connect Gmail and get a docket of every legal request: who asked, whose turn it is, and for how many days. It updates itself.', scene: 'sidekick' },
-  { slug: 'accountants', name: 'Accountants and bookkeepers', short: 'Accountants', line: 'Document requests, client status and deadlines.', headline: 'The client checklist that ticks itself off.', pitch: 'Connect Gmail and get a checklist of the documents each client owes you. It ticks itself off as they arrive.', scene: 'canvas' },
-  { slug: 'recruiters', name: 'Recruiters and staffing shops', short: 'Recruiters', line: 'Candidates, intros and placements.', headline: 'Candidates on one side, clients on the other.', pitch: 'Connect Gmail and get one page of every candidate, client and intro, and whose reply you’re waiting on. It updates itself.', scene: 'together' },
-  { slug: 'brokers', name: 'Real estate, mortgage and insurance brokers', short: 'Brokers', line: 'Leads, deals in progress and follow-ups due.', headline: 'Who’s waiting on you today?', pitch: 'Connect Gmail. In five minutes, see every lead, deal and follow-up that is waiting on you, longest wait first. The page updates itself.', scene: 'sidekick' },
-  { slug: 'event-planners', name: 'Wedding and event planners', short: 'Event planners', line: 'Vendors, client requests and what’s due before each date.', headline: 'Everything due before the date, on one page.', pitch: 'Connect Gmail and get a page for each event in five minutes: every vendor, every client request and what is due before the date.', scene: 'together' },
+  { slug: 'wholesalers', name: 'Wholesalers and small sellers', short: 'Wholesalers', line: 'Orders, quotes and supplier back-and-forth in one place.', headline: 'Every order in your inbox, on one board.', pitch: 'Connect Gmail and get an order board in five minutes: orders, quotes and supplier deliveries, kept up to date by your mail.', template: 'order-board', scene: 'canvas' },
+  { slug: 'agencies', name: 'Agencies and freelancers', short: 'Agencies', line: 'Client requests, open threads and overdue replies on one page.', headline: 'Which client did you forget to answer?', pitch: 'Connect Gmail and get a wall of your clients in five minutes: who’s waiting on you, for how long, and what they asked.', template: 'client-wall', scene: 'together' },
+  { slug: 'legal', name: 'In-house legal teams', short: 'Legal teams', line: 'Contract reviews, NDA requests, and who’s waiting on whom.', headline: 'Every open matter, and whose turn it is.', pitch: 'Connect Gmail and get a docket of every legal request: who asked, whose turn it is, and for how many days. It updates itself.', template: 'legal-docket', scene: 'sidekick' },
+  { slug: 'accountants', name: 'Accountants and bookkeepers', short: 'Accountants', line: 'Document requests, client status and deadlines.', headline: 'The client checklist that ticks itself off.', pitch: 'Connect Gmail and get a checklist of the documents each client owes you. It ticks itself off as they arrive.', template: 'client-document-checklist', scene: 'canvas' },
+  { slug: 'recruiters', name: 'Recruiters and staffing shops', short: 'Recruiters', line: 'Candidates, intros and placements.', headline: 'Candidates on one side, clients on the other.', pitch: 'Connect Gmail and get one page of every candidate, client and intro, and whose reply you’re waiting on. It updates itself.', template: 'recruiting-desk', scene: 'together' },
+  { slug: 'brokers', name: 'Real estate, mortgage and insurance brokers', short: 'Brokers', line: 'Leads, deals in progress and follow-ups due.', headline: 'Who’s waiting on you today?', pitch: 'Connect Gmail. In five minutes, see every lead, deal and follow-up that is waiting on you, longest wait first. The page updates itself.', template: 'todays-follow-ups', scene: 'sidekick' },
+  { slug: 'event-planners', name: 'Wedding and event planners', short: 'Event planners', line: 'Vendors, client requests and what’s due before each date.', headline: 'Everything due before the date, on one page.', pitch: 'Connect Gmail and get a page for each event in five minutes: every vendor, every client request and what is due before the date.', template: 'event-countdown', scene: 'together' },
 ];
 
 const ORIGIN = 'https://rallywith.ai';
 
 export const audiencePath = (slug: string): string => `/for/${slug}/`;
+
+/** Where an audience page's sign-up buttons go: its template's link on the web app. */
+export const audienceStartLink = (template: string): string => `https://app.rallywith.ai/app/templates/${template}`;
 
 export const arrow = '<svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg>';
 
@@ -49,7 +59,7 @@ export function renderAudienceGrid(): string {
   return `<ul class="audience-grid">${audiences.map(({ slug, name, line }) =>
     `<li><a href="${audiencePath(slug)}"><strong>${escape(name)}</strong><span>${escape(line)}</span><i aria-hidden="true">${arrow}</i></a></li>`).join('')}`
     // The last card is for everyone the list leaves out.
-    + `<li class="audience-grid-more"><a href="/off-the-beaten-path/"><strong>Something else?</strong><span>Rally builds more than inbox pages. See the rest.</span><i aria-hidden="true">${arrow}</i></a></li></ul>`;
+    + `<li class="audience-grid-more"><a href="/developer-mode/"><strong>Something else?</strong><span>Rally builds more than inbox pages. Try developer mode.</span><i aria-hidden="true">${arrow}</i></a></li></ul>`;
 }
 
 /** The other audiences' pages, for the foot of the page named by `current`. */

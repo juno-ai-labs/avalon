@@ -86,7 +86,8 @@ A Marketplace template's link is `/app/templates/<slug>` on the web app
 (`templateLinkPath`, read back by `parseTemplateLinkPath`), where the slug is
 the template file's name without `.md`. It names no Organization: whoever opens
 it starts the template in one of their own. The public site's `/marketplace/`
-cards link there.
+cards link there, and so do the sign-up buttons on each audience page at
+`/for/<slug>/` ([`site-audience-pages.md`](site-audience-pages.md)).
 
 The web app keeps the path through sign-in and sign-up, as it keeps every
 `/app/` path (the email link and the Google and Apple returns all come back to

@@ -12,7 +12,7 @@ here.
 | --- | --- |
 | `apps/site/src/site-chrome.ts` | `trustPages`, `blogPosts`, the header and footer renderers, the blog sitemap, `/llms.txt`, and the marker table. |
 | `apps/site/src/site-icons.ts` | `externalArrow` and `githubLink`, the header GitHub link every header renderer and the `github-link` and `github-header-link` markers use. |
-| `apps/site/src/home-header.ts` | `renderHomeHeader`, the header of every pencil page: the homepage, the audience pages, `/off-the-beaten-path/` and the marketplace. |
+| `apps/site/src/home-header.ts` | `renderHomeHeader`, the header of every pencil page: the homepage, the audience pages, `/developer-mode/` and the marketplace. |
 | `apps/site/src/audiences.ts` | The audiences behind the footer's "Who it’s for" column, the homepage grid and the `audience-others` marker ([`site-audience-pages.md`](site-audience-pages.md)). |
 | `apps/site/build/help/layout.ts` | The help center's header, rendered outside `site-chrome.ts`. |
 | `apps/site/src/html.ts` | `escapeHtml` and `longDate`, shared by every page rendered at build time. |
@@ -32,7 +32,7 @@ lists every audience page but that one. The plugin runs with
 `order: 'pre'`, before the access-copy and telemetry plugins. An unknown marker
 throws, so a typo fails `vite build` and `vite dev`.
 
-The pencil pages (the homepage, the audience pages, `/off-the-beaten-path/` and
+The pencil pages (the homepage, the audience pages, `/developer-mode/` and
 the marketplace) share one header, `<!-- rally:home-header -->`: Who it’s for,
 Marketplace, Pricing, The manual, GitHub, and Open Rally. The earlier product
 pages keep `site-nav`.
@@ -80,7 +80,7 @@ build, serve `dist` with `vite preview`, and screenshot the footer at 1440px and
 `renderMarketHeader` became one `renderHomeHeader` (`home-header.ts`), behind a
 `home-header` marker. Its first link is "Who it’s for" (`/#who`) in place of
 "Canvases" (`/#canvases`). The footer gained a "Who it’s for" column and a link
-to `/off-the-beaten-path/`. A marker can now carry one word,
+to `/developer-mode/`. A marker can now carry one word,
 `<!-- rally:name word -->`.
 
 **Why:** The homepage stopped having a Canvases section when it began leading
