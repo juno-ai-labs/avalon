@@ -284,7 +284,7 @@ describe("Avalon Firecrawl harness tools", () => {
     const fetcher = mockFetchResponse(jsonResponse({
       success: true,
       data: {
-        web: [{ title: "Avalon", url: "https://example.com", description: "Result" }],
+        web: [{ title: "Rally", url: "https://example.com", description: "Result" }],
       },
       creditsUsed: 7,
     }));
@@ -294,7 +294,7 @@ describe("Avalon Firecrawl harness tools", () => {
     expect(tool).toBeDefined();
 
     const result = await tool!.execute(
-      { query: "Avalon", recency: "month" },
+      { query: "Rally", recency: "month" },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -306,8 +306,8 @@ describe("Avalon Firecrawl harness tools", () => {
     );
 
     expect(result.output).toEqual({
-      query: "Avalon",
-      results: [{ title: "Avalon", url: "https://example.com", description: "Result" }],
+      query: "Rally",
+      results: [{ title: "Rally", url: "https://example.com", description: "Result" }],
     });
     expect(result.output).not.toHaveProperty("creditsUsed");
     const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;

@@ -9,6 +9,12 @@ import { createAvalonMultimodalGenerationPlugin } from "../../src/services/multi
 import { TERMINAL_TOOL_DEFINITIONS } from "../../src/services/terminal/contract";
 import { conversationToolPorts, createConversationsPlugin } from "../../src/services/conversation-tools";
 import { createSidekickTaskOutcomePlugin } from "../../src/services/sidekick-task-outcome";
+import { AgentCommunicationService } from "../../src/services/agent-communication-service";
+import { createAgentCommunicationPlugin } from "../../src/services/agent-communication-plugin";
+import { createNotificationsPlugin } from "../../src/services/notification-tools";
+import { sidekickDelegationTools } from "../../src/services/sidekick-delegation-tools";
+import { createSidekickRunTools } from "../../src/services/sidekick-run-tools";
+import { sidekickSourceTools } from "../../src/services/sidekick-source-tools";
 import { createTestEnv } from "./cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./connector-registry";
 
@@ -71,6 +77,10 @@ export const EXPECTED_TOOLS = [
   "rally.sidekick.report_outcome:report_outcome",
   "rally.conversation.post:post",
   "rally.conversation.attach:attach",
+  "rally.sidekick.runs.read:runs_read",
+  "rally.sidekick.sources.request:request_source",
+  "agents.start_agent:start_agent",
+  "rally.notifications.send:send",
   "terminal.import_resource",
   "notion.create_comment",
   "x.get_user_timeline",
@@ -141,7 +151,24 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
       schema: definition.inputSchema,
       description: definition.description,
     })));
-  const walked = [...core, ...discovery, ...terminal, ...multimodal, ...conversations, ...taskOutcome, ...connectors]
+  // The Sidekick plugin's run reader, delegation and source tools, the agent
+  // tools and the notice tools are assembled per run by `loadHarnessTools`
+  // rather than registered, so they are built here by hand, for the loop that
+  // holds the widest set of each: a wizard reads runs, a Canvas's Chat
+  // archives a Sidekick, a run asks its wizard for a change. Their ports are
+  // reached only when a tool executes, which a schema walk never does.
+  const wizardInput = { ...workflowInput(), parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a" } as WorkstreamWorkflowInput;
+  const userId = "00000000-0000-4000-8000-000000000000" as Parameters<typeof sidekickSourceTools>[2];
+  const agentTools = [{ sidekickRun: true }, { canvasChat: true }].flatMap((options) =>
+    createAgentCommunicationPlugin(new AgentCommunicationService(env, workflowInput()), "", options).tools);
+  const assembled = [
+    ...createSidekickRunTools(env, wizardInput, async () => null),
+    ...sidekickDelegationTools(env, wizardInput, userId, false),
+    ...sidekickSourceTools(env, wizardInput, userId, false),
+    ...agentTools.filter((tool, index) => agentTools.findIndex((other) => other.definition.name === tool.definition.name) === index),
+    ...createNotificationsPlugin(workflowInput(), {} as Parameters<typeof createNotificationsPlugin>[1]).tools,
+  ].map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema, description: tool.definition.description }));
+  const walked = [...core, ...discovery, ...terminal, ...multimodal, ...conversations, ...taskOutcome, ...assembled, ...connectors]
     .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown>, description: entry.description }));
 
   // Thrown here rather than asserted in one `it`, so no check can run against a

@@ -803,7 +803,12 @@ files in the Terminal tools (`/workspace`, "the workspace root"), and a
 provider's own word for an account (a Slack or Granola workspace, a Google
 Workspace document). `apps/api/test/tool-schema-descriptions.test.ts` walks
 every authored tool and fails on `workstream`, `substream`, or a `workspace`
-outside those surfaces. It reads descriptions and schemas.
+outside those surfaces. It reads descriptions and schemas. Its walk
+(`apps/api/test/helpers/authored-tool-schemas.ts`) also builds the tools a run
+assembles rather than registers: the Sidekick run reader, delegation and
+source tools, the agent tools and the notice tools. `request_source` told the
+model to look for `connect.scope` `workspace` for as long as it was outside
+that walk.
 
 **Results are audited where they are produced.**
 `packages/contracts/src/model-names-audit.ts` walks what a tool returned and
@@ -1480,7 +1485,9 @@ says "This conversation", a fact filed under a retired subject no longer says
 "shared space", a connector refuses with "The Organization's connection", and
 Granola's and Ashby's plugin prose names the Organization. A result audit
 (`model-names-audit.ts`, rule 10) now runs inside the suites that execute
-tools.
+tools, and the schema walk reaches the tools a run assembles, whose nine
+undescribed parameters (`runs_list`, `runs_read`, `delegates_list`,
+`set_delegation`) are described.
 
 **Why:** the product names Canvases, Sidekicks and Organizations, and every
 storage name a model could see was a leftover of an earlier pivot. A model

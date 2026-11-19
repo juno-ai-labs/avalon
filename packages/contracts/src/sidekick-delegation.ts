@@ -4,8 +4,14 @@ import { PersonalPresentationSchema } from "./onboarding";
 
 /** Shared runtime/advertised inputs: the host supplies identity and provenance. */
 export const SidekickMyDelegationsInputSchema = z.strictObject({});
-export const SidekickDelegatesInputSchema = z.strictObject({ sidekick: z.string().min(1) });
-export const SidekickSetDelegationInputSchema = z.strictObject({ sidekickId: IdSchema, userId: UserIdSchema, allowed: z.boolean() });
+export const SidekickDelegatesInputSchema = z.strictObject({
+  sidekick: z.string().min(1).describe("The Sidekick to look up: its sidekickId, its Rally URL, or its exact visible name."),
+});
+export const SidekickSetDelegationInputSchema = z.strictObject({
+  sidekickId: IdSchema.describe("The Sidekick's sidekickId, as delegates_list or my_delegations_list returns it."),
+  userId: UserIdSchema.describe("The Organization user whose delegation changes, by userId."),
+  allowed: z.boolean().describe("true lets the Sidekick act for this user; false withdraws that."),
+});
 
 export const SidekickDelegationMutationResultSchema = z.strictObject({
   sidekickId: IdSchema,

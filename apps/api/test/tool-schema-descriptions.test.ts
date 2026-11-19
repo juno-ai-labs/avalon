@@ -111,6 +111,8 @@ describe("tool schema parameter descriptions", () => {
  * the rest were brought to.
  */
 const RECORDED_DEBT: Record<string, number> = {
+  // The agent tools (`agents.start_agent` and the rest): described from the start.
+  agents: 0,
   connector: 0,
   elicitation: 0,
   fireflies: 0,

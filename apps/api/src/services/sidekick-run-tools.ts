@@ -19,8 +19,16 @@ import { WorkstreamObjectClient } from "./workstream-object-client";
 // Reuse the team-set conversation-read limits rather than inventing another allowance.
 const LimitSchema = z.number().int().positive().max(CONVERSATION_MAXIMUM_PAGE_SIZE).optional();
 const ListCursorSchema = z.strictObject({ before: AutomationRunListRequestSchema.shape.before, limit: LimitSchema });
-const ListSchema = z.strictObject({ limit: LimitSchema, cursor: z.string().optional() });
-const ReadSchema = z.strictObject({ runId: IdSchema.optional(), limit: LimitSchema, cursor: z.string().optional() });
+const PRIVATE_CURSOR = "Private continuation state; never model-authored.";
+const ListSchema = z.strictObject({
+  limit: LimitSchema.describe("Runs per page; omit for Rally's default."),
+  cursor: z.string().optional().describe(PRIVATE_CURSOR),
+});
+const ReadSchema = z.strictObject({
+  runId: IdSchema.optional().describe("The run to read, by the id runs_list returns. Omit it to read the runs a due self-review listed, in the notice's order."),
+  limit: LimitSchema.describe("Transcript turns per page; omit for Rally's default."),
+  cursor: z.string().optional().describe(PRIVATE_CURSOR),
+});
 const ReadCursorSchema = z.strictObject({ runId: IdSchema, afterSequence: z.number().int().nonnegative(),
   throughSequence: z.number().int().nonnegative().optional(), limit: LimitSchema,
   offset: z.number().int().nonnegative().default(0), contentHash: z.string().optional(),
