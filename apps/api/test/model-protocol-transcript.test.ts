@@ -298,6 +298,32 @@ describe("durable UI-to-model transcript projection", () => {
     });
   });
 
+  it("rebuilds a failed tool result with its code in product words, as the model first read it", async () => {
+    const invocationId = "00000000-0000-4000-8000-000000000060";
+    const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([{
+        message_id: invocationId, harness_run_id: PRIOR_RUN_ID, tool_call_id: call, tool_name: "send_message",
+        input_json: '{"message":"Hi"}', output_ref: null, output_summary: null, status: "failed",
+        // The receipt holds the stored code.
+        error_json: JSON.stringify({
+          code: "tool_failed", message: "workstream_archived",
+          data: { code: "workstream_archived", details: { reason: "Its conversation is archived." } },
+        }),
+      }], {}),
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
+      [
+        message("00000000-0000-4000-8000-000000000062", 1, { author: "human", textContent: "Send it" }),
+        message(invocationId, 2, { author: "agent", messageType: "tool", structuredContent: { invocation: {} } }),
+        message("00000000-0000-4000-8000-000000000063", 3, { author: "agent", textContent: "It is archived." }),
+      ],
+    );
+    expect(projection.messages.find((entry) => entry.role === "tool")?.content).toBe(JSON.stringify({
+      success: false, kind: "external", error: "canvas_archived",
+      data: { code: "canvas_archived", details: { reason: "Its conversation is archived." } },
+    }));
+  });
+
   it("projects the triggering image with a same-ID durable manifest entry", async () => {
     const resourceId = "00000000-0000-4000-8000-000000000041";
     const triggerId = "00000000-0000-4000-8000-000000000042";

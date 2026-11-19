@@ -149,7 +149,9 @@ do. The import, edit and publish steps below are for a site whose content is
 its files, for changing a site's code, and for a refresh that also adds files
 (a feed's episodes): save the claim and the sequence below for those too.
 
-A Sidekick run publishes into a Canvas attached to the Sidekick. Save the
+A Sidekick run publishes into a Canvas attached to the Sidekick, and only
+its one artifact: never save an instruction to publish a file on its own,
+for delivery or to keep it for a retry. Save the
 instruction to publish each refresh into the saved Canvas by naming it in
 \`publish_resource\`'s \`canvas\` argument; without it, a run publishes into
 the Canvas whose Chat made the Sidekick, or is refused \`canvas_required\` when
@@ -242,7 +244,7 @@ have not. Ask its entry-privacy question only when that skill requires it.
      false\` and the most open audience the Canvas's artifacts allow:
      - **\`public\`** (anyone with the link, signed in or not) is the
        default.
-     - **\`workspace\`** (the Organization's members) when this site, or
+     - **\`organization\`** (the Organization's members) when this site, or
        anything else this Canvas has published, shows the Organization's
        own data — figures from a connector, internal plans, people's
        details — or the request names the team or company as the audience.
@@ -493,13 +495,15 @@ Rally serves a site's files in ways a page can rely on:
   - **Name each new file once and never reuse the name**, such as
     \`episodes/2026-11-14-no-ai-slop.mp3\`, so an app that saved the old
     file never gets new bytes under a name it already has.
-- **A file published on its own is for downloading, not for a page.**
-  \`publish_resource\` of a single file in a Canvas returns its \`url\`,
-  which ends in the file's name. Link it with \`<a href="…">\` when the
-  person wants a file to hand around; never point \`<audio src>\` or
-  \`<img src>\` at it. A result with no \`url\` stayed in this
-  conversation, outside the Canvas: publish from the Canvas's Chat, or
-  from a run that names this Canvas.
+- **A Canvas holds one artifact, and a site is that artifact.** Every file
+  the site plays, shows or offers to download goes in its directory, and
+  publishing the site is the only publish. Never publish a file on its own
+  beside the site, not for a page, not as a download and not to keep it for a
+  retry: a publish is never storage, and the Canvas refuses a second
+  artifact. A single file is a Canvas's artifact only when that file is the
+  whole of what the Canvas is for, such as a report someone asked for. A
+  result with no \`url\` stayed in this conversation, outside the Canvas:
+  publish from the Canvas's Chat, or from a run that names this Canvas.
 - **An active site passes the visitor's request on.** End with
   \`env.ASSETS.fetch(request)\`, the request as it arrived: it carries a
   player's range, and a new \`Request\` built from the path drops it.

@@ -82,6 +82,23 @@ describe("tool schema parameter descriptions", () => {
 
     expect(counts).toEqual(RECORDED_DEBT);
   });
+
+  it("names no storage word in any tool a model is offered", () => {
+    // The product is Canvases and Sidekicks in an Organization. Storage keeps
+    // `workstream`, `substream` and `workspace` from earlier pivots, and a
+    // model shown one cannot connect it to what a person calls the thing
+    // (docs/agent-tools.md, rule 10). A tool that offers a stored enum value
+    // translates it at the boundary (`@rally/contracts/model-names`).
+    const walked = everyAuthoredToolSchema().map(({ name, schema, description }) =>
+      ({ name, text: JSON.stringify({ description, schema }) }));
+    expect(walked.filter(({ text }) => /work ?streams?|substreams?/iu.test(text)).map(({ name }) => name)).toEqual([]);
+    // `workspace` has two honest meanings left: a sandbox's files (Terminal),
+    // and a provider's own word for an account (a Slack or Granola workspace,
+    // a Google Workspace document). None of Rally's other tools says it.
+    const otherMeanings = new Set(["terminal", "slack", "granola", "google", "notion", "fireflies"]);
+    expect(walked.filter(({ name, text }) => !otherMeanings.has(toolSurface(name)) && /workspace/iu.test(text)).map(({ name }) => name))
+      .toEqual([]);
+  });
 });
 
 /**
@@ -94,6 +111,8 @@ describe("tool schema parameter descriptions", () => {
  * the rest were brought to.
  */
 const RECORDED_DEBT: Record<string, number> = {
+  // The agent tools (`agents.start_agent` and the rest): described from the start.
+  agents: 0,
   connector: 0,
   elicitation: 0,
   fireflies: 0,

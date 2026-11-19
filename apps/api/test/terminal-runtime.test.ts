@@ -272,7 +272,7 @@ function fixture(
     })),
     publishResource: vi.fn(async (_context, input, bytes): Promise<TerminalPublishedResourceOutput> => ({
       resourceId: "published", title: input.displayName ?? input.filePath,
-      publishKind: "file", resourceType: "generated_file", provider: "avalon_generated", mimeType: "text/plain",
+      publishKind: "file", resourceType: "generated_file", provider: "rally_generated", mimeType: "text/plain",
       sizeBytes: bytes.byteLength, sourceSha256: "b".repeat(64), attachmentKind: "text",
       contentMode: "read", derivativeStatus: "pending", createdAt: "2026-08-13T12:00:00.000Z",
     })),
@@ -285,7 +285,7 @@ function fixture(
       site: Parameters<TerminalResourceBridge["publishSiteResource"]>[2],
     ): Promise<TerminalPublishedSiteOutput> => ({
       resourceId: "published-site", artifactId: "published-artifact", title: input.displayName ?? input.filePath,
-      publishKind: "site", resourceType: "generated_site", provider: "avalon_generated", attachmentKind: "site",
+      publishKind: "site", resourceType: "generated_site", provider: "rally_generated", attachmentKind: "site",
       slug: "site-slug",
       url: `https://${"1".repeat(8)}-g.rallyusercontent.test`,
       mode: site.mode, stateful: site.stateful, version: 1,
@@ -1473,7 +1473,7 @@ describe("Daytona Terminal runtime", () => {
     ).run(W);
     vi.mocked(resources.publishResource).mockResolvedValueOnce({
       resourceId: "command-log", title: "Command log", publishKind: "file", resourceType: "generated_file",
-      provider: "avalon_generated", mimeType: "text/plain", sizeBytes: 150_000,
+      provider: "rally_generated", mimeType: "text/plain", sizeBytes: 150_000,
       sourceSha256: "d".repeat(64), attachmentKind: "text", contentMode: "read",
       derivativeStatus: "pending", createdAt: "2026-08-13T12:00:00.000Z",
     });

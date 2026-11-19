@@ -399,7 +399,7 @@ describe("durable run authority revalidation", () => {
   it("rejects a removed member before the automation is even asked", async () => {
     const database = new AuthorityDatabase(state({ memberStatus: "removed" }));
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input()))
-      .rejects.toThrow(/not an active workspace member/i);
+      .rejects.toThrow("User is not an active member of this Organization");
     expect(database.runStateReads).toEqual([]);
   });
 

@@ -61,6 +61,7 @@ export * from "./connector-connection-card";
 export * from "./member-card";
 export * from "./conversation-effects";
 export * from "./conversation-parent";
+export * from "./model-names";
 export * from "./canvases";
 export * from "./activity";
 export * from "./identifiers";

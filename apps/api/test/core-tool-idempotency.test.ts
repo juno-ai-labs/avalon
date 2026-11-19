@@ -1,3 +1,4 @@
+import { auditedAvalonTools } from "./helpers/audited-tools";
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -5,7 +6,6 @@ import { z } from "zod";
 
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
-import { __integrationTesting } from "../src/services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
@@ -171,7 +171,7 @@ function context(providerIdempotencyKey?: string) {
 describe("Avalon connector connection tools", () => {
   it("offers a trusted connector card only to user runs, and to a Sidekick run as a question", async () => {
     const { env } = fixture();
-    const userTool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const userTool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "show_connector_connection");
 
     expect(userTool?.definition).toMatchObject({
@@ -186,14 +186,26 @@ describe("Avalon connector connection tools", () => {
         output: { connectorId: "slack", scope: "personal" },
         summary: "Presented the slack personal connection card",
       });
-    await expect(userTool!.execute({ connectorId: "granola", scope: "workspace" }, context()))
-      .rejects.toThrow("does not support a workspace connection card");
+    await expect(userTool!.execute({ connectorId: "granola", scope: "organization" }, context()))
+      .rejects.toThrow("granola has no organization connection card");
+    // The Organization's card is asked for and read back as organization, and
+    // its summary, which a client recovers the card from, keeps the stored scope.
+    expect((userTool!.definition.inputSchema as { properties: { scope: { enum: string[] } } }).properties.scope.enum)
+      .toEqual(["personal", "organization"]);
+    await expect(userTool!.execute({ connectorId: "slack", scope: "organization" }, context()))
+      .resolves.toEqual({
+        output: { connectorId: "slack", scope: "organization" },
+        summary: "Presented the slack workspace connection card",
+      });
+    // Instructions saved before the rename may still send the stored name.
+    await expect(userTool!.execute({ connectorId: "slack", scope: "workspace" }, context()))
+      .resolves.toMatchObject({ output: { connectorId: "slack", scope: "organization" } });
 
     // A turn acting for the Organization is offered all three, and each
     // refuses by name: there is no person whose connections they read.
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
-    const workspaceTools = __integrationTesting.createAvalonTools(env, workspaceInput)
+    const workspaceTools = auditedAvalonTools(env, workspaceInput)
       .filter((candidate) => candidate.definition.capability.startsWith("connector.connection."));
     expect(workspaceTools.map((candidate) => candidate.definition.name))
       .toEqual(["get_connector_connection_state", "list_connectors", "show_connector_connection"]);
@@ -215,7 +227,7 @@ describe("Avalon connector connection tools", () => {
     };
     // A Sidekick run holds both, and its card is a question: a write keyed on
     // its receipt, as `request_elicitation` is, because it pauses the run.
-    const runTools = __integrationTesting.createAvalonTools(env, automationInput)
+    const runTools = auditedAvalonTools(env, automationInput)
       .filter((candidate) => candidate.definition.capability.startsWith("connector.connection."));
     expect(runTools.map((candidate) => [candidate.definition.name, candidate.definition.mode, candidate.definition.idempotency]))
       .toEqual([
@@ -227,7 +239,7 @@ describe("Avalon connector connection tools", () => {
 
   it("reads the current authorized connector catalog state", async () => {
     const { env, objectDatabase } = fixture();
-    const stateTool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const stateTool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "get_connector_connection_state");
 
     expect(stateTool?.definition).toMatchObject({
@@ -255,7 +267,7 @@ describe("Avalon connector connection tools", () => {
     await expect(stateTool!.execute({ connectorId: "slack" }, context()))
       .resolves.toMatchObject({ output: {
         state: "connected",
-        connections: [{ scope: "personal", state: "not_connected" }, { scope: "workspace", state: "connected" }],
+        connections: [{ scope: "personal", state: "not_connected" }, { scope: "organization", state: "connected" }],
       } });
 
     objectDatabase.prepare(
@@ -297,7 +309,7 @@ describe("Avalon connector connection tools", () => {
           state: "connected",
           connections: [
             { scope: "personal", state: "connected", connectIn: "conversation" },
-            { scope: "workspace", state: "not_connected", connectIn: "conversation" },
+            { scope: "organization", state: "not_connected", connectIn: "conversation" },
           ],
           // The display name carries no account, so none is reported.
           accounts: [{ scope: "personal", state: "connected", account: null }],
@@ -333,7 +345,7 @@ describe("Avalon connector connection tools", () => {
 
   it("lists every connector by family, with each account the caller can use", async () => {
     const { env, objectDatabase } = fixture();
-    const listTool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const listTool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "list_connectors");
     expect(listTool?.definition).toMatchObject({
       capability: "connector.connection.read",
@@ -390,7 +402,7 @@ describe("Avalon connector connection tools", () => {
     // A product only Settings connects is listed, and says so.
     expect(family("social_media")?.connectors).toEqual([expect.objectContaining({
       connectorId: "x",
-      connections: [{ scope: "workspace", state: expect.any(String), connectIn: "settings" }],
+      connections: [{ scope: "organization", state: expect.any(String), connectIn: "settings" }],
     })]);
     expect(summary).toBe("Listed connectors in 11 families; connected: google-mail-calendar, google-drive");
   });
@@ -399,7 +411,7 @@ describe("Avalon connector connection tools", () => {
     // A person whose personal Drive was connected was asked to connect Drive,
     // because the check looked at the workspace scope alone.
     const { env, objectDatabase } = fixture();
-    const stateTool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const stateTool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "get_connector_connection_state");
     objectDatabase.prepare(
       `INSERT INTO connector_connections
@@ -423,7 +435,7 @@ describe("Avalon connector connection tools", () => {
           state: "connected",
           connections: [
             { scope: "personal", state: "connected", connectIn: "conversation" },
-            { scope: "workspace", state: "not_connected", connectIn: "conversation" },
+            { scope: "organization", state: "not_connected", connectIn: "conversation" },
           ],
           accounts: [{ scope: "personal", state: "connected", account: null }],
         },
@@ -457,7 +469,7 @@ describe("Avalon connector connection tools", () => {
           state: "reconnect_required",
           connections: [
             { scope: "personal", state: "not_connected" },
-            { scope: "workspace", state: "reconnect_required" },
+            { scope: "organization", state: "reconnect_required" },
           ],
         },
       });
@@ -474,7 +486,7 @@ describe("Avalon connector connection tools", () => {
       .run("America/New_York", USER_ID);
     database.prepare("UPDATE workspaces SET timezone = ? WHERE id = ?")
       .run("Europe/London", WORKSPACE_ID);
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const tool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "current_time");
 
     expect(tool?.definition).toMatchObject({
@@ -487,7 +499,7 @@ describe("Avalon connector connection tools", () => {
     expect(lines).toHaveLength(5);
     expect(lines[0]).toMatch(/^current local time: \d{2}:\d{2} (AM|PM)$/u);
     expect(lines[1]).toBe("local timezone: America/New_York");
-    expect(lines[2]).toBe("workspace timezone: Europe/London");
+    expect(lines[2]).toBe("organization timezone: Europe/London");
     expect(lines[3]).toMatch(/^local date: [A-Z][a-z]+ \d{1,2} \d{4}$/u);
     expect(lines[4]).toMatch(/^iso8601 timestamp: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
     expect(result.summary).toBe(result.output);
@@ -499,7 +511,7 @@ describe("Avalon connector connection tools", () => {
       .run("Europe/London", WORKSPACE_ID);
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
-    const tool = __integrationTesting.createAvalonTools(env, workspaceInput)
+    const tool = auditedAvalonTools(env, workspaceInput)
       .find((candidate) => candidate.definition.name === "current_time");
 
     const workspaceTime = await tool!.execute({}, {
@@ -507,14 +519,14 @@ describe("Avalon connector connection tools", () => {
       executionPrincipal: workspaceInput.executionPrincipal,
     });
     expect(String(workspaceTime.output)).toContain("local timezone: Europe/London");
-    expect(String(workspaceTime.output)).toContain("workspace timezone: Europe/London");
+    expect(String(workspaceTime.output)).toContain("organization timezone: Europe/London");
 
     const overrideTime = await tool!.execute({ timezone: "America/Los_Angeles" }, {
       ...context(),
       executionPrincipal: workspaceInput.executionPrincipal,
     });
     expect(String(overrideTime.output)).toContain("local timezone: America/Los_Angeles");
-    expect(String(overrideTime.output)).toContain("workspace timezone: Europe/London");
+    expect(String(overrideTime.output)).toContain("organization timezone: Europe/London");
     await expect(tool!.execute({ timezone: "Mars/Olympus_Mons" }, {
       ...context(),
       executionPrincipal: workspaceInput.executionPrincipal,
@@ -535,7 +547,7 @@ describe("Avalon connector connection tools", () => {
         ...baseEnv,
         SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, { roomEvents }),
       });
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const tool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");
     expect(tool?.definition.inputSchema).not.toHaveProperty("properties.targetUserId");
@@ -592,7 +604,7 @@ describe("Avalon connector connection tools", () => {
         jurisdiction: () => agents,
       }),
     });
-    const tool = __integrationTesting.createAvalonTools(env, { ...workflowInput(), substreamId: BREAKOUT_ID })
+    const tool = auditedAvalonTools(env, { ...workflowInput(), substreamId: BREAKOUT_ID })
       .find((candidate) => candidate.definition.name === "request_elicitation");
 
     await tool!.execute(
@@ -606,7 +618,7 @@ describe("Avalon connector connection tools", () => {
 
   it("refuses to execute provider-key writes without the receipt-derived key", async () => {
     const { env } = fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const tool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
 
     await expect(tool!.execute(

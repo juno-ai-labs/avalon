@@ -284,8 +284,8 @@ function parseEffectiveDomains(policy: WorkspaceTerminalNetworkPolicy): string[]
   if (policy.effectiveDomains.length > 0) return policy.effectiveDomains;
   throw new TerminalToolError(
     "network_policy_unverified",
-    "The workspace Terminal network policy is invalid. Ask a workspace owner to save and verify it again.",
-    { reason: "Ask a workspace owner to save and verify the Terminal network policy." },
+    "The Organization's Terminal network policy is invalid. Ask an Organization owner to save and verify it again.",
+    { reason: "Ask an Organization owner to save and verify the Terminal network policy." },
   );
 }
 
@@ -500,7 +500,7 @@ export class TerminalSandboxCoordinator {
     if (this.emergencyDisabled) {
       throw new TerminalToolError(
         "sandbox_unavailable",
-        "Terminal is temporarily disabled by an operator. Do not retry until a workspace owner confirms service has resumed.",
+        "Terminal is temporarily disabled by an operator. Do not retry until an Organization owner confirms service has resumed.",
         { reason: "Wait for an operator to re-enable Terminal before trying another tool." },
       );
     }
@@ -547,7 +547,7 @@ export class TerminalSandboxCoordinator {
     if (this.emergencyDisabled) {
       throw new TerminalToolError(
         "sandbox_unavailable",
-        "Terminal is temporarily disabled by an operator. Do not retry until a workspace owner confirms service has resumed.",
+        "Terminal is temporarily disabled by an operator. Do not retry until an Organization owner confirms service has resumed.",
         { reason: "Wait for an operator to re-enable Terminal before trying another tool." },
       );
     }
@@ -564,10 +564,10 @@ export class TerminalSandboxCoordinator {
     if (policy.verificationState !== "verified") {
       throw new TerminalToolError(
         "network_policy_unverified",
-        "The workspace Terminal network policy is not verified. Ask a workspace owner to retry the policy verification before using Terminal.",
+        "The Organization's Terminal network policy is not verified. Ask an Organization owner to retry the policy verification before using Terminal.",
         { reason: policy.verificationState === "pending"
           ? "Wait for policy verification to finish, then retry."
-          : "Ask a workspace owner to save and verify the Terminal network policy." },
+          : "Ask an Organization owner to save and verify the Terminal network policy." },
       );
     }
     const authorityFingerprint = await this.authorityFingerprint(context, repositoryAuthority);
@@ -688,7 +688,7 @@ export class TerminalSandboxCoordinator {
       if (row.sandboxId) await this.provider.stopSandbox(row.sandboxId).catch(() => undefined);
       throw new TerminalToolError(
         "network_policy_unverified",
-        "The workspace Terminal network policy changed during sandbox startup. Rally stopped the sandbox; retry after the new policy is verified.",
+        "The Organization's Terminal network policy changed during sandbox startup. Rally stopped the sandbox; retry after the new policy is verified.",
         { reason: "Wait for the network-policy change to finish, then retry the same tool." },
       );
     }
@@ -1290,9 +1290,9 @@ export class TerminalSandboxCoordinator {
       throw new TerminalToolError(
         "network_policy_unverified",
         discarded
-          ? "Daytona did not confirm the workspace Terminal network policy. The sandbox was discarded; ask a workspace owner to verify the policy before retrying."
-          : "Daytona did not confirm the workspace Terminal network policy or sandbox removal. The sandbox identity is retained; ask a workspace owner to verify the policy before retrying.",
-        { reason: "Ask a workspace owner to verify the Terminal network policy before retrying." },
+          ? "Daytona did not confirm the Organization's Terminal network policy. The sandbox was discarded; ask an Organization owner to verify the policy before retrying."
+          : "Daytona did not confirm the Organization's Terminal network policy or sandbox removal. The sandbox identity is retained; ask an Organization owner to verify the policy before retrying.",
+        { reason: "Ask an Organization owner to verify the Terminal network policy before retrying." },
       );
     }
     await this.terminal(context).attachProviderSandbox({

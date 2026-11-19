@@ -47,8 +47,8 @@ context or tools so another run can distinguish its claim from yours.
 
 Choose the narrowest authorized scope that all relevant runs share. Set
 \`scopeKind: "sidekick"\` for activations of the same installed Sidekick,
-\`workstream\` for runs in one Canvas's Chat, \`user\` for workflows shared by one
-person, or \`workspace\` for workflows shared across the organization. Scope
+\`canvas\` for runs in one Canvas's Chat, \`user\` for workflows shared by one
+person, or \`organization\` for workflows shared across the Organization. Scope
 selection does not grant access; use only kinds the run is authorized to use.
 
 When configuring a Sidekick's own table, declare it in the draft's

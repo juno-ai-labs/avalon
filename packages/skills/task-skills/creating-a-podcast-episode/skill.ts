@@ -49,8 +49,11 @@ and you build it with this episode. If recovery fails, stop.
 
 Name the episode once, at the start, with only letters, digits, hyphens and
 dots and dated so it never collides with another, such as
-\`2026-11-14-no-ai-slop\`. Its recording and its art are published under that
-name; a fixed name would make every episode replace the last.
+\`2026-11-14-no-ai-slop\`. Its recording and its art go into the feed's site
+under that name; a fixed name would make every episode replace the last.
+They are never published on their own, not even to keep them for a retry: a
+retry reuses the section recordings \`generate_audio\` saved and joins them
+again.
 
 1. **Start from the whole source.** Read the full text, never a preview or
    snippet. Keep what identifies it: its title, its date, its link, and a
@@ -227,6 +230,10 @@ name; a fixed name would make every episode replace the last.
   recover first.
 - **Reporting a finished episode on the recording alone.** Check its
   length (step 6) and confirm its row was written.
+- **Publishing the finished recording or its art on its own.** Each one
+  lands beside the feed's site, where a Canvas that holds one artifact refuses
+  it, or, before that rule, made a Canvas per episode that nobody asked for.
+  Do instead: put both in the site's \`episodes/\` and publish only the site.
 `;
 
 export const CREATING_A_PODCAST_EPISODE_SKILL: HarnessSkill = {

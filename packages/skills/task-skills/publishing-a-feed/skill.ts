@@ -122,8 +122,10 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
 7. **Keep every media file inside the feed's site.** An entry's audio,
    video and artwork go in the site's own directory, such as
    \`episodes/2026-11-14-no-ai-slop.mp3\`, never published on their own
-   with \`publish_resource\`: the page can play only its own files, and the
-   feed names them by the site's URL. Add an entry with media in this
+   with \`publish_resource\`, not even to keep a finished file for a retry:
+   the page can play only its own files, the feed names them by the site's
+   URL, and the Canvas holds only the site. Saved Sidekick instructions
+   record an episode by its path in the site, never by a resource of its own. Add an entry with media in this
    order, which is \`building-live-sites\`' refresh sequence (take its
    shared-output claim first in a Sidekick run):
    1. **Recover the site before writing any file.** If the feed's site has

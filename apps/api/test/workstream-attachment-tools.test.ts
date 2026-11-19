@@ -1,3 +1,4 @@
+import { auditedAvalonTools } from "./helpers/audited-tools";
 import { asHarnessRunId, asWorkstreamId } from "@rally/contracts";
 import { asUserId, asWorkspaceId, readStructuredFailure } from "@rally/contracts";
 import { createHash } from "node:crypto";
@@ -289,7 +290,7 @@ describe("work-stream attachment tools", () => {
       relationshipType: "attachment",
       attachedAt: "2026-08-12T00:00:00.000Z",
     });
-    const read = __integrationTesting.createAvalonTools(env, input())
+    const read = auditedAvalonTools(env, input())
       .find((tool) => tool.definition.name === "read_resource")!;
 
     await expect(read.execute({ resourceId }, context())).resolves.toMatchObject({
@@ -315,7 +316,7 @@ describe("work-stream attachment tools", () => {
     database.prepare(
       "UPDATE resources SET model_content_character_count = ?, model_content_ref = ? WHERE id = ?",
     ).run(text.length, modelRef, resourceId);
-    const tools = __integrationTesting.createAvalonTools(env, input());
+    const tools = auditedAvalonTools(env, input());
     const read = tools.find((tool) => tool.definition.name === "read_resource")!;
     const search = tools.find((tool) => tool.definition.name === "search_resource")!;
 
@@ -341,7 +342,7 @@ describe("work-stream attachment tools", () => {
     database.prepare(
       "UPDATE resources SET model_content_character_count = ?, model_content_ref = ? WHERE id = ?",
     ).run(text.length, modelRef, resourceId);
-    const search = __integrationTesting.createAvalonTools(env, input())
+    const search = auditedAvalonTools(env, input())
       .find((tool) => tool.definition.name === "search_resource")!;
 
     await expect(search.execute({ resourceId, query: "late_unique_evidence" }, context())).resolves.toMatchObject({
@@ -362,7 +363,7 @@ describe("work-stream attachment tools", () => {
     database.prepare(
       "UPDATE resources SET model_content_character_count = ?, model_content_ref = ? WHERE id = ?",
     ).run(text.length, modelRef, resourceId);
-    const search = __integrationTesting.createAvalonTools(env, input())
+    const search = auditedAvalonTools(env, input())
       .find((tool) => tool.definition.name === "search_resource")!;
 
     await expect(search.execute({ resourceId, query: "x", maxPassageCharacters: 500 }, context())).resolves.toMatchObject({
@@ -395,7 +396,7 @@ describe("work-stream attachment tools", () => {
     database.prepare(
       "UPDATE resources SET model_content_status = 'unsupported', model_mime_type = NULL WHERE id = ?",
     ).run(kindFixtures.other);
-    const tools = __integrationTesting.createAvalonTools(env, input());
+    const tools = auditedAvalonTools(env, input());
     expect(tools.some((tool) => tool.definition.name === "read")).toBe(false);
     const list = tools.find((tool) => tool.definition.name === "list_resources")!;
     expect(list.definition.description).toContain("image — an image the agent can view");
@@ -447,7 +448,7 @@ describe("work-stream attachment tools", () => {
   it("returns exact two-sided character coverage and rejects a changed or tampered continuation", async () => {
     const { database, objectStore, bucket, env } = fixture();
     const resourceId = insertReadyResource(database, objectStore, bucket, 1);
-    const read = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
+    const read = auditedAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
 
     const first = await read.execute({ resourceId, startCharacter: 7_000 }, context());
     expect(first.output).toMatchObject({
@@ -485,7 +486,7 @@ describe("work-stream attachment tools", () => {
     // model restarts the read.
     const { database, objectStore, bucket, env } = fixture();
     const resourceId = insertReadyResource(database, objectStore, bucket, 4);
-    const read = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
+    const read = auditedAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
     const first = await read.execute({ resourceId }, context());
     const consumed = first.pagination!.continuations.find((page) => page.slot === "nextPageId")!.input;
     const [, next] = withToolPagination(read, { prefix: "workstream", wirePrefix: "", connectionId: null,
@@ -517,7 +518,7 @@ describe("work-stream attachment tools", () => {
     const resourceId = insertReadyResource(database, objectStore, bucket, 70);
     const row = database.prepare("SELECT model_content_ref FROM resources WHERE id = ?").get(resourceId) as { model_content_ref: string };
     bucket.objects.set(row.model_content_ref, new Uint8Array(8 * 1024 * 1024 + 1));
-    const read = __integrationTesting.createAvalonTools(env, input())
+    const read = auditedAvalonTools(env, input())
       .find((tool) => tool.definition.name === "read_resource")!;
 
     await expect(read.execute({ resourceId }, context())).rejects.toMatchObject({
@@ -535,7 +536,7 @@ describe("work-stream attachment tools", () => {
     database.prepare(
       "UPDATE resources SET model_content_character_count = ? WHERE id = ?",
     ).run(text.length, resourceId);
-    const read = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
+    const read = auditedAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
 
     const result = await read.execute({ resourceId, startCharacter: 2 }, context());
     const output = result.output as { range: { start: number; end: number }; text: string };
@@ -552,12 +553,12 @@ describe("work-stream attachment tools", () => {
     const resourceId = insertReadyResource(database, objectStore, bucket, 2);
     const privateResourceId = "20000000-0000-4000-8000-000000000003";
 
-    const userSearch = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "search_resource")!;
+    const userSearch = auditedAvalonTools(env, input()).find((tool) => tool.definition.name === "search_resource")!;
     await expect(userSearch.execute({ resourceId, query: "needle evidence" }, context())).resolves.toMatchObject({
       output: { resourceId, totalMatches: 1, returnedMatches: 1, passages: [{ rank: 1, sectionLabel: "Resource 2" }], truncated: false },
     });
     const workspacePrincipal = { type: "workspace" as const, workspaceId: WORKSPACE_ID };
-    const workspaceTools = __integrationTesting.createAvalonTools(env, input(workspacePrincipal));
+    const workspaceTools = auditedAvalonTools(env, input(workspacePrincipal));
     const list = workspaceTools.find((tool) => tool.definition.name === "list_resources")!;
     await expect(list.execute({}, context(workspacePrincipal))).resolves.toMatchObject({ output: { totalVisibleResources: 1 } });
     const search = workspaceTools.find((tool) => tool.definition.name === "search_resource")!;
@@ -569,7 +570,7 @@ describe("work-stream attachment tools", () => {
     const { database, objectStore, bucket, env } = fixture();
     const resourceId = insertReadyResource(database, objectStore, bucket, 1);
     const alias = await ensureResourceSlug(env, WORKSPACE_ID, resourceId);
-    const list = __integrationTesting.createAvalonTools(env, input())
+    const list = auditedAvalonTools(env, input())
       .find((tool) => tool.definition.name === "list_resources")!;
 
     const result = await list.execute({}, context());
@@ -581,12 +582,29 @@ describe("work-stream attachment tools", () => {
     expect(alias).toMatch(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u);
   });
 
+  it("names the list's Canvas or Sidekick and Rally's own upload in product words, never as stored", async () => {
+    const { database, objectStore, bucket, env } = fixture();
+    insertReadyResource(database, objectStore, bucket, 1);
+    const listed = async (run: WorkstreamWorkflowInput) => {
+      const list = auditedAvalonTools(env, run).find((tool) => tool.definition.name === "list_resources")!;
+      const output = (await list.execute({}, context())).output as Record<string, unknown> & { items: Array<{ provider: string }> };
+      return { keys: Object.keys(output), owner: output.canvasId ?? output.sidekickId, providers: output.items.map((item) => item.provider) };
+    };
+
+    // The parent is stored as a workstream id and the upload under `avalon_upload`.
+    expect(await listed(input())).toEqual({
+      keys: ["canvasId", "asOf", "totalVisibleResources", "totalMatchingResources", "filters", "items"],
+      owner: WORKSTREAM_ID, providers: ["rally_upload"],
+    });
+    expect((await listed({ ...input(), parentKind: "automation" })).keys[0]).toBe("sidekickId");
+  });
+
   it("views ordered image batches with ephemeral parts and self-heals mixed wrong kinds", async () => {
     const { database, objectStore, bucket, env } = fixture();
     const firstImageId = insertReadyImage(database, objectStore, bucket, 1);
     const textId = insertReadyResource(database, objectStore, bucket, 4);
     const secondImageId = insertReadyImage(database, objectStore, bucket, 2);
-    const tools = __integrationTesting.createAvalonTools(env, input());
+    const tools = auditedAvalonTools(env, input());
     const view = tools.find((tool) => tool.definition.name === "view_resource")!;
 
     const result = await view.execute({ resourceIds: [firstImageId, textId, secondImageId], maxDimension: 2_048 }, context());
@@ -633,7 +651,7 @@ describe("work-stream attachment tools", () => {
     // the same payload that named them correctly. A literal-string rename
     // sweep cannot see an interpolated name, so this asserts on the text.
     const { database, objectStore, bucket, env } = fixture();
-    const tools = __integrationTesting.createAvalonTools(env, input());
+    const tools = auditedAvalonTools(env, input());
     const advertised = new Set(tools.map((tool) => tool.definition.name));
     expect(advertised).toContain("view_resource");
     expect(advertised).toContain("read_resource");
@@ -663,7 +681,7 @@ describe("work-stream attachment tools", () => {
   it("reauthorizes image receipts and re-executes when visual rehydration is unavailable", async () => {
     const { database, objectStore, bucket, env } = fixture();
     const imageId = insertReadyImage(database, objectStore, bucket, 62);
-    const view = __integrationTesting.createAvalonTools(env, input())
+    const view = auditedAvalonTools(env, input())
       .find((tool) => tool.definition.name === "view_resource")!;
     const result = await view.execute({ resourceIds: [imageId], maxDimension: 2_048 }, context());
     expect(result.output).toMatchObject({ returned: 1, items: [{ status: "included" }] });
@@ -770,7 +788,7 @@ describe("work-stream attachment tools", () => {
     const transforms: Array<{ width?: number; height?: number }> = [];
     const { database, objectStore, bucket, env } = fixture({ images: imageTransformBinding(transforms) });
     const imageId = insertReadyImage(database, objectStore, bucket, 9);
-    const view = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "view_resource")!;
+    const view = auditedAvalonTools(env, input()).find((tool) => tool.definition.name === "view_resource")!;
 
     await expect(view.execute({ resourceIds: [imageId], maxDimension: 64 }, context())).resolves.toMatchObject({
       output: { requested: 1, returned: 1, items: [{ status: "included", modelMimeType: "image/jpeg" }] },
@@ -779,7 +797,7 @@ describe("work-stream attachment tools", () => {
 
     const failed = fixture({ images: imageTransformBinding([], true) });
     const failedImageId = insertReadyImage(failed.database, failed.objectStore, failed.bucket, 10);
-    const failedView = __integrationTesting.createAvalonTools(failed.env, input()).find((tool) => tool.definition.name === "view_resource")!;
+    const failedView = auditedAvalonTools(failed.env, input()).find((tool) => tool.definition.name === "view_resource")!;
     await expect(failedView.execute({ resourceIds: [failedImageId], maxDimension: 64 }, context())).resolves.toMatchObject({
       output: {
         requested: 1,
@@ -802,7 +820,7 @@ describe("work-stream attachment tools", () => {
     ] as const).map(([mime, title], index) => insertReadyResource(database, objectStore, bucket, 20 + index, { mime, title }));
     const unsupportedId = insertReadyResource(database, objectStore, bucket, 30, { mime: "application/zip", title: "archive.zip" });
     database.prepare("UPDATE resources SET model_content_status = 'unsupported', model_mime_type = NULL WHERE id = ?").run(unsupportedId);
-    const tools = __integrationTesting.createAvalonTools(env, input());
+    const tools = auditedAvalonTools(env, input());
     const read = tools.find((tool) => tool.definition.name === "read_resource")!;
     const search = tools.find((tool) => tool.definition.name === "search_resource")!;
     const summarize = tools.find((tool) => tool.definition.name === "summarize_resource")!;

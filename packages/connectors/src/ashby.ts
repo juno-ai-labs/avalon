@@ -32,7 +32,7 @@ export interface AshbyConnectorConfig {
 
 export const AshbyWorkspaceAgentPresentation = {
   displayName: "Ashby workspace events",
-  description: "Load this plugin for the workspace's recruiting event triggers. This shared event connection has no recruiting query or update tools; those require a personal Ashby connection.",
+  description: "Load this plugin for the Organization's recruiting event triggers. This shared event connection has no recruiting query or update tools; those require a personal Ashby connection.",
   systemMessage: ASHBY_WORKSPACE_EVENTS_SYSTEM_MESSAGE,
 } as const;
 

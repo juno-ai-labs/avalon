@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ORGANIZATION_MODEL_NAMES, modelName } from "@rally/contracts/model-names";
 
 import {
   AutomationSetEvaluatorRulesModelInputV1Schema,
@@ -75,6 +76,32 @@ async function savedToolIdentities(host: AutomationCreatorToolHost, target: stri
     for (const tool of entry.currentDefinition?.customTools ?? []) hashes.add(await customToolIdentityHash(tool));
   }
   return hashes;
+}
+
+/**
+ * The Sidekick directory as a model reads it. A Sidekick's `scope` and its
+ * definition's `suggestedScope` are stored as `workspace` for the Organization
+ * and read `organization`. Only those two fields: the rest of a definition
+ * (`defaultBehavior`, custom tools' schemas) is the person's own configuration,
+ * which a wizard may save back, so it is passed through as written.
+ */
+function modelSidekickDirectory(listed: unknown): unknown {
+  if (!isRecord(listed) || !Array.isArray(listed.sidekicks)) return listed;
+  return { ...listed, sidekicks: listed.sidekicks.map((entry: unknown) => {
+    if (!isRecord(entry)) return entry;
+    const definition = entry.currentDefinition;
+    return {
+      ...entry,
+      ...(typeof entry.scope === "string" ? { scope: modelName(ORGANIZATION_MODEL_NAMES, entry.scope) } : {}),
+      ...(isRecord(definition) && typeof definition.suggestedScope === "string"
+        ? { currentDefinition: { ...definition, suggestedScope: modelName(ORGANIZATION_MODEL_NAMES, definition.suggestedScope) } }
+        : {}),
+    };
+  }) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 const SavedToolsDirectorySchema = z.object({
@@ -422,7 +449,9 @@ function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): Har
       execute: async () => {
         if (!input.automationDirectoryPort) throw new Error("sidekick_directory_host_unavailable");
         return {
-          output: await input.automationDirectoryPort.listAutomations(),
+          // A Sidekick's scope and its definition's suggested scope are stored
+          // as `workspace` for the Organization, and read `organization`.
+          output: modelSidekickDirectory(await input.automationDirectoryPort.listAutomations()),
           summary: "Listed editable and attachable Sidekicks",
         };
       },

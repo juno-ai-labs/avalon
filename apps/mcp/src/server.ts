@@ -1,4 +1,5 @@
 import { ArtifactLinkSchema, CanvasArtifactVisibilitySchema } from '@rally/contracts/artifact-access';
+import { ORGANIZATION_MODEL_NAMES, modelEnum, withModelNames } from '@rally/contracts/model-names';
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -87,12 +88,21 @@ function refusalText(error: RallyApiError): string {
   return `${sentence} (${error.message})`;
 }
 
+/**
+ * A value as a client's model reads it, for every tool result and resource: a
+ * Canvas's audiences are stored as `workspace` for the Organization and read
+ * `organization`. One function, so a tool and a resource cannot drift apart.
+ */
+function modelJson(value: unknown): string {
+  return JSON.stringify(withModelNames(value, ORGANIZATION_MODEL_NAMES, ["visibility", "artifactVisibility"]), null, 2);
+}
+
 async function tool(name: string, operation: () => Promise<unknown>): Promise<ToolResult> {
   try {
     const result = await operation();
     const value = result instanceof Linked ? result.value : result;
     const links = result instanceof Linked ? result.links : [];
-    return { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }, ...links] };
+    return { content: [{ type: "text", text: typeof value === "string" ? value : modelJson(value) }, ...links] };
   } catch (error) {
     // The code and nothing else: a message can quote Canvas content.
     console.error(JSON.stringify({ event: "rally_mcp_tool_failed", tool: name, code: failureCode(error, name) }));
@@ -174,6 +184,23 @@ async function readChatPage(api: RallyApi, canvasId: string, page: { afterSequen
   return `Canvas: ${result.title}\n\n${result.text || "No messages yet."}${more}`;
 }
 
+/**
+ * An invitation as a client's model reads it. What it opens is stored as a
+ * `workstream` in a `workspace`; the client is told the Canvas, and the one
+ * conversation in it when the invitation is narrower than the Canvas.
+ */
+function invitationsForClient(result: z.infer<typeof ScopeInvitationResultSchema>) {
+  const invitation = ({ targets, ...rest }: Extract<typeof result, { status: "revoked" }>["invitation"]) => ({
+    ...rest,
+    opens: targets.map((target) => target.kind === "workstream"
+      ? { kind: "canvas" as const, canvasId: target.parentId }
+      : { kind: "conversation" as const, canvasId: target.parentId, conversationId: target.substreamId }),
+  });
+  return result.status === "created" ? { status: result.status, invitations: result.invitations.map(invitation) }
+    : result.status === "revoked" ? { status: result.status, invitation: invitation(result.invitation) }
+      : result;
+}
+
 const read = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const write = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
@@ -186,7 +213,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
   const server = new McpServer({
     name: "Rally",
     version: "1.0.0",
-    description: "Create, update, share and maintain Rally Canvases: shared conversations with Rally and the documents, sheets, sites and other artifacts they generate.",
+    description: "Create, update, share and maintain Rally Canvases: shared conversations with Rally, each with the one artifact it makes, such as a document, a sheet or a site.",
   }, {
     instructions: RALLY_MCP_SERVER_INSTRUCTIONS,
   });
@@ -257,7 +284,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("create_canvas", {
     title: "Create a Canvas",
-    description: "Create a Canvas in the person's Organization. With a prompt, it is sent to the new Canvas's Chat as the person's first message and Rally starts working on it; without one the Canvas starts empty. With sidekick, a Sidekick is also made for the new Canvas to keep it up to date (see add_canvas_sidekick). Without a title Rally names it from its first message. Only the creator can open a new Canvas until its audience is changed. Guests cannot create Canvases.",
+    description: "Create a Canvas in the person's Organization. With a prompt, it is sent to the new Canvas's Chat as the person's first message and Rally starts working on it; without one the Canvas starts empty. With sidekick, a Sidekick is also made for the new Canvas to keep it up to date (see add_canvas_sidekick). Without a title Rally names it from its first message. A new Canvas opens to the Organization's default editor audience, everyone in the Organization unless an admin chose the creator only; get_canvas shows its visibility. Guests cannot create Canvases.",
     inputSchema: {
       operationId: OperationId,
       title: CreateCanvasRequestSchema.shape.title,
@@ -282,7 +309,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("add_canvas_sidekick", {
     title: "Add a Sidekick to a Canvas",
-    description: "Make a Sidekick for a Canvas the person can open, so the Canvas is kept up to date on a schedule or on events without anyone asking. The Sidekick is attached to this Canvas: its runs can read and post in the Canvas's Chat and update its artifacts, everyone in the Canvas can change or archive it by asking in the Chat, and archiving the Canvas archives it. It runs as the person, with their connected accounts. This call makes the Sidekick and hands your instructions to Rally's setup agent for it, which chooses the trigger and saves it; until then get_canvas shows it as draft. It is not a way to change an existing Sidekick: for that, ask in the Canvas's Chat.",
+    description: "Make a Sidekick for a Canvas the person can open, so the Canvas is kept up to date on a schedule or on events without anyone asking. The Sidekick is attached to this Canvas: its runs can read and post in the Canvas's Chat and update its artifact, everyone in the Canvas can change or archive it by asking in the Chat, and archiving the Canvas archives it. It runs as the person, with their connected accounts. This call makes the Sidekick and hands your instructions to Rally's setup agent for it, which chooses the trigger and saves it; until then get_canvas shows it as draft. It is not a way to change an existing Sidekick: for that, ask in the Canvas's Chat.",
     inputSchema: { canvasId: CanvasId, operationId: SidekickOperationId, instructions: SidekickInstructions },
     annotations: { ...write, openWorldHint: true },
   }, ({ canvasId, operationId, instructions }) => tool("add_canvas_sidekick", async () => {
@@ -329,12 +356,12 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("set_canvas_audience", {
     title: "Change Canvas editors and artifact access",
-    description: "Replace Canvas editors and optionally artifact access. visibility/userIds controls who can read the conversation, send messages and change artifacts: creator, participants, or workspace. userIds is required and replaces the whole editor list besides the creator. Read get_canvas first; for an artifact-only change, keep its visibility and copy participantUserIds into userIds so existing editors, including guests, retain access. Send [] only to remove all explicitly selected editors. artifactVisibility controls published artifacts only: editors, participants, workspace, or public (anonymous). Editors always have artifact access. With workspace editors, editors and participants artifact access are stored as workspace (the whole Organization already reaches the artifacts), and any artifactUserIds are kept. This is one-way: moving editors off workspace does not narrow artifact access, so send artifactVisibility explicitly when making a Canvas more private. The returned Canvas shows the stored value. artifactUserIds names additional artifact recipients, who may also be editors; it does not grant conversation access. Each supplied list replaces that audience. Use list_people to resolve names; pass sharingRevision as expectedRevision to avoid overwriting concurrent edits. Omitted artifact settings are preserved. Public access applies to all published artifacts in the Canvas. Propagation is asynchronous over Cloudflare Queues. Only Canvas managers can change sharing.",
+    description: "Replace Canvas editors and optionally artifact access. visibility/userIds controls who can read the conversation, send messages and change artifacts: creator, participants, or organization. userIds is required and replaces the whole editor list besides the creator. Read get_canvas first; for an artifact-only change, keep its visibility and copy participantUserIds into userIds so existing editors, including guests, retain access. Send [] only to remove all explicitly selected editors. artifactVisibility controls published artifacts only: editors, participants, organization, or public (anonymous). Editors always have artifact access. With organization editors, editors and participants artifact access are stored as organization (the whole Organization already reaches the artifacts), and any artifactUserIds are kept. This is one-way: moving editors off organization does not narrow artifact access, so send artifactVisibility explicitly when making a Canvas more private. The returned Canvas shows the stored value. artifactUserIds names additional artifact recipients, who may also be editors; it does not grant conversation access. Each supplied list replaces that audience. Use list_people to resolve names; pass sharingRevision as expectedRevision to avoid overwriting concurrent edits. Omitted artifact settings are preserved. Public access applies to all published artifacts in the Canvas. Propagation is asynchronous over Cloudflare Queues. Only Canvas managers can change sharing.",
     inputSchema: {
       canvasId: CanvasId,
-      visibility: CanvasVisibilitySchema,
+      visibility: modelEnum(CanvasVisibilitySchema.unwrap().options, ORGANIZATION_MODEL_NAMES),
       userIds: z.array(z.string().uuid()),
-      artifactVisibility: CanvasArtifactVisibilitySchema.optional(),
+      artifactVisibility: modelEnum(CanvasArtifactVisibilitySchema.unwrap().options, ORGANIZATION_MODEL_NAMES).optional(),
       artifactUserIds: z.array(z.string().uuid()).optional(),
       expectedRevision: z.number().int().nonnegative().optional(),
     },
@@ -360,10 +387,10 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
     annotations: { ...write, openWorldHint: true },
   }, ({ canvasId, operationId, emails }) => tool("invite_canvas_guests", async () => {
     const workspace = await api.json(WorkspaceSchema, "GET", "/workspace");
-    return api.json(ScopeInvitationResultSchema, "POST", "/sharing", {
+    return invitationsForClient(await api.json(ScopeInvitationResultSchema, "POST", "/sharing", {
       operationId, parentId: canvasId, emails, expiresAt: null,
       targets: [{ kind: "workstream", workspaceId: workspace.id, parentId: canvasId }],
-    });
+    }));
   }));
 
   server.registerTool("decide_canvas_access_request", {
@@ -406,7 +433,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("publish_file", {
     title: "Publish a file to a Canvas",
-    description: "Publish a document, spreadsheet, image, PDF or other file you made (a Claude or ChatGPT artifact, a file in an OpenCode workspace) into a Canvas as one of its artifacts, as the person. Its Canvas artifact audience controls who can use it; editors can ask Rally to change it. Use get_artifact_link for the shareable URL after background propagation. Give the file's extension in the name so Rally knows its type.",
+    description: "Publish a document, spreadsheet, image, PDF or other file you made (a Claude or ChatGPT artifact, a file in an OpenCode workspace) into a Canvas as its artifact, as the person. A Canvas holds one artifact: the same name again is a new version of it, and another name takes the place of the artifact the Canvas held. Its Canvas artifact audience controls who can use it; editors can ask Rally to change it. Use get_artifact_link for the shareable URL after background propagation. Give the file's extension in the name so Rally knows its type.",
     inputSchema: {
       canvasId: CanvasId,
       name: Name,
@@ -444,7 +471,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
   server.registerResource("canvas", new ResourceTemplate("rally://canvas/{canvasId}", { list: undefined }), {
     title: "Canvas", description: "A Canvas as the person sees it: title, who can open it, and its artifacts at their current versions.", mimeType: "application/json",
   }, async (uri, variables) => ({ contents: [{ uri: uri.href, mimeType: "application/json",
-    text: JSON.stringify(await api.json(CanvasDetailSchema, "GET", `/canvases/${one(variables.canvasId)}`), null, 2) }] }));
+    text: modelJson(await api.json(CanvasDetailSchema, "GET", `/canvases/${one(variables.canvasId)}`)) }] }));
   server.registerResource("canvas-chat", new ResourceTemplate("rally://canvas/{canvasId}/chat", { list: undefined }), {
     title: "Canvas Chat", description: "The first page of a Canvas's Chat as text; read_canvas_chat pages further.", mimeType: "text/plain",
   }, async (uri, variables) => ({ contents: [{ uri: uri.href, mimeType: "text/plain", text: await readChatPage(api, one(variables.canvasId)) }] }));
@@ -469,7 +496,7 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
   }, ({ title }) => ask(renderStartCanvasPrompt(title)));
   server.registerPrompt("catch_up", {
     title: "Catch me up on a Canvas",
-    description: "Summarize what happened in a Rally Canvas: its Chat and its artifacts' latest versions.",
+    description: "Summarize what happened in a Rally Canvas: its Chat and its artifact's latest version.",
     argsSchema: { canvas: z.string().describe("The Canvas's title, or words from it.") },
   }, ({ canvas }) => ask(renderCatchUpPrompt(canvas)));
 

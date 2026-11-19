@@ -5159,6 +5159,56 @@ describe("agent harness", () => {
     });
   });
 
+  it("gives the model a failure's code in product words, and keeps the stored code on the event", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(0, "provider-send", "send_update", JSON.stringify({ note: "Notes are in /workspace/workstream_notes.md" }))] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "The Canvas is archived." }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(providerRequestView(JSON.parse(String(init?.body))) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const tool: HarnessTool = {
+      definition: {
+        name: "send_update", description: "Send an update", capability: "updates.send", mode: "read", idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false, properties: { note: { type: "string" } }, required: ["note"] },
+      },
+      // A storage layer's code, thrown the way an object port throws it.
+      execute: async () => {
+        throw Object.assign(new Error("workstream_archived: Its conversation is archived. Notes stay in /workspace/workstream_notes.md."), {
+          code: "workstream_archived", details: { reason: "The conversation is archived." },
+        });
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "The Canvas is archived." });
+    const toolMessage = requestBodies[1]?.messages.find((message) => message.role === "tool");
+    // The code names the Canvas; the sentence, which echoes a path, is as written.
+    expect(JSON.parse(String(toolMessage!.content))).toEqual({
+      success: false,
+      kind: "external",
+      error: "canvas_archived: Its conversation is archived. Notes stay in /workspace/workstream_notes.md.",
+      data: { code: "canvas_archived", details: { reason: "The conversation is archived." } },
+    });
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      error: "workstream_archived: Its conversation is archived. Notes stay in /workspace/workstream_notes.md.",
+      data: { code: "workstream_archived", details: { reason: "The conversation is archived." } },
+    });
+  });
+
   it("does not misclassify downstream Zod failures as invalid tool arguments", async () => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: unknown }>;

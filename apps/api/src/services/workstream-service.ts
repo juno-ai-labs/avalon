@@ -544,7 +544,7 @@ async function appendWakeupSystemMessage(
     authorUserId: null,
     externalActorJson: null,
     messageType: "system",
-    text: `Rally woke this thread up as scheduled: ${wakeupPromptPreview(row.prompt)}`,
+    text: `Rally woke this conversation up as scheduled: ${wakeupPromptPreview(row.prompt)}`,
     structuredContentJson: null,
     producedByRunId: null,
     now: Date.now(),

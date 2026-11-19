@@ -6,11 +6,21 @@ import type { HarnessTool, HarnessToolContext, HarnessToolResult } from "@rally/
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type { ToolReceiptFence } from "../durable-objects/workstream-tool-receipt-storage";
 
-function pageInput(prefix: string, wirePrefix: string, operation: string, previous = false) {
-  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const schema = z.strictObject({ pageId: z.string()
-    .regex(new RegExp(`^${escapedPrefix}_[a-z]+_[a-z]+_[a-z]+_[a-z]+$`, "u"))
+function pageInput(prefixes: readonly [string, ...string[]], wirePrefix: string, operation: string, previous = false) {
+  const prefix = prefixes[0];
+  const escaped = prefixes.map((entry) => entry.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
+  // One namespace keeps the pattern it always had: the pattern is part of the
+  // tool's advertised schema, and so of the surface hash a stored receipt is
+  // matched against. Only a plugin with a retired namespace gets alternation.
+  const escapedPrefix = escaped.length === 1 ? escaped[0]! : `(?:${escaped.join("|")})`;
+  const pageSchema = (pattern: string) => z.strictObject({ pageId: z.string()
+    .regex(new RegExp(`^${pattern}_[a-z]+_[a-z]+_[a-z]+_[a-z]+$`, "u"))
     .describe("Copy the page ID returned by this plugin. Send it alone; filters and page size are retained automatically.") });
+  // A retired namespace is accepted, never advertised: the model is shown the
+  // current prefix alone, and `validateInput`, which Bind and Code Mode prefer
+  // to the advertised schema, still lets an earlier page ID through.
+  const schema = pageSchema(escapedPrefix);
+  const advertised = escaped.length === 1 ? schema : pageSchema(escaped[0]!);
   const field = previous ? "previousPageId" : operation === "read_resource" ? "nextPageId or readPageId" : "nextPageId";
   const message = `Send only {"pageId":"<copied ID>"}. pageId must start with "${prefix}_", followed by exactly four lowercase words separated by underscores. Copy ${field} exactly from a tool result; do not invent or repair an ID. If that field is null, stop: there is no page. If you have no ID, call ${stableWireToolName(wirePrefix, operation)} to start a new read.`;
   function validateInput(input: unknown) {
@@ -18,7 +28,7 @@ function pageInput(prefix: string, wirePrefix: string, operation: string, previo
       { code: "custom", path: ["pageId"], message },
     ]);
   }
-  return { schema, validateInput, parse(input: unknown) {
+  return { schema, advertised, validateInput, parse(input: unknown) {
     const error = validateInput(input);
     if (error) throw error;
     return schema.parse(input);
@@ -29,16 +39,22 @@ export interface PaginationHost {
   receipts: Pick<ToolReceiptObjectPort, "issuePage" | "claimPage">;
   fence: ToolReceiptFence | (() => ToolReceiptFence);
   /**
-   * The namespace a minted page ID carries (`workstream_brave_clever_…`). It is
+   * The namespace a minted page ID carries (`page_brave_clever_…`). It is
    * required and non-empty: `tool-page-storage` builds every ID as
    * `<prefix>_<four words>` and validates that shape on the way back in.
    */
   prefix: string;
   /**
+   * Namespaces this plugin minted page IDs under before `prefix`. A page is
+   * redeemable in any later run of its conversation, so an ID issued under an
+   * earlier namespace still has to pass the shape check to reach storage.
+   */
+  retiredPrefixes?: readonly string[];
+  /**
    * The plugin's *model-facing* wire prefix, for the tool names these
    * descriptions tell the model to call. Usually the same string as `prefix`,
    * and deliberately not the same field: a plugin that declares no wire prefix
-   * still needs a page-ID namespace, and naming `workstream_list_resources` in
+   * still needs a page-ID namespace, and naming `page_list_resources` in
    * a description would point the model at a tool this run does not advertise.
    */
   wirePrefix?: string;
@@ -176,11 +192,11 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
     },
   };
   if (nextName === undefined) return [first];
-  const nextInput = pageInput(host.prefix, wirePrefix, operation);
+  const nextInput = pageInput([host.prefix, ...host.retiredPrefixes ?? []], wirePrefix, operation);
   const next: HarnessTool = {
     definition: { ...tool.definition, name: nextName,
       description: `Read the next page of ${stableWireToolName(wirePrefix, operation)}. Copy nextPageId from its result. A null nextPageId means there are no more pages. Each page ID can be consumed once.`,
-      inputSchema: z.toJSONSchema(nextInput.schema),
+      inputSchema: z.toJSONSchema(nextInput.advertised),
     },
     validateInput: nextInput.validateInput,
     execute: async (raw, context) => {
@@ -190,12 +206,12 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
     },
   };
   if (previousName === undefined) return [first, next];
-  const previousInput = pageInput(host.prefix, wirePrefix, operation, true);
+  const previousInput = pageInput([host.prefix, ...host.retiredPrefixes ?? []], wirePrefix, operation, true);
   return [first, next, {
     ...next,
     validateInput: previousInput.validateInput,
     definition: { ...next.definition, name: previousName,
-      inputSchema: z.toJSONSchema(previousInput.schema),
+      inputSchema: z.toJSONSchema(previousInput.advertised),
       description: "Read the preceding resource page using its previousPageId. Each page ID can be consumed once.",
     },
     execute: async (raw, context) => {

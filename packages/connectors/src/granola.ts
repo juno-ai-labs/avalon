@@ -97,7 +97,7 @@ export const granolaTools: ToolDefinition[] = [
   {
     name: "list_notes",
     pagination: { cursorParameter: "cursor" },
-    description: "List one page of meeting notes available through the workspace Granola API key.",
+    description: "List one page of meeting notes available through the Organization's Granola API key.",
     capability: GranolaCapabilities.workspaceRead,
     mode: "read",
     idempotency: "safe",
@@ -133,7 +133,7 @@ export const granolaTools: ToolDefinition[] = [
   {
     name: "list_folders",
     pagination: { cursorParameter: "cursor" },
-    description: "List one page of folders available through the workspace Granola API key.",
+    description: "List one page of folders available through the Organization's Granola API key.",
     capability: GranolaCapabilities.workspaceRead,
     mode: "read",
     idempotency: "safe",

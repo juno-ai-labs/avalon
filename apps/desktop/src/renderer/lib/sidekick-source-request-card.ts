@@ -15,6 +15,18 @@ const sourceRequestCardEnvelopeSchema = z.object({
   requests: z.array(z.object({ requestId: z.string().min(1) })).min(1),
 });
 
+/**
+ * A request as the tool answered it. The tool answers a model, so the
+ * Organization's connection reads `organization` there; the view a person's
+ * card reads stores `workspace`. An answer recorded before the tool said
+ * `organization` already holds the stored word.
+ */
+const askedRequestSchema = z.preprocess((raw) => {
+  if (raw === null || typeof raw !== 'object') return raw;
+  const connect = (raw as { connect?: { scope?: unknown } }).connect;
+  return connect?.scope === 'organization' ? { ...raw, connect: { ...connect, scope: 'workspace' } } : raw;
+}, SidekickSourceRequestViewSchema);
+
 export interface SidekickSourceRequestCardInput {
   sidekickId: string;
   requestIds: string[];
@@ -39,7 +51,7 @@ export function sidekickSourceRequestCardFromToolEvent(event: {
   if (!event || (event.wireName ?? event.name) !== SIDEKICK_SOURCE_REQUEST_WIRE_NAME || event.status !== 'completed') return null;
   const parsed = sourceRequestCardEnvelopeSchema.safeParse(event.output);
   if (!parsed.success) return null;
-  const asked = z.object({ requests: z.array(SidekickSourceRequestViewSchema) }).safeParse(event.output);
+  const asked = z.object({ requests: z.array(askedRequestSchema) }).safeParse(event.output);
   return {
     sidekickId: parsed.data.sidekickId,
     requestIds: parsed.data.requests.map((request) => request.requestId),

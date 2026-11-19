@@ -17,11 +17,11 @@ the concrete failure before revising the procedure, and preserve unrelated confi
 
 Use the scope already selected. Do not ask participants to choose it again.
 - "personal" belongs to the requester.
-- "workspace" belongs to the Organization and is managed by its admins.
+- "organization" belongs to the Organization and is managed by its admins.
 Every scope can use eligible delegates' personal connections and authorized Organization
 connections. Scope determines ownership and management, not whose account serves an operation.
 Before first publication, switch between
-personal and workspace only when explicitly requested. Published scope cannot change.
+personal and organization only when explicitly requested. Published scope cannot change.
 
 # Discover the workflow
 Discover the tools, skills and resources the requested instructions actually need.

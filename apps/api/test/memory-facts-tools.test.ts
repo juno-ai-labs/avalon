@@ -1,3 +1,4 @@
+import { audited } from "./helpers/audited-tools";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { asAutomationId, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { afterEach, describe, expect, it } from "vitest";
@@ -164,7 +165,7 @@ function context(runInput: WorkstreamWorkflowInput, receipt: string) {
 }
 
 function tool(env: Env, who: Who, name: "recall" | "remember" | "forget") {
-  const found = createMemoryTools(env, input(who)).find((candidate) => candidate.definition.name === name);
+  const found = audited(createMemoryTools(env, input(who))).find((candidate) => candidate.definition.name === name);
   if (!found) throw new Error(`missing tool ${name}`);
   return { execute: (args: unknown, receipt: string) => found.execute(args, context(input(who), receipt)), definition: found.definition };
 }
@@ -259,7 +260,7 @@ describe("the rally:memory tools", () => {
     const elsewhere = await tool(env, "owner-open", "recall").execute({ query: "ship Friday" }, "receipt-recall-3");
     expect((elsewhere.output as Recalled).facts).toEqual([]);
     const here = await tool(env, "owner-private", "recall").execute({ query: "ship Friday" }, "receipt-recall-4");
-    expect((here.output as Recalled).facts).toEqual([expect.objectContaining({ subject: { kind: "thread", label: "Side room" } })]);
+    expect((here.output as Recalled).facts).toEqual([expect.objectContaining({ subject: { kind: "canvas", label: "Side room" } })]);
   });
 
   it("lets a member forget their own facts and the conversation's, and only an administrator forget the Organization's", async () => {
@@ -305,7 +306,7 @@ describe("the rally:memory tools", () => {
     );
     for (const where of ["own", "canvas"] as const) {
       const runInput = sidekickRunInput(where);
-      const found = createMemoryTools(env, runInput);
+      const found = audited(createMemoryTools(env, runInput));
       const call = (name: string, args: unknown, receipt: string) =>
         found.find((candidate) => candidate.definition.name === name)!.execute(args, context(runInput, receipt));
       // A Sidekick is nobody, so it has no "me" to remember about...

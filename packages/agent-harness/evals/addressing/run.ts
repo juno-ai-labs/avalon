@@ -229,7 +229,8 @@ async function main(): Promise<void> {
   for (const sourceFile of [
     new URL("../../src/index.ts", import.meta.url),
     new URL("../../src/message-continuation.ts", import.meta.url),
-    new URL("../../src/prompts/message-continuation.ts", import.meta.url),
+    new URL("../../../prompts/harness/message-continuation.ts", import.meta.url),
+    new URL("../../../prompts/harness/addressing.ts", import.meta.url),
     new URL("../../src/addressing-evaluation.ts", import.meta.url),
     new URL("./run.ts", import.meta.url),
   ]) {

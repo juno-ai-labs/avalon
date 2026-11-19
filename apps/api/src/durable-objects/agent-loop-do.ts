@@ -3017,7 +3017,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         error: "invalid_terminal_operation",
         failure: {
           code: "invalid_terminal_operation",
-          message: "Avalon's Terminal authority rejected an internal request because its protocol was invalid. Retry after the application and service versions are aligned.",
+          message: "Rally's Terminal authority rejected an internal request because its protocol was invalid. Retry after the application and service versions are aligned.",
           outcome: "rejected",
           retryable: false,
         },
@@ -3057,7 +3057,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       || this.externalSubstreamId() !== (input.substreamId ?? "0")) {
       throw new TerminalObjectPortError(input.operation, {
         code: "workstream_terminal_identity_mismatch",
-        message: "Avalon's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
+        message: "Rally's Terminal authority rejected an internal request because it was routed to the wrong conversation. Retrying the same operation will not repair the route.",
         outcome: "rejected",
         retryable: false,
       });
@@ -3116,7 +3116,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       });
       throw new TerminalObjectPortError(operation, {
         code: "terminal_operation_not_committed",
-        message: "Avalon could not commit an internal Terminal state change. Resume the run so the durable tool receipt can reconcile it; do not manually repeat a write.",
+        message: "Rally could not commit an internal Terminal state change. Resume the run so the durable tool receipt can reconcile it; do not manually repeat a write.",
         outcome: "not_committed",
         retryable: true,
       });

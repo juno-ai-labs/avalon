@@ -93,21 +93,19 @@ describe("prompt renderers", () => {
             { authorType: "agent", authorName: "Rally", message: "The release is still running." },
           ],
         }),
-        hash: "6114735828454fc96caea7b7e50ab7e3ec82538478e372d1a7aaca2d31dea005",
+        hash: "7b6a3ca256366915e706fe81b388e054ce4acf9f639ae2a2e3094219690850af",
       },
       memorySweep: {
         actual: renderMemorySweepMessages({
           now: "2026-10-19T09:00:00.000Z",
           placement: {
-            subject: { kind: "thread", title: "Q4 pricing rollout" },
-            thread: null,
-            channels: [{ id: "space-1", title: "Go-to-market" }],
+            subject: { kind: "canvas", title: "Q4 pricing rollout" },
             organizationWide: true,
             people: [{ id: "user-1", name: "Priya" }, { id: "user-2", name: "Alex" }],
           },
           candidates: [{
             factId: "fact-1",
-            subjectKind: "thread",
+            subjectKind: "canvas",
             kind: "situational",
             text: "Priya is out until Thursday 2026-10-23.",
             validFrom: null,
@@ -122,7 +120,7 @@ describe("prompt renderers", () => {
           ],
           windowTruncated: false,
         }),
-        hash: "f87dee2334b5ddbb224e6d640f1548dad0fcf02043f37a071196fe3132ffed03",
+        hash: "4e2c6f4fea4a7093d9c242a5ea7d2f64a9c7a15fe6b1265ffb2a6f7e36d6d284",
       },
       memoryDigest: {
         actual: renderMemoryDigest({
@@ -181,7 +179,7 @@ describe("prompt renderers", () => {
       },
       canvasTitle: {
         actual: renderCanvasTitleMessages("Can you draft a launch plan for the Oslo coffee pop-up next month?"),
-        hash: "46867a4a12471e49d34ce70b2b59ec926fe22b17056ddccc7222a8dbc6ce1b3a",
+        hash: "bdbac2dae619a4db31fcfc151948ff36ad6163054d0067c167feba50b9da7573",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -195,7 +193,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "84dd4a9207d3eb1ba2ae94fa521bccbbea69e01577071671c579910b89845da2",
+        hash: "52c5211fbcb64ba01b642e6bac0f1fb8e2056e9db2d06f55d91fc1762eff7206",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -203,7 +201,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "77c4875fe6558c9219b1f5dca2346034996014bbc4121da0a5e703e302477e06",
+        hash: "d5936e7936f858f849dcaec2dfc56a71fc3ea623651f52ed9aabb69362e60236",
       },
     };
 
@@ -431,14 +429,12 @@ describe("prompt renderers", () => {
     const sweepMessages = renderMemorySweepMessages({
       now: "2026-10-19T09:00:00.000Z",
       placement: {
-        subject: { kind: "breakout", title: injection },
-        thread: { title: injection },
-        channels: [{ id: "space-1", title: injection }],
+        subject: { kind: "canvas", title: injection },
         organizationWide: false,
         people: [{ id: "user-1", name: injection }],
       },
       candidates: [{
-        factId: "fact-1", subjectKind: "thread", kind: "standing", text: injection,
+        factId: "fact-1", subjectKind: "canvas", kind: "standing", text: injection,
         validFrom: null, validUntil: null, derivedFrom: "person", conflict: false,
       }],
       messages: [{
@@ -481,7 +477,7 @@ describe("prompt renderers", () => {
     const long = "m".repeat(MAXIMUM_MEMORY_SWEEP_MESSAGE_CHARACTERS + 500);
     const rendered = renderMemorySweepMessages({
       now: "2026-10-19T09:00:00.000Z",
-      placement: { subject: { kind: "thread", title: "T" }, thread: null, channels: [], organizationWide: false, people: [] },
+      placement: { subject: { kind: "canvas", title: "T" }, organizationWide: false, people: [] },
       candidates: [],
       messages: [{
         seq: 7, authorType: "person", authorId: "user-1", authorName: "Morgan",
@@ -498,7 +494,7 @@ describe("prompt renderers", () => {
   it("states the sweep's tie-breaks, horizon rule and placement ceiling", () => {
     const [system] = renderMemorySweepMessages({
       now: "2026-10-19T09:00:00.000Z",
-      placement: { subject: { kind: "thread", title: "T" }, thread: null, channels: [], organizationWide: false, people: [] },
+      placement: { subject: { kind: "canvas", title: "T" }, organizationWide: false, people: [] },
       candidates: [],
       messages: [],
       windowTruncated: false,
@@ -572,7 +568,7 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("not by the person who installed the Slack app");
     expect(prompt).toContain("Use only shared organization-wide connections");
     expect(prompt).toContain("request structured input");
-    expect(prompt).toContain('"executionAuthority": "workspace"');
+    expect(prompt).toContain('"executionAuthority": "organization"');
   });
 
   it("tells a Sidekick run with no delegate that it acts as the Sidekick itself, and says nothing about Slack", () => {
@@ -645,9 +641,11 @@ describe("prompt renderers", () => {
     expect(workstreamPrompt).toContain("make it as open as the request allows");
 
     // The 8,500-byte ceiling was introduced with the standing `# Sites`
-    // trigger. Keep platform definitions within it by removing repetitive
-    // introduction text rather than increasing the budget.
-    expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_500);
+    // trigger, and raised to 10,000 on 2026-11-19, when the opening line that
+    // says what Rally is (a multi-player platform for self-updating artifacts)
+    // left no room. Keep platform definitions within it by removing repetitive
+    // introduction text before raising it again.
+    expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(10_000);
   });
 
   it("requires the work-stream agent to hydrate referenced attachments and respect exact partial coverage", () => {

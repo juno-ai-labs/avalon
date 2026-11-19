@@ -1,5 +1,7 @@
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { modelMemoryScopeKind } from "../durable-objects/memory-table-definition";
 import { asWorkspaceId, MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
+import { modelName } from "@rally/contracts/model-names";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
@@ -7,6 +9,7 @@ import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import { WorkspaceMemoryScopeSchema } from "../durable-objects/workspace-memory-protocol";
 import {
+  MEMORY_SUBJECT_MODEL_NAMES,
   WorkspaceMemoryForgetResultSchema,
   WorkspaceMemoryRecallResultSchema,
   WorkspaceMemoryRememberResultSchema,
@@ -86,7 +89,7 @@ function scopeList(scopes: readonly MemoryScope[]): string {
   return [...scopes]
     .sort((left, right) =>
       MEMORY_SCOPE_KINDS.indexOf(left.kind) - MEMORY_SCOPE_KINDS.indexOf(right.kind))
-    .map((scope) => scope.kind)
+    .map((scope) => modelMemoryScopeKind(scope.kind))
     .join(", ");
 }
 
@@ -122,7 +125,7 @@ export function unavailableScopeError(
 ): MemoryToolError {
   return new MemoryToolError(
     "memory_scope_not_available",
-    `This run cannot reach ${kind} memory. Its scopes are: ${scopeList(scopes)}.`,
+    `This run cannot reach ${modelMemoryScopeKind(kind)} memory. Its scopes are: ${scopeList(scopes)}.`,
     { reason: retryInstruction(scopes) },
   );
 }
@@ -135,8 +138,8 @@ export function unwritableScopeError(
   return new MemoryToolError(
     "memory_scope_not_writable",
     writable.length === 0
-      ? `This run may read ${kind} memory, and has no writable memory scope at all.`
-      : `This run may read ${kind} memory but not write it. It may write: ${scopeList(writable)}.`,
+      ? `This run may read ${modelMemoryScopeKind(kind)} memory, and has no writable memory scope at all.`
+      : `This run may read ${modelMemoryScopeKind(kind)} memory but not write it. It may write: ${scopeList(writable)}.`,
     { reason: retryInstruction(scopes) },
   );
 }
@@ -369,11 +372,12 @@ function renderFact(fact: MemoryFact, titles: ReadonlyMap<string, string>, now: 
     ? PERSON_LABEL
     : fact.subjectKind === "organization"
       ? ORGANIZATION_LABEL
-      : titles.get(`${fact.subjectKind}:${fact.subjectId}`) ?? fact.subjectKind;
+      : titles.get(`${fact.subjectKind}:${fact.subjectId}`) ?? modelName(MEMORY_SUBJECT_MODEL_NAMES, fact.subjectKind);
   const source = fact.sourceConversations[0]!;
   return {
     factId: fact.factId,
-    subject: { kind: fact.subjectKind, label: subjectLabel },
+    // The stored kind (`thread` for a Canvas) is not a word the model knows.
+    subject: { kind: modelName(MEMORY_SUBJECT_MODEL_NAMES, fact.subjectKind), label: subjectLabel },
     kind: fact.kind,
     text: fact.text,
     validFrom: iso(fact.validFrom),
@@ -549,7 +553,7 @@ async function forget(
       // any other refusal is a fact about someone else, or one another
       // conversation learned.
       if (outcome.subjectKind === "organization" || outcome.subjectKind === "channel") {
-        const what = outcome.subjectKind === "organization" ? "This Organization-wide fact" : "This fact, filed under an earlier shared space,";
+        const what = outcome.subjectKind === "organization" ? "This Organization-wide fact" : "This fact, filed under a shared area Rally no longer has,";
         throw new MemoryToolError(
           "memory_fact_not_forgettable",
           `${what} can be forgotten only by an administrator. Tell the person an administrator can remove it from the review surface.`,

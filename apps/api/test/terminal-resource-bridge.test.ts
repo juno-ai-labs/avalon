@@ -856,7 +856,7 @@ describe("Terminal resource bridge", () => {
     const bytes = new TextEncoder().encode("# Report\n");
     const result = await bridge.publishResource(context, { filePath: "report.md", displayName: "Analysis" }, bytes);
 
-    expect(result).toMatchObject({ title: "Analysis", provider: "avalon_generated", mimeType: "text/markdown", sizeBytes: 9 });
+    expect(result).toMatchObject({ title: "Analysis", provider: "rally_generated", mimeType: "text/markdown", sizeBytes: 9 });
     const resourceId = String(result.resourceId);
     // The resource row is workspace authority (D1) and the attachment is
     // object authority; the cross-store join production no longer performs is

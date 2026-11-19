@@ -290,7 +290,8 @@ describe("the sweep run in the consumer", () => {
   const decision = {
     operations: [
       {
-        op: "add", subjectKind: "thread", subjectId: null, kind: "situational",
+        // The model names a Canvas's subject canvas; the store keeps thread.
+        op: "add", subjectKind: "canvas", subjectId: null, kind: "situational",
         text: "The pricing page ships on 2026-10-30.", validFrom: null, validUntil: "2026-10-30T23:59:59.000Z",
         validUntilBasis: "stated", derivedFrom: "person", conflict: false, confidence: 0.9, evidence: [1], factId: null, reason: null,
       },
@@ -331,7 +332,9 @@ describe("the sweep run in the consumer", () => {
     }));
     // The model saw the placement, the people, and every message, oldest first.
     expect(prompts).toHaveLength(1);
-    expect(prompts[0]!.user).toContain('"organizationWide":true');
+    // The placement names the Canvas a canvas, and carries no retired room.
+    expect(prompts[0]!.user.split("\n")[3]).toBe(
+      `{"subject":{"kind":"canvas","title":"Pricing"},"organizationWide":true,"people":[{"id":"${USER_ID}","name":"Morgan"}]}`);
     // Members are named from the directory, in the placement and on their messages.
     expect(prompts[0]!.user).toContain(`"people":[{"id":"${USER_ID}","name":"Morgan"}]`);
     expect(prompts[0]!.user).toContain(`"authorId":"${USER_ID}","authorName":"Morgan"`);
@@ -425,7 +428,7 @@ describe("the sweep run in the consumer", () => {
 
   it("derives a fact's trust class from who wrote the messages it cites, not from the model", async () => {
     const add = (evidence: number[], derivedFrom: string | null, text: string) => ({
-      op: "add", subjectKind: "thread", subjectId: null, kind: "standing", text, validFrom: null, validUntil: null,
+      op: "add", subjectKind: "canvas", subjectId: null, kind: "standing", text, validFrom: null, validUntil: null,
       validUntilBasis: null, derivedFrom, conflict: false, confidence: 0.9, evidence, factId: null, reason: null,
     });
     const { objectStore, env, applied } = fixture({

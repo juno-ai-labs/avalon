@@ -13,6 +13,7 @@ import type {
   StructuredFailureDetail,
   ToolDefinition
 } from "@rally/contracts";
+import { ORGANIZATION_MODEL_NAMES, modelName } from "@rally/contracts/model-names";
 import { normalizedPluginSearchText } from "@rally/prompts/harness/plugin-catalog";
 import {
   AddressingClassificationSchema,
@@ -2806,8 +2807,8 @@ const automationDraftSubmissionJsonSchema = {
     },
     suggestedScope: {
       type: "string",
-      enum: ["personal", "workspace"],
-      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope cannot change. personal uses the run-as person's connections; workspace uses shared Organization connections."
+      enum: ["personal", "organization"],
+      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and organization only when explicitly requested. Published scope cannot change. Scope decides who owns and manages the Sidekick, not whose connections its runs use: personal belongs to the requester, organization to the Organization."
     },
     ready: {
       type: "boolean",
@@ -2936,7 +2937,8 @@ export function activityTriggerScopeRefusal(
   plugin: Pick<AutomationCreatorPluginCatalogEntry, "displayName" | "scope" | "activityRequiresScope">,
 ): string | null {
   if (!plugin.activityRequiresScope || plugin.activityRequiresScope === plugin.scope) return null;
-  return `${plugin.displayName} events reach Rally only through a ${plugin.activityRequiresScope} connection, and this one is ${plugin.scope}, so no Sidekick can be triggered by it. Tell the person a ${plugin.activityRequiresScope} connection is required and stop; do not substitute a schedule or another plugin's events.`;
+  const required = modelName(ORGANIZATION_MODEL_NAMES, plugin.activityRequiresScope);
+  return `${plugin.displayName} events reach Rally only through ${required === "organization" ? "an" : "a"} ${required} connection, and this one is ${modelName(ORGANIZATION_MODEL_NAMES, plugin.scope)}, so no Sidekick can be triggered by it. Tell the person ${required === "organization" ? "an" : "a"} ${required} connection is required and stop; do not substitute a schedule or another plugin's events.`;
 }
 
 export function executeAutomationCreatorDiscoveryTool(
@@ -2952,7 +2954,7 @@ export function executeAutomationCreatorDiscoveryTool(
           pluginId: plugin.pluginId,
           displayName: plugin.displayName,
           description: plugin.description,
-          scope: plugin.scope,
+          scope: modelName(ORGANIZATION_MODEL_NAMES, plugin.scope),
           aliases: plugin.searchAliases,
           resourceRegistrationSupported: Boolean(plugin.registerResource),
           tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode, ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }) })),
@@ -2981,7 +2983,7 @@ export function executeAutomationCreatorDiscoveryTool(
           pluginId: plugin.pluginId,
           displayName: plugin.displayName,
           description: plugin.description,
-          scope: plugin.scope,
+          scope: modelName(ORGANIZATION_MODEL_NAMES, plugin.scope),
           aliases: plugin.searchAliases,
           resourceRegistrationSupported: Boolean(plugin.registerResource),
           tools: plugin.tools.map((tool) => ({
@@ -3005,7 +3007,7 @@ export function executeAutomationCreatorDiscoveryTool(
         pluginId: plugin.pluginId,
         displayName: plugin.displayName,
         description: plugin.description,
-        scope: plugin.scope,
+        scope: modelName(ORGANIZATION_MODEL_NAMES, plugin.scope),
         aliases: plugin.searchAliases,
         systemMessage: plugin.systemMessage,
         resourceRegistrationSupported: Boolean(plugin.registerResource),
@@ -3118,6 +3120,8 @@ function normalizeAutomationDraft(value: unknown): unknown {
   const ready = draft.ready !== false;
   return {
     ...draft,
+    // The model writes the Organization's scope as `organization`; a draft stores `workspace`.
+    suggestedScope: draft.suggestedScope === "organization" ? "workspace" : draft.suggestedScope,
     triggers,
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
@@ -3391,7 +3395,7 @@ export const AVALON_MULTIMODAL_GENERATION_PLUGIN_ID = "rally:multimodal-generati
 
 export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   name: "current_time",
-  description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp, as text lines (not an object); the last line is `iso8601 timestamp: <UTC ISO 8601>`. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
+  description: "Return the current local time, local IANA timezone, Organization's IANA timezone, local date, and UTC ISO-8601 timestamp, as text lines (not an object); the last line is `iso8601 timestamp: <UTC ISO 8601>`. Local time defaults to the current user's timezone for user runs and the Organization's timezone for runs that act for the Organization; optionally accepts another valid IANA timezone.",
   capability: "time.read",
   mode: "read",
   idempotency: "safe",
@@ -3739,7 +3743,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "people_search",
-    description: "Search authorized workspace people and return canonical person IDs for evaluator rules. Every result also carries `you`: the person this run acts for, so \"me\", \"my\", and \"I\" resolve without guessing at a name.",
+    description: "Search this Organization's people and return canonical person IDs for evaluator rules. Every result also carries `you`: the person this run acts for, so \"me\", \"my\", and \"I\" resolve without guessing at a name.",
     capability: "rally.sidekick.people.search",
     mode: "read",
     idempotency: "safe",
@@ -3750,7 +3754,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
         query: {
           type: "string",
           minLength: 1,
-          description: "A person's name, partial name, or email address, for example `Dana` or `dana@example.com`. It searches this workspace's own people, so somebody who is not a member here is absent rather than reported as missing.",
+          description: "A person's name, partial name, or email address, for example `Dana` or `dana@example.com`. It searches this Organization's own people, so somebody who is not a member here is absent rather than reported as missing.",
         },
       },
       required: ["query"],
@@ -3989,6 +3993,11 @@ export class HarnessPluginActivationError extends Error {
   }
 }
 
+/** Whether a model-sent plugin id names this plugin: its `modelId` or an earlier one. */
+export function pluginAnswersTo(plugin: Pick<HarnessPlugin, "modelId" | "modelIdAliases">, modelId: unknown): boolean {
+  return plugin.modelId === modelId || (typeof modelId === "string" && (plugin.modelIdAliases ?? []).includes(modelId));
+}
+
 /**
  * What a plugin may read of the run it is registered in: which plugins are
  * active right now, and the plugins the run holds at all. Handed to a plugin's
@@ -4009,6 +4018,12 @@ export interface HarnessPlugin {
   canonicalId: string;
   /** Stable identifier exposed to the model (`rally_core` or `plugin_google`). */
   modelId: string;
+  /**
+   * Earlier model-facing ids of this plugin. Never rendered; a program that
+   * still calls the plugin by one (copied from an older turn of the
+   * conversation) reaches it, so renaming `modelId` breaks nothing recorded.
+   */
+  modelIdAliases?: readonly string[];
   shortWireName: string;
   /** Static, code-authored label used only for catalog display and discovery. */
   displayName?: string;

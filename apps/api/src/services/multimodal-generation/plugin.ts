@@ -1,3 +1,4 @@
+import { RESOURCE_PROVIDER_MODEL_NAMES, modelName } from "@rally/contracts/model-names";
 import { requireUsageAllowance } from "../usage-admission";
 import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import type {
@@ -477,7 +478,7 @@ function toolResult(
       resourceUri: `resource://${published.resourceId}`,
       title: published.title,
       resourceType: published.resourceType,
-      provider: published.provider,
+      provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, published.provider),
       mimeType: published.mimeType,
       sizeBytes: published.bytes.byteLength,
       sourceSha256: published.sourceSha256,
@@ -515,7 +516,7 @@ function audioToolResult(published: PublishedMultimodalAudio): HarnessToolResult
       resourceUri: `resource://${published.resourceId}`,
       title: published.title,
       resourceType: published.resourceType,
-      provider: published.provider,
+      provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, published.provider),
       mimeType: published.mimeType,
       sizeBytes: published.bytes.byteLength,
       sourceSha256: published.sourceSha256,

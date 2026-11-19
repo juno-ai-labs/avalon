@@ -15,6 +15,8 @@
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./connector-oauth-claim": "./src/connector-oauth-claim.ts",
     "./conversation-parent": "./src/conversation-parent.ts",
+    "./model-names": "./src/model-names.ts",
+    "./model-names-audit": "./src/model-names-audit.ts",
     "./canvases": "./src/canvases.ts",
     "./canvas-filters": "./src/canvas-filters.ts",
     "./canvas-share-federation": "./src/canvas-share-federation.ts",

@@ -2,6 +2,7 @@ import {
   StartAgentInputSchema, ListAgentsInputSchema, SendAgentMessageInputSchema,
   ReplyToAgentMessageInputSchema, StopAgentInputSchema, RequestSidekickChangeInputSchema, modelAgentId, IdSchema,
 } from "@rally/contracts";
+import { ORGANIZATION_MODEL_NAMES, modelEnum, modelName } from "@rally/contracts/model-names";
 import type { HarnessPlugin, HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
 import type { AgentCommunicationService } from "./agent-communication-service";
@@ -61,8 +62,8 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationTools,
         : "List the Sidekick this conversation belongs to, marked isCurrentSidekick: true. Each item includes authoring agentId, status, nextRunAt and lastRunAt. Reusable instructions are listed under Skills. A draft or sent setup request is not evidence of activation.", z.strictObject({}), () => service.sidekicks()),
       tool("find_sidekick", "Find editable Sidekicks by the exact name the person explicitly asked to change, including personal or organization Sidekicks. Use only for a named edit, never for setup discovery. If several match, ask which one the person means.", z.strictObject({ name: z.string().min(1).describe("Exact Sidekick name from the person’s request.") }), (input) => service.findSidekick(input.name)),
       tool("create_sidekick", options.canvasChat
-        ? "Create a Sidekick for this Canvas when none it made fits. It is attached to this Canvas, so its runs can update this Canvas's artifacts. Returns its authoring agentId; send setup instructions to that agent next."
-        : "Create a Sidekick when none you can edit fits. Returns its authoring agentId; send setup instructions to that agent next.", z.strictObject({ scope: z.enum(["personal", "workspace"]).default("personal").describe("personal (the default) belongs to the person asking. Choose workspace (organization) only when the person asks.") }), (input, context) => service.createSidekick(input.scope, context)),
+        ? "Create a Sidekick for this Canvas when none attached to it fits. It is attached to this Canvas, so its runs can update this Canvas's artifact. Returns its authoring agentId; send setup instructions to that agent next."
+        : "Create a Sidekick when none you can edit fits. Returns its authoring agentId; send setup instructions to that agent next.", z.strictObject({ scope: modelEnum(["personal", "workspace"], ORGANIZATION_MODEL_NAMES).default("personal").describe("personal (the default) belongs to the person asking. Choose organization only when the person asks.") }), (input, context) => service.createSidekick(input.scope, context)),
       ...(options.canvasChat ? [tool("archive_sidekick", "Archive a Sidekick this Canvas made, so it stops running. Its conversation and run history stay stored. It cannot be undone from here.", z.strictObject({
         sidekick: z.string().min(1).max(300).describe("The sidekickId from sidekicks_list, or the Sidekick's exact name."),
       }), (input) => service.archiveSidekick(input.sidekick))] : []),
@@ -85,5 +86,7 @@ function forModel(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(forModel);
   if (value === null || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([key, field]) =>
-    [key, key === "agentId" && typeof field === "string" ? modelAgentId(field) : forModel(field)]));
+    [key, key === "agentId" && typeof field === "string" ? modelAgentId(field)
+      // A Sidekick's scope is stored as `workspace` for the Organization.
+      : key === "scope" && typeof field === "string" ? modelName(ORGANIZATION_MODEL_NAMES, field) : forModel(field)]));
 }

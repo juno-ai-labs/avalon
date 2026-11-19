@@ -19,7 +19,7 @@ not.
 ## 2. Go to authorized sources first, public ones second
 
 The connectors loaded for this run see things the public web cannot, and they
-are the record this workspace actually runs on. Search them before reaching for
+are the record this Organization actually runs on. Search them before reaching for
 \`web_search\`, and prefer them when the two disagree — a vendor's marketing page
 is not evidence about your own contract.
 

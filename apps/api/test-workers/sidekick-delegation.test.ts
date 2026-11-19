@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
+import { audited } from "../test/helpers/audited-tools";
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject, evictDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -73,7 +74,7 @@ describe("Sidekick consent authority in real workerd", () => {
       const receipts = createToolReceiptObjectPort(env, workspaceId, parentId);
       // The tool as the live loop offers it in either parent: a Canvas chat's
       // call is recorded under the same unprefixed name an authoring one is.
-      const tool = sidekickDelegationTools(env, input, other, false)[2]!;
+      const tool = audited(sidekickDelegationTools(env, input, other, false))[2]!;
       const args = { sidekickId, userId: other, allowed: true };
       const admit = async (effectIntentId: string, toolCallId: string, lease = claim.lease) => {
         await receipts.admit({ effectIntentId, runId: input.harnessRunId, toolCallId, toolName: tool.definition.name,
@@ -333,7 +334,7 @@ describe("Sidekick consent authority in real workerd", () => {
     const parentId = crypto.randomUUID();
     const input = runInput(crypto.randomUUID(), { workspaceId, parentId, triggerMessageId: null,
       backgroundAgent: true, executionPrincipal: { type: "user", userId: other } });
-    const authoring = sidekickDelegationTools(env, input, other, false);
+    const authoring = audited(sidekickDelegationTools(env, input, other, false));
     const room = sidekickDelegationTools(env, input, other, true);
     expect(authoring.map((tool) => `sidekick_${tool.definition.name}`)).toEqual(room.map((tool) => tool.definition.name));
     expect(room.map((tool) => tool.definition.name)).toEqual(["sidekick_my_delegations_list", "sidekick_delegates_list", "sidekick_set_delegation"]);

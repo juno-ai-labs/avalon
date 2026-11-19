@@ -1956,7 +1956,7 @@ describe("Terminal authority on real workerd", () => {
       });
     });
 
-    it("refuses a request routed to the wrong work stream", async () => {
+    it("refuses a request routed to the wrong conversation", async () => {
       const stub = agent();
       await boot(stub);
       await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));

@@ -261,10 +261,13 @@ export function checkProgram(code: string, options: CheckProgramOptions): Progra
 }
 
 /** The `<plugin>.<tool>` keys `checkProgram` treats as writes, from the callable set. */
-export function writeToolKeys(callable: ReadonlyArray<{ plugin: { modelId: string }; tools: ReadonlyArray<{ definition: { name: string; mode: string } }> }>): Set<string> {
+export function writeToolKeys(callable: ReadonlyArray<{ plugin: { modelId: string; modelIdAliases?: readonly string[] }; tools: ReadonlyArray<{ definition: { name: string; mode: string } }> }>): Set<string> {
   const keys = new Set<string>();
   for (const { plugin, tools } of callable) {
-    for (const tool of tools) if (tool.definition.mode === "write") keys.add(`${plugin.modelId}.${tool.definition.name}`);
+    // An earlier id reaches the same tool at the gateway, so it is the same write here.
+    for (const id of [plugin.modelId, ...plugin.modelIdAliases ?? []]) {
+      for (const tool of tools) if (tool.definition.mode === "write") keys.add(`${id}.${tool.definition.name}`);
+    }
   }
   return keys;
 }

@@ -7,6 +7,7 @@
  * artifact access. See `docs/canvas-artifact-access.md`.
  */
 import { asWorkspaceId } from "@rally/contracts";
+import { ORGANIZATION_MODEL_NAMES, modelEnum, modelName } from "@rally/contracts/model-names";
 import type { HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
 
@@ -16,10 +17,11 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ArtifactDataToolError } from "./workstream-artifact-data-tools";
 
 const ArgumentsSchema = z.strictObject({
-  audience: z.enum(["public", "workspace", "editors"]).describe(
+  // Stored as `workspace`; the model reads and writes `organization`.
+  audience: modelEnum(["public", "workspace", "editors"], ORGANIZATION_MODEL_NAMES).describe(
     "Who can open this Canvas's published sites and files. "
     + "\"public\": anyone with the link, signed in or not. "
-    + "\"workspace\": members of this Organization, plus anyone already named in the Canvas's Share screen, guests included; "
+    + "\"organization\": members of this Organization, plus anyone already named in the Canvas's Share screen, guests included; "
     + "remove those people in Share if they must lose access. "
     + "\"editors\": only the people who can open this Canvas's Chat.",
   ),
@@ -49,7 +51,7 @@ export function createArtifactAudienceTool(env: Env, input: {
       mode: "write",
       // Nothing dedupes the call itself, so an interrupted one is recorded rather than replayed.
       idempotency: "record_before_execute",
-      inputSchema: z.toJSONSchema(ArgumentsSchema) as Record<string, unknown>,
+      inputSchema: z.toJSONSchema(ArgumentsSchema, { io: "input" }) as Record<string, unknown>,
     },
     execute: async (raw: unknown) => {
       const args = ArgumentsSchema.parse(raw);
@@ -72,7 +74,7 @@ export function createArtifactAudienceTool(env: Env, input: {
       if (result.outcome === "kept") {
         return {
           output: {
-            audience: result.artifactVisibility,
+            audience: modelName(ORGANIZATION_MODEL_NAMES, result.artifactVisibility),
             changed: false,
             note: `Someone already chose who can open this Canvas's artifacts, so it stays open to ${words}. `
               + "Tell the person, and ask whether they want it changed; call again with personAsked true only if they say so.",
@@ -82,7 +84,7 @@ export function createArtifactAudienceTool(env: Env, input: {
       }
       return {
         output: {
-          audience: result.artifactVisibility,
+          audience: modelName(ORGANIZATION_MODEL_NAMES, result.artifactVisibility),
           changed: true,
           ...(result.artifactVisibility !== args.audience
             ? { note: "The Canvas's Chat is open to the whole Organization, so its artifacts cannot be narrower than that. "

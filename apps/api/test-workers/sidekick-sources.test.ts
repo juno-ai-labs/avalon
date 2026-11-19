@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
+import { audited } from "../test/helpers/audited-tools";
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -442,7 +443,7 @@ describe("a wizard turn a self-review owns", () => {
       substreamId: "0", loopId: substreamLoopId(automationId), harnessRunId: crypto.randomUUID(), triggerMessageId: null,
       activityId: null, executionPrincipal: { type: "user", userId: creator }, reason: "agent_message", sidekickWizard: true });
     const asking = (reviewOwnsTurn: boolean) => {
-      const tool = sidekickSourceTools(env, input, creator, false, true, async () => reviewOwnsTurn)
+      const tool = audited(sidekickSourceTools(env, input, creator, false, true, async () => reviewOwnsTurn))
         .find((candidate) => candidate.definition.name === "request_source")!;
       return tool.execute({ sidekickId: automationId, userIds: [jane], connectorType: "google", eventTypes: [eventType] }, {
         workspaceId, workstreamId: automationId, harnessRunId: input.harnessRunId, effectIntentId: crypto.randomUUID(),
@@ -459,6 +460,28 @@ describe("a wizard turn a self-review owns", () => {
   });
 });
 
+describe("asking for a source only the Organization's connection carries", () => {
+  it("tells the model the connection to make is the organization's, as request_source and sources_list answer", async () => {
+    await watchingMail();
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId, parentKind: "automation", parentId: automationId,
+      substreamId: "0", loopId: substreamLoopId(automationId), harnessRunId: crypto.randomUUID(), triggerMessageId: null,
+      activityId: null, executionPrincipal: { type: "user", userId: creator }, reason: "human_message", sidekickWizard: true });
+    const tools = audited(sidekickSourceTools(env, input, creator, false));
+    const named = (name: string) => tools.find((candidate) => candidate.definition.name === name)!;
+    const context = { workspaceId, workstreamId: automationId, harnessRunId: input.harnessRunId, effectIntentId: crypto.randomUUID(),
+      toolCallId: "ask-granola", executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    // Granola's events arrive only on the Organization's connection, stored as scope `workspace`.
+    const asked = (await named("request_source").execute(
+      { sidekickId: automationId, userIds: [jane], connectorType: "granola", eventTypes: ["note.generated"] }, context)).output;
+    expect((asked as { requests: Array<{ connect: unknown }> }).requests.map((request) => request.connect))
+      .toEqual([{ scope: "organization", card: null }]);
+    const listed = (await named("sources_list").execute({ sidekickId: automationId }, context)).output;
+    expect((listed as { requests: Array<{ connect: unknown }> }).requests.map((request) => request.connect))
+      .toEqual([{ scope: "organization", card: null }]);
+    expect(named("request_source").definition.description).toContain("by an administrator when connect.scope is organization.");
+  });
+});
+
 describe("trying a draft filter", () => {
   const sample = async (userId: string, limit: number) => (await stub().sidekickSourceSampleEvents({
     workspaceId, userId, connectorType: "google", eventType, limit,
@@ -469,7 +492,7 @@ describe("trying a draft filter", () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId, parentKind: "automation", parentId: automationId,
       substreamId: "0", loopId: substreamLoopId(automationId), harnessRunId: crypto.randomUUID(), triggerMessageId: null,
       activityId: null, executionPrincipal: { type: "user", userId }, reason: "test" });
-    const tool = sidekickSourceTools(runtimeEnv, input, userId, false).find((candidate) => candidate.definition.name === "test_source_condition")!;
+    const tool = audited(sidekickSourceTools(runtimeEnv, input, userId, false)).find((candidate) => candidate.definition.name === "test_source_condition")!;
     const context: HarnessToolContext = { workspaceId, workstreamId: automationId, harnessRunId: input.harnessRunId,
       effectIntentId: crypto.randomUUID(), toolCallId: "try-filter", executionPrincipal: input.executionPrincipal,
       signal: new AbortController().signal };

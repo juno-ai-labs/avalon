@@ -224,7 +224,7 @@ describe("automation-creator plugin catalog", () => {
     // Sidekick drafted on one applied, activated, and then never fired.
     const granolaEntry = entries.find((entry) => entry.pluginId === "plugin_granola");
     expect(granolaEntry?.activityTriggerCount).toBe(0);
-    expect(granolaEntry?.activityTriggersUnavailable).toMatch(/workspace connection/u);
+    expect(granolaEntry?.activityTriggersUnavailable).toMatch(/an organization connection, and this one is personal/u);
 
     // Narrowed per connector, not per scope: a personal Notion connection
     // receives its own events and keeps every trigger its manifest declares.

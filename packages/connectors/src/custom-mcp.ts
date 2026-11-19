@@ -67,7 +67,7 @@ export interface CustomMcpConnectorConfig {
 export const CustomMcpAgentPluginDescriptor = defineConnectorAgentPlugin({
   providerType: CUSTOM_MCP_CONNECTOR_TYPE,
   wireNamePrefix: "mcp",
-  description: "Tools served by a Model Context Protocol server this workspace connected. Load it when a request names that server's system or the work it does.",
+  description: "Tools served by a Model Context Protocol server this Organization connected. Load it when a request names that server's system or the work it does.",
   systemMessage: CUSTOM_MCP_SYSTEM_MESSAGE,
   tools: [],
 });

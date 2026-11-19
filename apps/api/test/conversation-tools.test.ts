@@ -9,6 +9,7 @@
  * the executors' own logic (key derivation, replay-first, the read budget,
  * the page continuation) can be read in isolation.
  */
+import { auditedPlugin } from "./helpers/audited-tools";
 import { describe, expect, it, vi } from "vitest";
 
 const searchProvider = vi.hoisted(() => ({ query: vi.fn() }));
@@ -168,7 +169,7 @@ function expand(tool: HarnessTool): HarnessTool[] {
 }
 
 function tools(input: WorkstreamWorkflowInput, ports = new Ports()) {
-  const plugin = createConversationsPlugin(input, ports, expand);
+  const plugin = auditedPlugin(createConversationsPlugin(input, ports, expand));
   if (!plugin) throw new Error("conversations_plugin_missing");
   return new Map(plugin.tools.map((tool) => [stableWireToolName(plugin.shortWireName, tool.definition.name), tool]));
 }

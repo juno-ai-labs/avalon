@@ -19,7 +19,8 @@ import {
   createMultimodalGenerationPlugin,
   MULTIMODAL_GENERATION_TIMEOUT_MS,
 } from "../src/services/multimodal-generation/contract";
-import { createAvalonMultimodalGenerationPlugin } from "../src/services/multimodal-generation/plugin";
+import { createAvalonMultimodalGenerationPlugin as createUnauditedPlugin } from "../src/services/multimodal-generation/plugin";
+import { auditedPlugin } from "./helpers/audited-tools";
 import { joinMp3Pieces } from "../src/services/multimodal-generation/speech-pieces";
 import {
   createMultimodalGenerationResourceStore,
@@ -29,6 +30,9 @@ import {
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
+
+/** The plugin with every tool result walked for a storage name (docs/agent-tools.md, rule 10). */
+const createAvalonMultimodalGenerationPlugin = (...args: Parameters<typeof createUnauditedPlugin>) => auditedPlugin(createUnauditedPlugin(...args));
 
 const WORKSPACE_ID = asWorkspaceId("10000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("10000000-0000-4000-8000-000000000002");

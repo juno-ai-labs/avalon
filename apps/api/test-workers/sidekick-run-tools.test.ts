@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
+import { audited } from "../test/helpers/audited-tools";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -44,7 +45,7 @@ function plugin(overrides: Partial<typeof input> = {}, paginate = false) {
     }) : [tool]);
 }
 function tool(name: string, overrides: Partial<typeof input> = {}) {
-  const found = plugin(overrides).tools.find((candidate) => candidate.definition.name === name);
+  const found = audited(plugin(overrides).tools).find((candidate) => candidate.definition.name === name);
   if (!found) throw new Error(`missing_tool:${name}`);
   return found;
 }
@@ -113,13 +114,28 @@ describe("Sidekick wizard run inspection", () => {
     await seedRuns(SIDEKICK, 55);
     await seedRuns(OTHER, 1, 100);
     const first = await tool("runs_list").execute({}, context);
-    const runs = z.object({ runs: z.array(AutomationRunSchema.extend({ definitionRevision: z.number() })) }).parse(first.output).runs;
+    const runs = z.object({ runs: z.array(AutomationRunSchema.omit({ automationId: true })
+      // A run names its Sidekick as the model does, never by the stored `automationId`.
+      .extend({ sidekickId: z.string(), definitionRevision: z.number() }).strict()) }).parse(first.output).runs;
     expect(runs).toHaveLength(50);
-    expect(runs[0]).toMatchObject({ id: runId(1), automationId: SIDEKICK, status: "failed", definitionRevision: 1,
+    expect(runs[0]).toMatchObject({ id: runId(1), sidekickId: SIDEKICK, status: "failed", definitionRevision: 1,
       triggerType: "manual", resultSummary: "Report delivery failed" });
     const second = await tool("runs_list").execute(first.pagination!.continuations[0]!.input, context);
-    expect(second.output).toMatchObject({ runs: Array.from({ length: 5 }, (_, index) => ({ id: runId(index + 51), automationId: SIDEKICK })) });
+    expect(second.output).toMatchObject({ runs: Array.from({ length: 5 }, (_, index) => ({ id: runId(index + 51), sidekickId: SIDEKICK })) });
     expect(second.pagination?.continuations).toEqual([]);
+  });
+
+  it("names the event that started a run eventId, never by its stored key", async () => {
+    await seedRuns(SIDEKICK, 1);
+    await seedHistory();
+    const EVENT = "00000000-0000-7000-8000-0000000000e9";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE sidekick_runs SET trigger_json = ? WHERE run_id = ?", JSON.stringify({
+        kind: "external_event", workspaceEventId: EVENT, eventType: "email.received", occurredAt: 100, payloadHash: "hash" }), runId(1));
+    });
+    const result = await tool("runs_read").execute({ runId: runId(1) }, context);
+    expect(evidence(result.output).trigger).toEqual({
+      kind: "external_event", eventType: "email.received", occurredAt: 100, payloadHash: "hash", eventId: EVENT });
   });
 
   it("reads the original procedure, transcript, exact tool result, output and subsequent feedback after eviction", async () => {
@@ -428,7 +444,8 @@ describe("Sidekick wizard run inspection", () => {
     await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1,
       output: { resourceId: RESOURCE, text: "Confidential attachment content", version: { sha256: hash } } }));
     const first = await tool("runs_read").execute({ runId: runId(1) }, context);
-    expect(toolsIn(first.output)).toEqual([expect.objectContaining({ resultAvailability: "full", output: expect.objectContaining({ text: "Confidential attachment content" }) })]);
+    // The receipt was recorded as `workstream_read_resource`; the reader is shown the name the tool has now.
+    expect(toolsIn(first.output)).toEqual([expect.objectContaining({ toolName: "read_resource", resultAvailability: "full", output: expect.objectContaining({ text: "Confidential attachment content" }) })]);
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec("UPDATE resources SET model_content_sha256 = ? WHERE id = ?", "b".repeat(64), RESOURCE);
     });

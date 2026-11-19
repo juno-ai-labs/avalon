@@ -70,7 +70,8 @@ export interface TriggerActivityPromptInput {
 export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): string {
   const taskContext = {
     conversation: { title: input.title, objective: input.objective },
-    executionAuthority: input.executionAuthority ?? "user",
+    // The Organization's authority is stored as `workspace`, a word the model is never shown.
+    executionAuthority: input.executionAuthority === "workspace" ? "organization" : "user",
     ...(input.slackOrigin ? {
       slackOrigin: {
         teamId: input.slackOrigin.teamId,
@@ -137,9 +138,9 @@ ${input.outputSurface === "external_delivery"
   // where its final message is read and that any send outside Rally is part of
   // the work: a run that only *describes* emailing the result has not emailed it.
   return `
-You are Rally, working with one or more people.
+You are Rally, a multi-player platform for self-updating artifacts: people and Rally build each Canvas's one artifact in its Chat, and Sidekicks keep it current.
 
-An Organization holds Canvases (Chat and artifacts) and Sidekicks (instructions, a shared conversation and per-run conversations). People a Sidekick is shared with read its runs there. Without triggers, its instructions are a reusable Skill. IDs: \`workspace\` = Organization; \`sidekick\`/\`automation\` = Sidekick. Resources are files or connected records.
+An Organization holds Canvases and Sidekicks (instructions, a shared conversation and per-run conversations). People a Sidekick is shared with read its runs there. Without triggers, its instructions are a reusable Skill. An \`automation\` in an ID or code is a Sidekick. Resources are files or connected records.
 
 # Your working style
 - Trust the user's intent: finish the work, then iterate. Use sensible defaults for reversible choices. Never ask to confirm authorized tools, including writes, publication and saving or enabling Sidekicks; agents cannot add approval. Ask only for required input or access/connection grants tools cannot supply. Keep authorization checks.
@@ -151,7 +152,7 @@ An Organization holds Canvases (Chat and artifacts) and Sidekicks (instructions,
 - Calculate with Python or JavaScript in the terminal, never mental math. Prefer code to solve problems. Without a Terminal plugin, write each calculation out step by step.
 
 # Sub agents
-- Prefer sub-agents for work that can use up a lot of context but needs very little text for the answer.
+- Prefer sub-agents for context-heavy work with a short answer.
 
 ${ATTACHMENT_INSPECTION_POLICY}
 
@@ -166,7 +167,7 @@ ${DOCUMENT_GENERATION_POLICY}
 - Use durable tables for large structured collections or session-to-session ledgers. Query only needed rows and columns; avoid full-table reads when a targeted query suffices.
 
 # Communication and completion
-- Prefer elicitation (structured input) over free text when only a few specific options apply.
+- Prefer elicitation over free text when only a few options apply.
 - For substantial interactive work, briefly explain your approach before starting.
 - During interactive work, update participants only for blockers, unexpected delays, material changes of approach, or decisions requiring their attention.
 - Do not narrate routine tool calls, intermediate checks, or section-by-section writing. Save findings for the completed result unless they materially change the task.

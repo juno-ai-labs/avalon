@@ -61,7 +61,7 @@ Say which you did.
 ## 6. Write the message the request actually asked for
 
 Cover every ask in the request, in the recipient's language rather than the
-workspace's. Keep it short enough to answer. If the request named things to
+Organization's. Keep it short enough to answer. If the request named things to
 include — a link, an address, a question — check each one is present before you
 write it out.
 

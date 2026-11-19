@@ -96,6 +96,24 @@ describe("the agents plugin", () => {
       .resolves.toMatchObject({ output: { next: `automation/${sidekickId}/0` } });
   });
 
+  it("names the Organization's Sidekick scope organization, and takes it back in stored form", async () => {
+    // The stored scope is `workspace`; the list reads it back as the model names it.
+    await expect(tool("sidekicks_list").execute({}, context)).resolves.toMatchObject({
+      output: { sidekicks: [{ sidekickId, scope: "organization" }] },
+    });
+    const scopes: string[] = [];
+    const creating = createAgentCommunicationPlugin({ ...service,
+      createSidekick: async (scope) => { scopes.push(scope); return { sidekickId, agentId: `automation/${sidekickId}/0` as never }; } }, "");
+    const create = creating.tools.find((candidate) => candidate.definition.name === "create_sidekick")!;
+    expect((create.definition.inputSchema as { properties: { scope: { enum: string[] } } }).properties.scope.enum)
+      .toEqual(["personal", "organization"]);
+    await create.execute({ scope: "organization" }, context);
+    await create.execute({}, context);
+    // Instructions saved before the rename may still send the stored name.
+    await create.execute({ scope: "workspace" }, context);
+    expect(scopes).toEqual(["workspace", "personal", "workspace"]);
+  });
+
   it("keeps the rule that a conversation changes only Sidekicks it may edit", () => {
     // The incident behind this line: one conversation rewrote another's Sidekick draft.
     expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");

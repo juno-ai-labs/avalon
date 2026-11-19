@@ -1,3 +1,4 @@
+import { RESOURCE_PROVIDER_MODEL_NAMES, modelName } from "@rally/contracts/model-names";
 import { AuthorizationService } from "../authorization-service";
 import { asWorkspaceId, DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import { publishedFilePath } from "@rally/contracts/artifact-access";
@@ -161,7 +162,7 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
     title: row.title,
     publishKind: "file" as const,
     resourceType: "generated_file" as const,
-    provider: "avalon_generated" as const,
+    provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, "avalon_generated"),
     mimeType: row.mime_type ?? "application/octet-stream",
     sizeBytes,
     sourceSha256: row.content_sha256,
@@ -663,7 +664,7 @@ export function createTerminalResourceBridge(
             "destination_required",
             suggestion
               ? `Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Use ${suggestion}, then publish that same path to update this site; a different path would mint a second site at a second URL.`
-              : "Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Rally cannot recover the path this site publishes from, so choose the one this work stream last published it from — publishing a different path would mint a second site at a second URL.",
+              : "Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Rally cannot recover the path this site publishes from, so choose the one this conversation last published it from — publishing a different path would mint a second site at a second URL.",
             {
               field: "destinationPath",
               reason: suggestion
@@ -709,8 +710,8 @@ export function createTerminalResourceBridge(
       if (row.content_sha256 && digest !== row.content_sha256) {
         throw new TerminalToolError(
           "resource_hash_mismatch",
-          "The stored resource bytes changed while importing. Re-list the work-stream resources and retry from the current version.",
-          { reason: "Re-list work-stream resources and retry the import from its current version." },
+          "The stored resource bytes changed while importing. Re-list this conversation's resources and retry from the current version.",
+          { reason: "Re-list this conversation's resources and retry the import from its current version." },
         );
       }
       const automatic = !("destinationPath" in input);
@@ -1064,7 +1065,7 @@ export function createTerminalResourceBridge(
         title,
         publishKind: "file",
         resourceType: "generated_file",
-        provider: "avalon_generated",
+        provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, "avalon_generated"),
         mimeType,
         sizeBytes: bytes.byteLength,
         sourceSha256: digest,
@@ -1332,7 +1333,8 @@ export function createTerminalResourceBridge(
     throw new TerminalToolError("canvas_artifact_held",
       `This Canvas already has its one artifact, "${held.title}" (resourceId ${held.id}); ${republish}. `
         + "Add what you meant to publish to that artifact as a new file or entry inside it, keeping what it already holds. "
-        + "Publish again with replaceCanvasArtifact true only when this is meant to take that artifact's place.",
+        + "Publish again with replaceCanvasArtifact true only when this is meant to take that artifact's place: "
+        + "in a Canvas's Chat, only after you told the person it would replace that artifact and they chose that.",
       { field: "replaceCanvasArtifact", heldResourceId: held.id });
   };
   // A publish that landed in a Canvas's Chat is the Canvas's artifact; the
@@ -1383,7 +1385,7 @@ function siteOutput(
     title: row.title,
     publishKind: "site",
     resourceType: "generated_site",
-    provider: "avalon_generated",
+    provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, "avalon_generated"),
     attachmentKind: "site",
     slug: site.slug,
     // The model's next step is citing the artifact, so the URL is in the

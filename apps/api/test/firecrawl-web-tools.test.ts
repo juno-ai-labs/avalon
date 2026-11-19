@@ -1,3 +1,4 @@
+import { auditedAvalonTools } from "./helpers/audited-tools";
 import { asWorkspaceId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
@@ -249,12 +250,10 @@ describe("Firecrawl API client", () => {
 
 describe("Avalon Firecrawl harness tools", () => {
   it("omits both web tools unless Firecrawl is configured", () => {
-    const absent = __integrationTesting
-      .createAvalonTools(envWithFirecrawl(undefined), workflowInput)
+    const absent = auditedAvalonTools(envWithFirecrawl(undefined), workflowInput)
       .filter((tool) => tool.definition.capability.startsWith("web."))
       .map((tool) => tool.definition.name);
-    const present = __integrationTesting
-      .createAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
+    const present = auditedAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
       .filter((tool) => tool.definition.capability.startsWith("web."))
       .map((tool) => tool.definition.name);
 
@@ -265,8 +264,7 @@ describe("Avalon Firecrawl harness tools", () => {
   });
 
   it("packages public-web tools as one loadable Avalon plugin", () => {
-    const tools = __integrationTesting
-      .createAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput);
+    const tools = auditedAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput);
     const plugin = __integrationTesting.createAvalonWebPlugin(tools);
 
     expect(plugin).toMatchObject({
@@ -286,18 +284,17 @@ describe("Avalon Firecrawl harness tools", () => {
     const fetcher = mockFetchResponse(jsonResponse({
       success: true,
       data: {
-        web: [{ title: "Avalon", url: "https://example.com", description: "Result" }],
+        web: [{ title: "Rally", url: "https://example.com", description: "Result" }],
       },
       creditsUsed: 7,
     }));
     vi.stubGlobal("fetch", fetcher);
-    const tool = __integrationTesting
-      .createAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
+    const tool = auditedAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
       .find((candidate) => candidate.definition.name === "search");
     expect(tool).toBeDefined();
 
     const result = await tool!.execute(
-      { query: "Avalon", recency: "month" },
+      { query: "Rally", recency: "month" },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -309,8 +306,8 @@ describe("Avalon Firecrawl harness tools", () => {
     );
 
     expect(result.output).toEqual({
-      query: "Avalon",
-      results: [{ title: "Avalon", url: "https://example.com", description: "Result" }],
+      query: "Rally",
+      results: [{ title: "Rally", url: "https://example.com", description: "Result" }],
     });
     expect(result.output).not.toHaveProperty("creditsUsed");
     const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
@@ -331,8 +328,7 @@ describe("Avalon Firecrawl harness tools", () => {
       },
     }));
     vi.stubGlobal("fetch", fetcher);
-    const tool = __integrationTesting
-      .createAvalonTools(envWithFirecrawl("fc-test-key", {
+    const tool = auditedAvalonTools(envWithFirecrawl("fc-test-key", {
         WEB_FETCH_MAX_BYTES: "12",
       }), workflowInput)
       .find((candidate) => candidate.definition.name === "fetch");
@@ -369,8 +365,7 @@ describe("Avalon Firecrawl harness tools", () => {
       data: { markdown: "ok", metadata: { sourceURL: "https://example.com" } },
     }));
     vi.stubGlobal("fetch", fetcher);
-    const tool = __integrationTesting
-      .createAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
+    const tool = auditedAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
       .find((candidate) => candidate.definition.name === "fetch");
 
     await tool!.execute(

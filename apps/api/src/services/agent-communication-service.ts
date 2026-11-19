@@ -535,7 +535,7 @@ class AgentCommunicationError extends Error {
       sidekick_resource_access_denied: "resourceId cannot be shared by this execution user. Choose a resource this user may share.",
       sidekick_attachment_draft_requires_message: "resourceId is an unsent upload. Send it in a message before attaching it as an existing resource.",
       agent_attachment_unavailable: "Attach the resource to this conversation before forwarding it, or remove it from attachmentIds.",
-      workstream_archived: "Stop sending work to this destination. Its workstream is archived or no longer exists.",
+      workstream_archived: "Stop sending work to this destination. Its conversation is archived or no longer exists.",
       agent_origin_stopped: "Wait for a continuation message. This agent is stopped and cannot start more work.",
       agent_origin_unavailable: "Stop starting agents from this conversation. It is archived or no longer available.",
       agent_destination_unavailable: "List teammates again and choose an available agentId. This recipient is unavailable.",
@@ -547,14 +547,12 @@ class AgentCommunicationError extends Error {
       sidekick_archive_ambiguous: "Several Sidekicks this Canvas made have that name. Pass the sidekickId from sidekicks_list instead.",
       sidekick_change_outside_run: "Use sidekicks_list and message the Sidekick's authoring agentId. Only a Sidekick run can request a change to its own Sidekick this way.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
-      sidekick_owning_workstream_unavailable: "Choose personal or workspace scope if appropriate. This conversation has no owning workstream.",
-      sidekick_owning_workstream_forbidden: "Ask a participant in the owning workstream to create the Sidekick. This execution cannot create one there.",
       agent_ownership_conflict: "Use the existing agent or report the conflict. This agent already has a different owner or team.",
       agent_ownership_cycle: "Choose a different agent. An agent cannot own itself or one of its ancestors.",
       agent_message_identity_conflict: "Report the delivery conflict. This message ID is already assigned to a different route; changing the recipient cannot repair it.",
       agent_effect_identity_missing: "Report this runtime error. The host did not supply a delivery identity; changing tool arguments cannot repair it.",
       agent_bootstrap_failed: "Report that the background agent could not start. Its runtime could not be initialized.",
-      workstream_authority_generation_stale: "Report that the recipient’s workstream state is stale. Changing the message cannot repair it.",
+      workstream_authority_generation_stale: "Report that the recipient’s conversation state is stale. Changing the message cannot repair it.",
     }[code] ?? `Report this agent communication error: ${code}.`);
     this.name = "AgentCommunicationError";
     if (code === "sidekick_archive_not_made_here" || code === "sidekick_archive_ambiguous") {

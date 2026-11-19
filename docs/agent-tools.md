@@ -73,7 +73,7 @@ gone. Two things make a name qualify, and either is enough:
 - **The plugin is always active**, so a prefix on it distinguishes nothing — the
   model cannot load it, cannot unload it, and has no second source of the same
   capability to tell it apart from. `rally_discovery`, `rally_skills`,
-  `rally_core`, `rally_workstream`, and `rally_agents` are these.
+  `rally_core`, `rally_resources`, and `rally_agents` are these.
 - **The canonical name is already the one the model knows.** `rally_terminal`
   and `rally_multimodal_generation` are loadable, but `read_file`, `edit_file`,
   `write_file`, `apply_patch`, `run_command`, `generate_image` and
@@ -109,7 +109,7 @@ to reach for if `send_message` turns out to mislead a model in practice.
 iterates Bind's own `corePlugins` — discovery, skills, and whatever the host
 passes as `corePlugins`, which on the API side is `createWorkstreamCorePlugins`:
 `rally_core`, `rally_tables`, `rally_memory`, and nothing else. Every other
-plugin, including always-active ones like `rally_workstream` and `rally_agents`,
+plugin, including always-active ones like `rally_resources` and `rally_agents`,
 is assembled into `plugins` and sits outside the
 guard. For those, two identical wire names resolve to whichever plugin sorts
 first by canonical id, silently.
@@ -757,6 +757,92 @@ do not expose internal structure the model should not reason about. A tool that
 takes the id a person would recognize and resolves the internal layers itself is
 both safer and shorter than one that makes the model navigate them.
 
+**Storage names are internal jargon too.** The product is Canvases and
+Sidekicks in an Organization. Storage keeps the names of earlier pivots: an
+Organization is a `workspace`, a Canvas's id is a `workstream` id, a
+conversation is a `substream`, a Sidekick is an `automation`, a Canvas's
+remembered facts are filed under `thread`. A model shown one of those words
+cannot connect it to what a person calls the thing, so none of them crosses to
+a model, in a tool's name, description, schema, result or failure. Storage,
+columns, RPC fields, Durable Object names, logs and receipts keep the stored
+name; a tool translates where a value crosses.
+`packages/contracts/src/model-names.ts` is the one implementation:
+
+- `modelEnum(stored, names)` is a stored enum as a tool parameter. Its JSON
+  Schema offers the model names alone, it parses to the stored value, and it
+  still accepts the stored name, because instructions a Sidekick saved before
+  a rename may spell it. `modelName` and `modelValues` are the same map on the
+  way out.
+- `withModelNames(result, names, keys)` translates the named fields of a
+  result at any depth. It is for a result built by code the product's screens
+  share (a connector's state, a Sidekick's definition). Only the listed keys
+  are touched, so a provider's or a person's data that says `workspace` is
+  never rewritten.
+- `modelFailure` translates a failure's code and a message that is, or opens
+  with, a code (`workstream_archived` reads `canvas_archived`). It is called
+  at the three places a failure crosses to a model: a live tool result
+  (`bind-runtime.ts`), a result rebuilt from its receipt for a later run
+  (`projectModelProtocolTranscript`), and a call inside a program (the Code
+  Mode gateway). A sentence is left as written, because it may echo a table or
+  a path the model sent and has to echo it exactly. The `tool_failed` event,
+  the receipt and the logs keep the stored code.
+
+The maps in use: `ORGANIZATION_MODEL_NAMES` (`workspace` reads `organization`
+for a connection's scope, a Sidekick's scope, a Canvas's artifact audience and
+the execution authority in the system prompt), `MEMORY_SCOPE_MODEL_NAMES`
+(`workstream` reads `canvas`) and `MEMORY_SUBJECT_MODEL_NAMES` (`thread` reads
+`canvas`), both in [`agent-memory.md`](agent-memory.md), and
+`RESOURCE_PROVIDER_MODEL_NAMES` (a resource Rally holds, stored under
+`avalon_upload`, `avalon_generated` or `avalon_note`, reads `rally_upload`,
+`rally_generated` or `rally_note`). A key that holds an id is named for the
+product too: `sidekickId`, never `automationId`; `canvasId`, never
+`workstreamId`; `eventId`, never `workspaceEventId`.
+
+Two meanings of `workspace` are not the Organization and stay: a sandbox's
+files in the Terminal tools (`/workspace`, "the workspace root"), and a
+provider's own word for an account (a Slack or Granola workspace, a Google
+Workspace document). `apps/api/test/tool-schema-descriptions.test.ts` walks
+every authored tool and fails on `workstream`, `substream`, or a `workspace`
+outside those surfaces. It reads descriptions and schemas. Its walk
+(`apps/api/test/helpers/authored-tool-schemas.ts`) also builds the tools a run
+assembles rather than registers: the Sidekick run reader, delegation and
+source tools, the agent tools and the notice tools. `request_source` told the
+model to look for `connect.scope` `workspace` for as long as it was outside
+that walk.
+
+**Results are audited where they are produced.**
+`packages/contracts/src/model-names-audit.ts` walks what a tool returned and
+what it threw, as the model reads them (`failureAsModelReads` applies
+`modelFailure`): every key, every one-token value (an enum value, a code, an
+id) and every sentence, for `workstream`, `substream`, `workspace`,
+`automation`, `avalon`, and the retired product words `thread`, `channel`,
+`breakout`, `space` and `project`. `summary` is not walked, because it never
+reaches the model. `auditedTools` wraps a tool list so each call a suite
+already makes fails with `StorageNameLeakError` on a leak, and the suites that
+execute tools build them through it (`apps/api/test/helpers/audited-tools.ts`:
+`auditedAvalonTools`, `auditedHarnessTools`, `audited`, `auditedPlugin`,
+`auditedExecutors`). A new tool's test builds its tools the same way; that is
+the whole cost of being covered. Three things the audit lets through, each
+named in the module: the two meanings of `workspace` above; the sandbox
+variable `AVALON_RESOURCE_DIR` and the `avalon/<slug>` branch namespace, which
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) keeps; and, where a
+suite says its prose is fixture data (`dataProse`), a retired product word in a
+sentence, since a title may honestly say "project". A provider's own vocabulary
+(`channel` for Slack) is allowed per suite with `allowWords`.
+
+What the audit runs, and what it does not: it runs every Rally tool a suite
+executes against the real migrations or workerd (the resource, artifact data,
+artifact audience, connector state, wake-up, elicitation, member offer,
+memory, table, Sidekick authoring, run reader, delegation, source,
+conversation, web, Terminal and generation tools, `sidekicks_list` and
+`sidekick_attach_resource`, and every Rally MCP tool the server's tests call).
+It does not run a connector's provider tools, whose results are the
+provider's payload and need a fake of each provider's API; the Code Mode
+`execute` tool and saved custom tools, whose value is whatever the inner
+calls returned, each already translated at its own tool; the notification
+tools' success paths and the agent messaging tools other than the two above,
+which need a live team of conversation objects. Those were read, not run.
+
 ### 11. Consistency across a tool family
 
 A model that learns one tool in a family generalizes to the rest, so make the
@@ -1100,7 +1186,7 @@ model-actionable drift check. See
 | `run_command` | `{ command: string, cwd?: string, timeoutMs?: integer, description?: string }` | `{ state, terminationReason, exitCode, stdout, stderr, outputResourceId?, startedAt, completedAt, stdoutTruncated, stderrTruncated, durationMs }`. Nonzero exit is a completed command result, not an executor exception. Standard `git` and `gh` commands are available after repository checkout; `read_only` credentials reject remote mutation, while `full_access` may push and manage a PR. |
 | `checkout_repository` | `{ repositoryFullName: string, requiredRemoteAccess?: "read_only" | "full_access" }` | `{ repository, repositoryId, connectionId, connectionName, baseRef, baseSha, headRef, remoteAccess, localEditsAllowed: true, remoteWritesAllowed, outcome, backup }`; `backup` is the attached recovery resource created before replacing prior workspace state, or `null` when there was nothing to preserve. |
 | `import_resource` | `{ resourceId: UUID }` or `{ resourceId: UUID, destinationPath: string, overwrite?: boolean }` | `{ resourceId, filePath, outcome, mimeType, sizeBytes, sourceSha256 }`; `outcome` is `created`, `replaced`, or deterministic `reused`. For a **site** resource `destinationPath` names the directory root to materialize into and the output adds `fileCount`; `filePath` is reused for that root rather than a second key appearing beside it, so the round trip is `filePath` in, `filePath` out and a republish targets what the import returned. `overwrite` is whole-tree replacement, never a merge — merging would leave files a prior version deleted lying in the tree for the next publish to ship back. |
-| `publish_resource` | `{ filePath: string, displayName?: string, description?: string }`; `filePath` may name a **directory** beneath `AVALON_RESOURCE_DIR` | A discriminated union on `publishKind` (`file` | `site` | `archive`), decided by the directory's root entry — see [Publishing a directory](#publishing-a-directory) below. A *file* returns `{ resourceId, title, resourceType: "generated_file", provider: "avalon_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`. Identity is `(work stream, normalized publish path)`: publishing the same path again updates that resource in place — new content, mime type, metadata, and `displayName` when one is given — and returns the same `resourceId`. Equal content returns it untouched, which is also how a replay of one call is absorbed. `createdAt` stays the first publish's timestamp across updates, so it is not a witness that this call's bytes landed. A different path, or the same path from another conversation, is a different document. |
+| `publish_resource` | `{ filePath: string, displayName?: string, description?: string }`; `filePath` may name a **directory** beneath `AVALON_RESOURCE_DIR` | A discriminated union on `publishKind` (`file` | `site` | `archive`), decided by the directory's root entry — see [Publishing a directory](#publishing-a-directory) below. A *file* returns `{ resourceId, title, resourceType: "generated_file", provider: "rally_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`. Identity is `(work stream, normalized publish path)`: publishing the same path again updates that resource in place — new content, mime type, metadata, and `displayName` when one is given — and returns the same `resourceId`. Equal content returns it untouched, which is also how a replay of one call is absorbed. `createdAt` stays the first publish's timestamp across updates, so it is not a witness that this call's bytes landed. A different path, or the same path from another conversation, is a different document. |
 | `publish_branch_and_pr` | `{ title: string, body: string }` | `{ repository, baseRef, headRef, commitSha, publishedSha, outcome, pullRequest: { number, url, title, state: "open" } }`; `outcome` is `created`, convergent `updated`, or recovered `unchanged`. |
 
 ### Publishing a directory
@@ -1370,6 +1456,86 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-19 — No storage name crosses to a model
+
+**What changed:** rule 10 now covers storage names, and one module,
+`packages/contracts/src/model-names.ts`, translates them at the tool boundary.
+A connection's scope, a Sidekick's scope, a Canvas's artifact audience and a
+durable table's scope read `organization` where storage says `workspace`
+(`show_connector_connection`, the connector state and list, the resource
+access check, `create_sidekick`, `submit_draft`, the Sidekick lists, the
+wizard's plugin catalog, `set_artifact_audience`, the Rally MCP server's
+Canvas tools). The always-active resources plugin's model id is
+`rally_resources`, not `rally_workstream`, and the page ids its tools mint
+start `page_`. A failure's code reaches the model in product words
+(`modelFailure`). A run row names its Sidekick `sidekickId`. A standing test
+walks every authored tool for the words.
+
+Then results, tool by tool. `list_resources` names its owner `canvasId` or
+`sidekickId`, not `workstreamId`, and a resource Rally holds reads
+`rally_upload`, `rally_generated` or `rally_note` there and in
+`publish_resource`, `generate_image`, `edit_image` and `generate_audio`.
+`runs_read` names the event that started a run `eventId` and shows a recorded
+`workstream_read_resource` as `read_resource`, in the transcript and the usage
+summary. `request_source` and `sources_list` answer `connect.scope:
+"organization"`. The Rally MCP server's `invite_canvas_guests` answers which
+Canvas an invitation `opens` in place of the stored target. The wake-up limit
+says "This conversation", a fact filed under a retired subject no longer says
+"shared space", a connector refuses with "The Organization's connection", and
+Granola's and Ashby's plugin prose names the Organization. A result audit
+(`model-names-audit.ts`, rule 10) now runs inside the suites that execute
+tools, and the schema walk reaches the tools a run assembles, whose nine
+undescribed parameters (`runs_list`, `runs_read`, `delegates_list`,
+`set_delegation`) are described.
+
+**Why:** the product names Canvases, Sidekicks and Organizations, and every
+storage name a model could see was a leftover of an earlier pivot. A model
+told about a Canvas and then handed `workstream`, or told about an
+Organization and offered `workspace`, has to guess they are the same thing,
+and models guessed wrong: the system prompt carried a glossary line for it.
+The durable-table scope `canvas` (earlier the same day) and the 2026-11
+`automation` to `sidekick` agent id were each done by hand; a third and
+fourth hand-written map is how the next one gets missed.
+
+**Alternatives rejected:** renaming storage, which is the months of migration
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) declines. One
+rewrite of every tool result at the harness, which would also rewrite a
+provider's own `workspace` (Slack, Google Workspace) and a person's data.
+Rewriting a failure's whole message, which mangles what it echoes: a SQL error
+naming the table `workspace_metrics`, a path under `/workspace`.
+
+**Consequences:** a new tool that takes or returns a stored enum uses
+`modelEnum` and `modelName`, and a new stored word a model must not see goes
+in the map and in the standing test, and a new tool's suite builds its tools
+through `auditedTools` so its results are walked. A stored name is accepted on the way in
+and never offered, so saved Sidekick instructions keep working; removing that
+alias later breaks them. Bind and Code Mode check arguments against the
+advertised schema before a tool's own parser runs, so `normalizeToolArguments`
+rewrites a value sent under a name in `RETIRED_MODEL_NAMES` to the model name
+its enum offers; without that, `workspace` from a saved program was refused
+before `modelEnum` could accept it. A retired page-id prefix is likewise
+accepted by a pagination tool's `validateInput` and left out of the pattern it
+advertises. A projection translates only the fields it owns: a saved Sidekick
+definition's `defaultBehavior` and custom tools are the person's, and pass
+through as written (`dataPaths` in the audit). `rally_workstream` is still answered inside a
+program (`HarnessPlugin.modelIdAliases`), and a page id issued as
+`workstream_…` is still redeemed. A connection card's summary keeps the stored
+scope, because a client recovers the card from it. The surface hash of every
+tool whose description or schema changed is new, so a receipt recorded before
+the deploy is not replayed after it, as with any description change. A result
+recorded before the deploy keeps the stored word it was written with: a
+replayed receipt or an old turn of a conversation can still show
+`workstreamId` or `avalon_upload`, and nothing reads those keys back. The
+desktop card for a source request accepts `organization` and `workspace` for
+the same reason. Left as they are, each a decision
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) already records:
+`AVALON_RESOURCE_DIR` and the `avalon/<slug>` branch namespace, which a model
+has to type or read exactly.
+Capability strings (`workstream.resources.read`, `granola.workspace.read`) are
+not sent to a provider and were left; the wizard's `plugins_list` does return
+them. `sidekick_runs_read` returns an earlier run's stored results and errors
+as they were recorded.
 
 ### 2026-11-17 — An agent can list connectors by family, and see each account
 

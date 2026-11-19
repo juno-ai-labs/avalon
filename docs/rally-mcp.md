@@ -136,9 +136,9 @@ API verifies the signature and the session on every call.
 | `add_canvas_sidekick` | `POST /canvases/:id/sidekicks`, the operation id as the Sidekick's id and its instructions' `clientMessageId` |
 | `send_canvas_message` | `POST /conversations/:id/substreams/0/messages` |
 | `update_canvas` | `PATCH /canvases/:id` |
-| `set_canvas_audience` | `POST /canvases/:id/audience`: required editor visibility/userIds, optional artifactVisibility/artifactUserIds and expectedRevision. Even artifact-only changes send the complete current editor list; omission is rejected before calling the API. With `workspace` editors the Canvas stores at least `workspace` artifact access, raising `editors` or `participants` and keeping `artifactUserIds`. Moving editors off `workspace` does not narrow it, so a caller making a Canvas private sends `artifactVisibility`. |
+| `set_canvas_audience` | `POST /canvases/:id/audience`: required editor visibility/userIds, optional artifactVisibility/artifactUserIds and expectedRevision. Even artifact-only changes send the complete current editor list; omission is rejected before calling the API. With `workspace` editors the Canvas stores at least `workspace` artifact access, raising `editors` or `participants` and keeping `artifactUserIds`. Moving editors off `workspace` does not narrow it, so a caller making a Canvas private sends `artifactVisibility`. A client's model reads and writes `organization` for the stored `workspace`: every tool result's `visibility` and `artifactVisibility` are translated in `tool()`, and this tool's two enums are `modelEnum`s that still accept the stored name. |
 | `get_artifact_link` | `GET /resources/:id/artifact/link`: stable URL without minting a viewer session |
-| `invite_canvas_guests` | `GET /workspace`, then `POST /sharing` |
+| `invite_canvas_guests` | `GET /workspace`, then `POST /sharing`. Each invitation answers what it `opens` (`{ kind: "canvas", canvasId }`), in place of the stored target, which names a `workstream` in a `workspace` |
 | `decide_canvas_access_request` | `POST /canvases/:id/access-requests/:userId/decision` |
 | `pin_canvas` | `POST /canvases/:id/pin` |
 | `rename_artifact` | `PATCH /conversations/:id/resources/:resourceId` |
@@ -156,7 +156,7 @@ same `operationId` (stated once, in that parameter's description).
 
 `publish_file` and `publish_site` bring something made outside Rally (a
 Claude or ChatGPT artifact, a file in an OpenCode workspace) into a Canvas as
-one of its artifacts, exactly as written. `POST /canvases/:id/artifacts`
+its artifact, exactly as written. `POST /canvases/:id/artifacts`
 (`CanvasPublicationService`) takes a `file` (one document, as text or base64)
 or a `site`. It authorizes the person as a reader who can take part in the
 Canvas, then writes through `resource-publication.ts`, the writes Rally's own

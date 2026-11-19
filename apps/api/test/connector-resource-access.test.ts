@@ -1,3 +1,4 @@
+import { auditedAvalonTools } from "./helpers/audited-tools";
 import { asHarnessRunId, asAutomationId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { WorkstreamWorkflowInput, AutomationDraft } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
@@ -272,7 +273,7 @@ describe("reaching one resource through whichever connection can", () => {
 
     expect(writes).toEqual(["workspace-token"]);
     expect(result.output).toMatchObject({
-      servedThrough: { plugin: "plugin_google_2", scope: "workspace", couldNotReach: "plugin_google" },
+      servedThrough: { plugin: "plugin_google_2", scope: "organization", couldNotReach: "plugin_google" },
     });
     expect(result.summary).toBe("Updated 1 row in Google Sheets (through plugin_google_2; plugin_google could not reach it)");
   });
@@ -341,7 +342,7 @@ describe("reaching one resource through whichever connection can", () => {
   it("names which connection can open a file and how far", async () => {
     googleAsTwoAccounts();
     const { env, personal, workspace } = await fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput(), {
+    const tool = auditedAvalonTools(env, workflowInput(), {
       connectorTypes: ["google"],
       connections: () => [personal, workspace],
     }).find((candidate) => candidate.definition.name === "check_resource_access");
@@ -362,7 +363,7 @@ describe("reaching one resource through whichever connection can", () => {
         name: "Creator Content Intake",
         connections: [
           { plugin: "plugin_google", scope: "personal", access: "none", resourceId: FILE_ID, reason: "not_found_or_not_shared" },
-          { plugin: "plugin_google_2", scope: "workspace", access: "edit", resourceId: FILE_ID, name: "Creator Content Intake" },
+          { plugin: "plugin_google_2", scope: "organization", access: "edit", resourceId: FILE_ID, name: "Creator Content Intake" },
         ],
         canEdit: "plugin_google_2",
         canRead: "plugin_google_2",
@@ -376,7 +377,7 @@ describe("reaching one resource through whichever connection can", () => {
     googleAsTwoAccounts({ visibleTo: ["workspace-token"] });
     const { env, personal, workspace } = await fixture();
     const frozenWithoutDrive = { ...workspace, grantedScopes: ["gmail.read"], toolCapabilities: ["gmail.read"] } as Frozen;
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput(), {
+    const tool = auditedAvalonTools(env, workflowInput(), {
       connectorTypes: ["google"],
       connections: () => [personal, frozenWithoutDrive],
     }).find((candidate) => candidate.definition.name === "check_resource_access");

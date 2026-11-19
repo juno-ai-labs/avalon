@@ -208,7 +208,7 @@ export async function bootstrapTerminalRepository(
     terminalPortFactory,
   );
   if (!selection) {
-    throw new TerminalToolError("repository_not_configured", "This work stream has no active GitHub repository. Choose an authorized owner/name with checkout_repository, then retry the repository operation.");
+    throw new TerminalToolError("repository_not_configured", "This conversation has no active GitHub repository. Choose an authorized owner/name with checkout_repository, then retry the repository operation.");
   }
   const remoteAccess = await assertRepositoryRemoteAccess(env.DB, selection, "read_only", delegation);
   const alreadyBootstrapped = selection.bootstrappedSandboxGeneration === sandbox.generation;
@@ -450,7 +450,7 @@ export function createTerminalRepositoryPublisher(
       if (!selection) {
         throw new TerminalToolError(
           "repository_not_configured",
-          "This work stream has no active GitHub repository. Choose one with checkout_repository, then retry publish_branch_and_pr.",
+          "This conversation has no active GitHub repository. Choose one with checkout_repository, then retry publish_branch_and_pr.",
         );
       }
       await assertRepositoryRemoteAccess(env.DB, selection, "full_access", delegation);
@@ -503,7 +503,7 @@ export function createTerminalRepositoryPublisher(
       }
       const branch = await runInspection(provider, sandbox.providerSandboxId, "branch", "git branch --show-current");
       if (branch.exitCode !== 0 || branch.stdout.trim() !== selection.headRef) {
-        throw new TerminalToolError("publication_conflict", `The repository must be on ${selection.headRef}. Check out that host-selected branch and retry.`, { reason: "Check out the fixed work-stream branch, then revalidate the committed changes." });
+        throw new TerminalToolError("publication_conflict", `The repository must be on ${selection.headRef}. Check out that host-selected branch and retry.`, { reason: "Check out the fixed branch Rally prepared, then revalidate the committed changes." });
       }
       const head = await runInspection(provider, sandbox.providerSandboxId, "head", "git rev-parse HEAD");
       const headSha = head.stdout.trim();
@@ -533,7 +533,7 @@ export function createTerminalRepositoryPublisher(
         throw new TerminalToolError("publication_policy_denied", "Terminal cannot publish GitHub Actions workflow changes. Remove `.github/workflows/` changes and ask a coding workflow with elevated review to publish them.");
       }
       if (context.executionPrincipal.type !== "user") {
-        throw new TerminalToolError("publication_not_authorized", "Publication requires a current human work-stream participant. Stop and ask a participant to request publication.");
+        throw new TerminalToolError("publication_not_authorized", "Publication requires a current human participant of this conversation. Stop and ask a participant to request publication.");
       }
       const requesterUserId = context.executionPrincipal.userId;
       const participant = (await createIdentityObjectPort(
@@ -542,7 +542,7 @@ export function createTerminalRepositoryPublisher(
         context.workstreamId,
       ).participants()).some((row) => row.user_id === requesterUserId);
       if (!participant) {
-        throw new TerminalToolError("publication_not_authorized", "The participant who requested publication no longer belongs to this work stream. Stop and ask a current participant to request publication.");
+        throw new TerminalToolError("publication_not_authorized", "The participant who requested publication no longer belongs to this conversation. Stop and ask a current participant to request publication.");
       }
       const token = await gateway.mintWriteToken(selection, context.signal);
       await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
@@ -627,7 +627,7 @@ export function createTerminalRepositoryPublisher(
           let outcome: "created" | "updated" = "created";
           if (pullRequest) {
             if (pullRequest.state !== "open") {
-              throw new TerminalToolError("publication_target_closed", "The convergent pull request is already closed or merged. Rally will not reopen it or create a duplicate branch; select a fresh work stream for a new pull request.");
+              throw new TerminalToolError("publication_target_closed", "The convergent pull request is already closed or merged. Rally will not reopen it or create a duplicate branch; start a fresh conversation for a new pull request.");
             }
             pullRequest = await gateway.updatePullRequest(selection, token.accessToken, pullRequest.number, input, context.signal);
             outcome = "updated";

@@ -1,5 +1,6 @@
 import { requireUsageAllowance, isUsageAllowanceExhausted } from "./usage-admission";
 import { agentModelTraceFeature } from "@rally/contracts/runtime-config";
+import { ORGANIZATION_MODEL_NAMES, modelFailure, modelName } from "@rally/contracts/model-names";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
 
@@ -155,6 +156,7 @@ import {
   type ConnectorProductState,
   CONNECTOR_LIST_TOOL_NAME,
   connectorConnectionCardSummary,
+  connectorScopesForModel,
   connectorProductStateSummary,
   connectorListSummary,
   foldConnectorProductStates,
@@ -1212,7 +1214,7 @@ async function loadTriggerFencedTranscriptMessages(
     const row = await transcript.message({ messageId });
     const sequence = row?.sequence_number;
     if (!Number.isSafeInteger(sequence) || (sequence ?? -1) < 0) {
-      throw Object.assign(new Error("The run trigger message is not available in this work stream"), { code });
+      throw Object.assign(new Error("The run trigger message is not available in this conversation"), { code });
     }
     return sequence!;
   };
@@ -1386,17 +1388,21 @@ async function projectModelProtocolTranscript(
       } else {
         const durableError = parseJson<{ code?: unknown; message?: unknown; data?: unknown }>(row.errorJson, {});
         const structured = readStructuredFailure(durableError.data);
+        // The receipt keeps the stored code; the model reads it as it did
+        // when the call failed, in product words.
         resultContent = {
           success: false,
           kind: row.status === "ambiguous" ? "ambiguous_external_write" : "external",
-          error: typeof durableError.message === "string"
-            ? durableError.message.slice(0, 500)
-            : typeof durableError.code === "string"
-              ? durableError.code.slice(0, 120)
-              : row.status === "ambiguous"
-                ? "ambiguous_external_write"
-                : "tool_failed",
-          ...(structured ? { data: structured } : {}),
+          ...modelFailure({
+            error: typeof durableError.message === "string"
+              ? durableError.message.slice(0, 500)
+              : typeof durableError.code === "string"
+                ? durableError.code.slice(0, 120)
+                : row.status === "ambiguous"
+                  ? "ambiguous_external_write"
+                  : "tool_failed",
+            data: structured ?? undefined,
+          }),
         };
       }
 
@@ -6000,6 +6006,7 @@ async function loadHarnessTools(
     prefix: string,
     connectionId: string | null,
     wirePrefix = prefix,
+    retiredPrefixes: readonly string[] = [],
   ): HarnessTool[] => {
     if (!tool.definition.pagination) return [tool];
     const expanded = withToolPagination(tool, { receipts: pageReceipts,
@@ -6007,14 +6014,15 @@ async function loadHarnessTools(
         if (!paginationLease) throw new Error("pagination_attempt_lease_missing");
         return { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner };
       },
-      prefix, wirePrefix, connectionId,
+      prefix, wirePrefix, connectionId, retiredPrefixes,
     });
     for (const pageTool of expanded) paginationSources.set(pageTool, tool);
     return expanded;
   };
-  // The page-ID namespaces stay `table_` and `workstream_`: they name where a
-  // page came from, are stored on issued rows, and are validated on the way
-  // back in. Only `rally:workstream`'s model-facing prefix went away.
+  // The page-ID namespaces are `table_` and `page_`: they name where a page
+  // came from, are stored on issued rows, and are validated on the way back
+  // in. `page_` was `workstream_`, the conversation's storage name, until the
+  // model stopped being shown it; an ID issued under it is still redeemed.
   // Filled by the connection loop below; the access check reads it when it
   // runs, by which point every connection of the run is in it.
   const frozenConnections = new Map<string, FrozenConnectorPlugin>();
@@ -6025,7 +6033,7 @@ async function loadHarnessTools(
     connections: () => [...frozenConnections.values()],
   }).flatMap((tool) => {
     const tableTool = tool.definition.capability.startsWith("table.");
-    return expandPages(tool, tableTool ? "table" : "workstream", null, tableTool ? "table" : "");
+    return expandPages(tool, tableTool ? "table" : "page", null, tableTool ? "table" : "", tableTool ? [] : ["workstream"]);
   }).map((tool) =>
     // Both pause on a question a person answers; where answers go to an agent
     // instead, neither may ask one, and each says where to send the question
@@ -6988,7 +6996,7 @@ function servedThrough<Result extends { output: unknown; summary: string }>(
   return {
     ...result,
     output: output && typeof output === "object" && !Array.isArray(output)
-      ? { ...output, servedThrough: { plugin: served.modelPluginId, scope: served.scope, couldNotReach: refused.modelPluginId } }
+      ? { ...output, servedThrough: { plugin: served.modelPluginId, scope: modelName(ORGANIZATION_MODEL_NAMES, served.scope), couldNotReach: refused.modelPluginId } }
       : output,
     summary: `${result.summary} (through ${served.modelPluginId}; ${refused.modelPluginId} could not reach it)`,
   };
@@ -7158,10 +7166,10 @@ async function assertExecutionPrincipalAuthorized(
   principal: WorkstreamWorkflowInput["executionPrincipal"],
 ): Promise<boolean> {
   if (principal.type === "workspace") {
-    if (principal.workspaceId !== workspaceId) throw new ConnectorError("unauthorized", "Workspace principal mismatch");
+    if (principal.workspaceId !== workspaceId) throw new ConnectorError("unauthorized", "Organization principal mismatch");
     const workspace = await db.prepare("SELECT id FROM workspaces WHERE id = ?")
       .bind(workspaceId).first<{ id: string }>();
-    if (!workspace) throw new ConnectorError("unauthorized", "Workspace is unavailable");
+    if (!workspace) throw new ConnectorError("unauthorized", "Organization is unavailable");
     return false;
   }
   const member = await db.prepare(
@@ -7170,7 +7178,7 @@ async function assertExecutionPrincipalAuthorized(
        JOIN users u ON u.id = wm.user_id
       WHERE wm.workspace_id = ? AND wm.user_id = ?`,
   ).bind(workspaceId, principal.userId).first<{ status: string; access_class?: string }>();
-  if (member?.status !== "active") throw new ConnectorError("unauthorized", "User is not an active workspace member");
+  if (member?.status !== "active") throw new ConnectorError("unauthorized", "User is not an active member of this Organization");
   return member.access_class === "guest";
 }
 
@@ -7220,7 +7228,7 @@ async function readRunAuthority(
   ]);
   let startedAt: number;
   if (!workstream || workstream.archived_at != null) {
-    throw new ConnectorError("unauthorized", "Work stream is no longer active");
+    throw new ConnectorError("unauthorized", "This conversation is no longer active");
   }
 
   // Eligibility is selected at activation and reused during this attempt.
@@ -7257,13 +7265,13 @@ async function readRunAuthority(
     const access = await parent.authorizeViewer(viewer);
     recordOptionalTiming(onTiming, "conversation", startedAt);
     if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
-    if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
+    if (access.archived) throw new ConnectorError("unauthorized", "This conversation is no longer active");
   } else if (!input.automationRun && (input.parentKind === "canvas" || (input.substreamId && input.substreamId !== "0"))) {
     startedAt = Date.now();
     const parent = await conversationParentStub(env, input);
     const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
     recordOptionalTiming(onTiming, "conversation", startedAt);
-    if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
+    if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "This conversation is no longer active");
   }
 
   if (!input.automationRun) {
@@ -8323,7 +8331,7 @@ function easyEnglishCurrentTime(
   return [
     `current local time: ${parts.hour}:${parts.minute} ${parts.dayPeriod}`,
     `local timezone: ${timezone}`,
-    `workspace timezone: ${workspaceTimezone}`,
+    `organization timezone: ${workspaceTimezone}`,
     `local date: ${parts.month} ${parts.day} ${parts.year}`,
     `iso8601 timestamp: ${instant.toISOString()}`,
   ].join("\n");
@@ -8403,11 +8411,15 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
   if (workstreamTools.length === 0) return null;
   return {
     canonicalId: AVALON_WORKSTREAM_PLUGIN_ID,
-    modelId: "rally_workstream",
+    // Named for what its tools hold. `rally_workstream`, the storage name of a
+    // conversation, is still answered so a program copied from an older turn
+    // reaches these tools.
+    modelId: "rally_resources",
+    modelIdAliases: ["rally_workstream"],
     // No wire prefix. This plugin is always active and every tool here names
     // its own object — `list_resources`, `schedule_wakeup`, `run_subagent` —
-    // so `workstream_` repeated the one context the run never leaves. Page IDs
-    // keep the `workstream_` namespace; see `expandPages`.
+    // so a prefix repeated the one context the run never leaves. Page IDs
+    // carry the `page_` namespace; see `expandPages`.
     shortWireName: "",
     displayName: "Resources and wake-ups",
     searchAliases: ["task", "resources", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
@@ -8621,7 +8633,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         const result = await checkResourceAccess(
           env, input, resourceAccess.connections(), accessTypes, raw, context.signal,
         );
-        return { output: result, summary: resourceAccessSummary(result) };
+        return { output: connectorScopesForModel(result), summary: resourceAccessSummary(result) };
       },
     } satisfies HarnessTool] : []),
     ...createWorkstreamAttachmentTools(env, input),
@@ -8672,7 +8684,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         },
         execute: async (raw: unknown) => {
           const state = await readConnectorConnectionState(env, input, raw);
-          return { output: state, summary: connectorProductStateSummary(state) };
+          return { output: connectorScopesForModel(state), summary: connectorProductStateSummary(state) };
         },
       } satisfies HarnessTool,
       {
@@ -8683,7 +8695,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         },
         execute: async (raw: unknown) => {
           const list = await listConnectors(env, input, raw);
-          return { output: list, summary: connectorListSummary(list) };
+          return { output: connectorScopesForModel(list), summary: connectorListSummary(list) };
         },
       } satisfies HarnessTool,
       input.automationRun ? {
@@ -8715,7 +8727,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         execute: async (raw: unknown) => {
           const card = ConnectorConnectionCardInputSchema.parse(raw);
           const summary = connectorConnectionCardSummary(card);
-          return { output: card, summary };
+          return { output: connectorScopesForModel(card), summary };
         },
       } satisfies HarnessTool,
     ]),
@@ -8823,7 +8835,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           const pendingWakeups = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_limit_reached",
-            `This thread already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
+            `This conversation already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
             "Call list_wakeups, then cancel one pending wake-up before retrying.",
             pendingWakeups.map((wakeup) => wakeup.wakeupId),
           );
@@ -9144,7 +9156,7 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
       definition: {
         name: "search",
         description:
-          "Search the public web only when the request is about public information. Never use this instead of an available connector for private workspace data such as Drive, Gmail, GitHub, Linear, or Notion. Returns ranked links with titles and descriptions, not page content. Read selected results with web_fetch.",
+          "Search the public web only when the request is about public information. Never use this instead of an available connector for the Organization's private data such as Drive, Gmail, GitHub, Linear, or Notion. Returns ranked links with titles and descriptions, not page content. Read selected results with web_fetch.",
         capability: "web.search",
         mode: "read",
         idempotency: "safe",
