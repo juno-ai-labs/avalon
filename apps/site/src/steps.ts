@@ -35,13 +35,17 @@ export function applyStep(root: HTMLElement, step: number, last: number, played 
   }
 }
 
-/** Calls `change` with whether `element` is on screen, each time that flips. */
-export function whenVisible(element: Element, change: (visible: boolean) => void, threshold = 0): void {
+/**
+ * Calls `change` with whether `element` is on screen, each time that flips.
+ * `rootMargin` shrinks or grows the screen it is tested against: a negative
+ * bottom margin makes "on screen" mean "scrolled well into view".
+ */
+export function whenVisible(element: Element, change: (visible: boolean) => void, threshold = 0, rootMargin = '0px'): void {
   let visible: boolean | undefined;
   new IntersectionObserver(([entry]) => {
     const next = entry?.isIntersecting ?? false;
     if (next === visible) return;
     visible = next;
     change(next);
-  }, { threshold }).observe(element);
+  }, { threshold, rootMargin }).observe(element);
 }

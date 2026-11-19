@@ -89,9 +89,10 @@
   display: none !important;
 }
 
-/* The mail slot keeps the height of its tallest message, so the page below never moves. */
+/* The mail slot keeps the height of its tallest message, so the page below
+   never moves. It sits above the page, so an email can travel over it as it leaves. */
 .story-mail {
-  display: grid;
+  display: grid; position: relative; z-index: 2;
 }
 
 .story.is-live .story-mail > * {
@@ -103,14 +104,17 @@
   display: block !important; visibility: hidden;
 }
 
-.story-ask,
-.story-email {
+.story-ask {
   border: 1px solid var(--line); border-radius: 10px; background: #f8f8f1; padding: 12px 15px;
   min-width: 0;
 }
 
+/* An email is a little Gmail card: the mark, who it is from, the subject, and
+   what Rally did with it. It arrives, travels on and fades; the page changes as it goes. */
 .story-email {
-  background: var(--white); border-color: #d4d9c8; box-shadow: 0 8px 22px -18px #57624866;
+  justify-self: start; width: min(100%, 26rem); min-width: 0; border: 1px solid #d4d9c8;
+  border-radius: 12px; background: var(--white); padding: 11px 14px 12px;
+  box-shadow: 0 1px 0 #ffffff inset, 0 10px 26px -16px #5762487a;
 }
 
 .story-label {
@@ -120,6 +124,11 @@
 
 .story-label svg {
   width: 14px; height: 14px; flex: none; fill: currentColor;
+}
+
+/* Gmail's mark wears Gmail's red on an email card, so the card reads as Gmail at a glance. */
+.story-email .story-label svg {
+  color: #c5463a;
 }
 
 .story-label b {
@@ -150,18 +159,57 @@
   background: url("/brand/rally-mark-ink.svg") center / contain no-repeat;
 }
 
-.story-email.is-new {
-  animation: story-arrive 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+/* How mail flows. Down is the default: a card floats in from above, then keeps
+   sinking toward the page and dissolves into it. `data-flow="across"` on the
+   mail slot sends it in from the left and out to the right instead. The player
+   adds `is-new` when a step's mail arrives and `is-leaving` when it moves on. */
+.story-mail .is-new.story-email,
+.story-mail .is-new .story-email {
+  animation: mail-down-in 0.62s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-.story-email.is-new .story-did {
-  animation: story-fade 0.4s 0.7s both;
+.story-mail .is-leaving.story-email,
+.story-mail .is-leaving .story-email {
+  animation: mail-down-out 1.15s cubic-bezier(0.45, 0, 0.75, 0.6) both;
 }
 
-.story-dot {
-  position: absolute; top: -5px; left: -5px; z-index: 3; width: 10px; height: 10px;
-  border-radius: 50%; background: var(--green); pointer-events: none;
+.story-mail[data-flow="across"] .is-new.story-email,
+.story-mail[data-flow="across"] .is-new .story-email {
+  animation-name: mail-across-in;
 }
+
+.story-mail[data-flow="across"] .is-leaving.story-email,
+.story-mail[data-flow="across"] .is-leaving .story-email {
+  animation-name: mail-across-out;
+}
+
+.story-mail .is-new .story-did {
+  animation: story-fade 0.4s 0.8s both;
+}
+
+/* A burst: several emails landing together, for the busy moments. The first
+   is the one the page acts on; the rest are smaller, and each arrives and
+   leaves a beat after the one before. */
+.story-burst {
+  display: flex; align-items: flex-start; gap: 8px; min-width: 0;
+}
+
+.story-burst > .story-email {
+  flex: 0 1 auto; width: auto; max-width: 22rem;
+}
+
+.story-burst > .story-email.is-small {
+  flex: 0 1 11rem; min-width: 0; padding: 9px 11px; opacity: 0.92;
+}
+
+.story-burst > .story-email.is-small .story-from,
+.story-burst > .story-email.is-small .story-subject {
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px;
+}
+
+.story-burst > .story-email:nth-child(2) { animation-delay: 0.12s; }
+.story-burst > .story-email:nth-child(3) { animation-delay: 0.24s; }
+.story-burst > .story-email:nth-child(4) { animation-delay: 0.36s; }
 
 .story-page {
   position: relative; margin-top: 10px; border: 1px solid #d4d9c8; border-radius: 12px;
@@ -180,8 +228,20 @@
   position: relative; z-index: 2;
 }
 
-@keyframes story-arrive {
-  from { opacity: 0; transform: translateY(-10px); }
+@keyframes mail-down-in {
+  from { opacity: 0; transform: translateY(-30px) scale(0.98); }
+}
+
+@keyframes mail-down-out {
+  to { opacity: 0; transform: translateY(54px) scale(0.96); filter: blur(3px); }
+}
+
+@keyframes mail-across-in {
+  from { opacity: 0; transform: translateX(-64px); }
+}
+
+@keyframes mail-across-out {
+  to { opacity: 0; transform: translateX(84px) scale(0.97); filter: blur(3px); }
 }
 
 @keyframes story-fade {
@@ -525,6 +585,24 @@
     padding: 13px;
   }
 
+  /* On a phone a burst is the lead card at full width with the rest in a row
+     of small cards under it: three abreast would squeeze each to a sliver. */
+  .story-burst {
+    flex-wrap: wrap; gap: 6px;
+  }
+
+  .story-burst > .story-email:not(.is-small) {
+    flex: 1 1 100%; max-width: none;
+  }
+
+  .story-burst > .story-email.is-small {
+    flex: 1 1 0; padding: 7px 10px;
+  }
+
+  .story-burst > .story-email.is-small .story-subject {
+    display: none;
+  }
+
   .kit-head h3 {
     font-size: 22px;
   }
@@ -559,8 +637,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .story-email.is-new,
-  .story-email.is-new .story-did,
+  .story-mail .story-email,
+  .story-mail .story-did,
   .story-page [data-at].is-new:not(.is-moved),
   .story-page .is-touched,
   .kit-live::before,

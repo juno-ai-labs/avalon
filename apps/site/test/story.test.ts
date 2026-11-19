@@ -2,7 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Callback = (entries: Array<{ isIntersecting: boolean }>) => void;
-let observers: Callback[] = [];
+/** Each observer the player made, with the margin it asked for: the plain one is "on screen", the other "scrolled to". */
+let observers: Array<{ callback: Callback; margin: string }> = [];
+const onScreen = (visible: boolean): void => observers.filter(({ margin }) => margin === '0px').forEach(({ callback }) => callback([{ isIntersecting: visible }]));
+const scrolledTo = (): void => observers.filter(({ margin }) => margin !== '0px').forEach(({ callback }) => callback([{ isIntersecting: true }]));
 
 /** A story of two slides, two emails each, drawn at its last step as a page writes it. */
 const story = (attributes = ''): string => `
@@ -44,7 +47,8 @@ async function start(markup: string, reduced = false): Promise<void> {
   vi.stubGlobal('matchMedia', () => ({ matches: reduced }));
   document.body.innerHTML = markup;
   await import('../src/story');
-  for (const observe of observers) observe([{ isIntersecting: true }]);
+  onScreen(true);
+  scrolledTo();
 }
 
 beforeEach(() => {
@@ -52,7 +56,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   observers = [];
   vi.stubGlobal('IntersectionObserver', class {
-    constructor(callback: Callback) { observers.push(callback); }
+    constructor(callback: Callback, options?: { rootMargin?: string }) { observers.push({ callback, margin: options?.rootMargin ?? '0px' }); }
     observe(): void {}
   });
   // jsdom has no Web Animations and cannot scroll an element.
@@ -76,14 +80,21 @@ describe('story player', () => {
     expect(has('a-tick', 'is-done')).toBe(false);
   });
 
-  it('shows each email first and changes the page a moment later', async () => {
+  it('brings each email in, sends it on its way, and changes the page as it goes', async () => {
     await start(story());
-    vi.advanceTimersByTime(2800);
+    vi.advanceTimersByTime(2600);
     expect(has('a-ask', 'is-gone')).toBe(true);
     expect(has('a-mail-1', 'is-on')).toBe(true);
-    // The email is up; the page has not changed yet.
+    expect(has('a-mail-1', 'is-new')).toBe(true);
+    // The email is up to be read; nothing else has happened yet.
+    expect(has('a-mail-1', 'is-leaving')).toBe(false);
     expect(has('a-new', 'is-on')).toBe(false);
-    vi.advanceTimersByTime(700);
+    vi.advanceTimersByTime(1900);
+    // It moves on, and the page still has not changed: cause comes before effect.
+    expect(has('a-mail-1', 'is-leaving')).toBe(true);
+    expect(has('a-mail-1', 'is-new')).toBe(false);
+    expect(has('a-new', 'is-on')).toBe(false);
+    vi.advanceTimersByTime(500);
     expect(has('a-new', 'is-on')).toBe(true);
     expect(has('a-new', 'is-touched')).toBe(true);
     expect(has('a-live', 'is-updated')).toBe(true);
@@ -92,7 +103,7 @@ describe('story player', () => {
 
   it('swaps what a step replaces, marks the moved one and ticks what is done', async () => {
     await start(story());
-    vi.advanceTimersByTime(2800 + 3400 + 700);
+    vi.advanceTimersByTime(2600 + 4200 + 2400);
     expect(has('a-mail-1', 'is-gone')).toBe(true);
     expect(has('a-mail-2', 'is-on')).toBe(true);
     expect(has('a-old', 'is-gone')).toBe(true);
@@ -109,7 +120,7 @@ describe('story player', () => {
     document.addEventListener('story:slide', (event) => up.push((event as CustomEvent<{ slide: HTMLElement }>).detail.slide.id));
     await start(story());
     expect(up).toEqual(['a']);
-    vi.advanceTimersByTime(2800 + 3400 + 3400 + 2200);
+    vi.advanceTimersByTime(2600 + 4200 + 4200 + 1600);
     expect(up).toEqual(['a', 'b']);
     expect(has('b', 'is-active')).toBe(true);
     expect(has('a', 'is-active')).toBe(false);
@@ -120,9 +131,40 @@ describe('story player', () => {
     expect(has('b-mail-1', 'is-on')).toBe(false);
   });
 
+  it('starts only once a person has scrolled to it, then plays while any of it is on screen', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    document.body.innerHTML = story();
+    await import('../src/story');
+    // Its first pixels are on screen, but nobody has scrolled to it: it waits at its opening.
+    onScreen(true);
+    vi.advanceTimersByTime(30_000);
+    expect(has('a-ask', 'is-gone')).toBe(false);
+    expect(has('a-mail-1', 'is-on')).toBe(false);
+    scrolledTo();
+    vi.advanceTimersByTime(2600);
+    expect(has('a-mail-1', 'is-on')).toBe(true);
+    // Scrolled right off the screen mid-story, it waits where it was, and carries on when it is back.
+    onScreen(false);
+    vi.advanceTimersByTime(30_000);
+    expect(has('a-mail-2', 'is-on')).toBe(false);
+    onScreen(true);
+    vi.advanceTimersByTime(4200);
+    expect(has('a-mail-2', 'is-on')).toBe(true);
+  });
+
+  it('plays a tab a person picks even before the story has been scrolled to', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    document.body.innerHTML = story();
+    await import('../src/story');
+    onScreen(true);
+    document.getElementById('tab-b')!.click();
+    vi.advanceTimersByTime(2600);
+    expect(has('b-mail-1', 'is-on')).toBe(true);
+  });
+
   it('replays the chosen slide when the story is manual', async () => {
     await start(story('data-story-manual'));
-    vi.advanceTimersByTime(2800 + 3400 + 3400 + 2200);
+    vi.advanceTimersByTime(2600 + 4200 + 4200 + 1600);
     expect(has('a', 'is-active')).toBe(true);
     expect(has('a-mail-1', 'is-on')).toBe(false);
     expect(has('a-ask', 'is-gone')).toBe(false);
@@ -139,7 +181,7 @@ describe('story player', () => {
     document.getElementById('tab-b')!.click();
     expect(pause.getAttribute('aria-pressed')).toBe('false');
     expect(has('b', 'is-active')).toBe(true);
-    vi.advanceTimersByTime(2800);
+    vi.advanceTimersByTime(2600);
     expect(has('b-mail-1', 'is-on')).toBe(true);
   });
 

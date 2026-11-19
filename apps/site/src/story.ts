@@ -5,23 +5,33 @@
  * page's markup follows is in docs/site-audience-pages.md.
  *
  * A story is one or more slides. A slide has a `.story-mail`, where the ask
- * and then each email show one at a time, and one or more `.story-page`, the
- * page those emails change. Each step shows its email first and changes the
- * page a moment later, so the eye reads cause, then effect. This module only
- * keeps time: it sets each step's classes and announces `story:slide` and
- * `story:step`; how a change looks is each page's own stylesheet (and, for
- * more, a listener). It only runs on
- * screen, a chosen tab plays its slide from the start, and the pause button
- * stops it. With reduced motion nothing moves and every slide shows its end.
+ * and then each email show, and one or more `.story-page`, the page those
+ * emails change. Every step tells the same small story, in this order: an
+ * email arrives as a little Gmail card, it travels on and fades away, and as
+ * it goes the page changes. The eye reads cause, then effect.
+ *
+ * This module only keeps time: it sets each step's classes and announces
+ * `story:slide` and `story:step`; how an email arrives and leaves, and how a
+ * change looks, is each page's own stylesheet. A story plays only once a
+ * person has scrolled to it, a chosen tab plays its slide from the start, and
+ * the pause button stops it. With reduced motion nothing moves and every
+ * slide shows its end.
  */
 import { applyStep, reducedMotion as reduced, whenVisible } from './steps';
 
-/** Seconds the opening holds (the ask), each email holds, and the last one holds on top. */
-const OPENING_HOLD = 2.8;
-const STEP_HOLD = 3.4;
-const CLOSING_HOLD = 2.2;
-/** Milliseconds between an email showing and the page changing. */
-const PAGE_DELAY = 700;
+/** Seconds the opening holds (the ask), each email's step lasts, and the last one holds on top. */
+const OPENING_HOLD = 2.6;
+const STEP_HOLD = 4.2;
+const CLOSING_HOLD = 1.6;
+/** Milliseconds into a step at which its email starts to leave, and at which the page changes as it goes. */
+const MAIL_LEAVES = 1900;
+const PAGE_DELAY = 2400;
+/**
+ * A story starts once a person has scrolled to it: its top has to come this
+ * far up the screen, not merely show its first pixel. Once started it plays
+ * while any of it is on screen.
+ */
+const SCROLLED_TO = '0px 0px -30% 0px';
 
 const lastStep = (slide: HTMLElement): number => Number(slide.dataset.steps ?? 3);
 
@@ -50,29 +60,6 @@ function move(slide: HTMLElement, step: number, from: Map<string, DOMRect>): voi
   }
 }
 
-/** A dot leaves the email and lands on the first thing it changed. */
-function fly(slide: HTMLElement, step: number): void {
-  const source = slide.querySelector<HTMLElement>(`.story-mail [data-at="${step}"]`);
-  const target = parts(slide, `.story-page [data-touch~="${step}"]`).find((part) => part.offsetParent !== null);
-  if (!source || !target) return;
-  const box = slide.getBoundingClientRect();
-  const from = source.getBoundingClientRect();
-  const to = target.getBoundingClientRect();
-  const x0 = from.left + 22 - box.left;
-  const y0 = from.bottom - 14 - box.top;
-  const x1 = to.left + Math.min(to.width / 2, 28) - box.left;
-  const y1 = to.top + to.height / 2 - box.top;
-  const dot = document.createElement('span');
-  dot.className = 'story-dot';
-  slide.append(dot);
-  dot.animate([
-    { transform: `translate(${x0}px, ${y0}px) scale(.5)`, opacity: 0 },
-    { transform: `translate(${x0}px, ${y0}px) scale(1)`, opacity: 1, offset: 0.15 },
-    { transform: `translate(${x1}px, ${y1}px) scale(1)`, opacity: 1, offset: 0.85 },
-    { transform: `translate(${x1}px, ${y1}px) scale(2.6)`, opacity: 0 },
-  ], { duration: 640, easing: 'cubic-bezier(.5,0,.2,1)' }).finished.then(() => dot.remove(), () => dot.remove());
-}
-
 function run(story: HTMLElement): void {
   const tabs = Array.from(story.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
   const slides = Array.from(story.querySelectorAll<HTMLElement>('[data-slide]'));
@@ -80,27 +67,35 @@ function run(story: HTMLElement): void {
   const pause = story.querySelector<HTMLButtonElement>('[data-story-pause]');
   // A manual story stays on the slide a person chose and replays it.
   const manual = story.hasAttribute('data-story-manual');
-  // The dot that flies from an email to what it changed is one page's motion, not every page's.
-  const dot = story.hasAttribute('data-story-dot');
   if (!slides.length || !stage) return;
   let current = 0;
   let step = 0;
   let timer = 0;
   let pageTimer = 0;
+  let mailTimer = 0;
   let visible = false;
+  let started = false;
   let held = false;
 
   /** Puts a slide at a step with nothing animated. */
   const set = (slide: HTMLElement, at: number): void => {
     slide.dataset.step = String(at);
     for (const root of parts(slide, '.story-mail, .story-page')) applyStep(root, at, lastStep(slide), false);
-    for (const part of parts(slide, '.is-touched, .is-moved, .is-updated')) part.classList.remove('is-touched', 'is-moved', 'is-updated');
+    for (const part of parts(slide, '.is-touched, .is-moved, .is-updated, .is-leaving')) part.classList.remove('is-touched', 'is-moved', 'is-updated', 'is-leaving');
   };
 
-  /** Plays a slide forward to a step: the email now, the page a moment later. */
+  /** Plays a slide forward to a step: the email arrives, then leaves, and the page changes as it goes. */
   const play = (slide: HTMLElement, at: number): void => {
     slide.dataset.step = String(at);
+    for (const part of parts(slide, '.story-mail .is-leaving')) part.classList.remove('is-leaving');
     for (const root of parts(slide, '.story-mail')) applyStep(root, at, lastStep(slide));
+    mailTimer = window.setTimeout(() => {
+      // Whatever arrived this step, one card or a burst of them, moves on. `is-new` goes so a page's arrival rule cannot outrank its leaving one.
+      for (const mail of parts(slide, `.story-mail [data-at="${at}"]`)) {
+        mail.classList.remove('is-new');
+        mail.classList.add('is-leaving');
+      }
+    }, MAIL_LEAVES);
     pageTimer = window.setTimeout(() => {
       const from = leaving(slide, at);
       for (const part of parts(slide, '.is-touched, .is-moved')) part.classList.remove('is-touched', 'is-moved');
@@ -113,7 +108,6 @@ function run(story: HTMLElement): void {
         void live.offsetWidth;
         live.classList.add('is-updated');
       }
-      if (dot) fly(slide, at);
       // A page's own script can add its own motion to the step.
       slide.dispatchEvent(new CustomEvent('story:step', { bubbles: true, detail: { step: at } }));
     }, PAGE_DELAY);
@@ -129,7 +123,7 @@ function run(story: HTMLElement): void {
 
   const schedule = (): void => {
     window.clearTimeout(timer);
-    const running = !reduced && visible && !held;
+    const running = !reduced && started && visible && !held;
     story.classList.toggle('is-paused', !running);
     const last = lastStep(slides[current]!);
     const hold = step === 0 ? OPENING_HOLD : step === last ? STEP_HOLD + CLOSING_HOLD : STEP_HOLD;
@@ -139,6 +133,7 @@ function run(story: HTMLElement): void {
 
   const select = (index: number, chosen = false): void => {
     window.clearTimeout(pageTimer);
+    window.clearTimeout(mailTimer);
     current = (index + slides.length) % slides.length;
     tabs.forEach((tab, i) => {
       const on = i === current;
@@ -189,7 +184,8 @@ function run(story: HTMLElement): void {
 
   tabs.forEach((tab, index) => {
     tab.addEventListener('click', () => {
-      // Choosing an example is a request to see it, so it plays even if paused.
+      // Choosing an example is a request to see it, so it plays even if paused or not yet scrolled to.
+      started = true;
       if (held && pause) pause.click();
       select(index, true);
     });
@@ -235,6 +231,7 @@ function run(story: HTMLElement): void {
   // Web fonts swap in after the first measure and change every height.
   void document.fonts?.ready.then(lock);
   whenVisible(story, (next) => { visible = next; schedule(); });
+  whenVisible(story, (next) => { if (next && !started) { started = true; schedule(); } }, 0, SCROLLED_TO);
   select(0);
 }
 

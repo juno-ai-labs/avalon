@@ -66,6 +66,13 @@ A story is drawn at its last step, so it reads with no script. `story.ts`
 rewinds it and plays it forward: step 0 is the page as first built, and each
 later step is one email and what it changed.
 
+Every step tells the same small story, so a reader learns it once and
+recognises it in every example on every page: **an email arrives as a little
+Gmail card, travels on and fades away, and as it goes a value on the page
+changes.** Emails come in, the page updates. How the card travels is each
+example's own: floating down from the top, crossing from left to right, or
+several landing together as a burst.
+
 ```html
 <div class="story" data-story>
   <div class="story-bar">
@@ -104,17 +111,34 @@ Everything that changes says when, with five attributes, inside a
 
 On the slide, `data-steps` sets how many steps it has (3 if left out). On the
 story, `data-story-manual` keeps it on the slide a person chose and replays
-that one, and `data-story-dot` flies a dot from each email to the first thing
-it touched. A story with one slide needs no tabs.
+that one. A story with one slide needs no tabs.
 
-The player only keeps time. Each step it applies to the mail first and to the
-page 700 ms later, so the eye reads cause, then effect. It sets `s1` … `s<n>`
-on each `.story-mail` and `.story-page`, the classes above, and `is-new` on
-what arrived, then sends `story:step` (with `detail.step`) from the slide. When
-a slide comes up it sends `story:slide` (with `detail.slide`) from the story. How
-a change looks is the page's own stylesheet: a rule on `.s2 .thing`, a
-transition, an animation on `.is-touched`. A page that needs more than CSS
+The player only keeps time. A step lasts 4.2 seconds: the email arrives at
+once (`is-new`), at 1.9 seconds it starts to leave (`is-leaving` replaces
+`is-new` on whatever in `.story-mail` arrived this step), and at 2.4 seconds
+the page changes, so the eye reads cause, then effect. The player sets `s1` …
+`s<n>` on each `.story-mail` and `.story-page`, the classes above, and `is-new`
+on what arrived, then sends `story:step` (with `detail.step`) from the slide.
+When a slide comes up it sends `story:slide` (with `detail.slide`) from the
+story. How a change looks is the page's own stylesheet: a rule on `.s2 .thing`,
+a transition, an animation on `.is-touched`. A page that needs more than CSS
 listens for `story:step` in its own script.
+
+`story.css` gives an email its look and three ways to travel, which a page
+uses or replaces with its own rules on `.is-new` and `.is-leaving`:
+
+- **Down**, the default: the card floats in from above, then keeps sinking
+  toward the page and dissolves into it.
+- **Across**, `data-flow="across"` on the `.story-mail`: in from the left, out
+  to the right.
+- **A burst**, several cards in a `<div class="story-burst" data-at="n">`: the
+  first is the email the page acts on, the rest (`is-small`) are other mail
+  landing at the same moment, each a beat behind the last. On a phone the
+  small ones sit in a row under the first.
+
+A story starts once a person has scrolled to it (its top has come into the
+upper 70% of the screen, or they picked one of its tabs), and from then on
+plays while any of it is on screen.
 
 The stage is held at the height of its tallest slide's last step, and the mail
 slot at the height of its tallest message, so playing never moves the page
@@ -174,6 +198,17 @@ homepage story uses only the kit.
   takes the example for a spreadsheet they would have to keep up has missed the
   product. The player pulses `kit-live` (`is-updated`) on each step. Verified
   visually.
+- **Mail arrives, leaves, and the page changes.** In every example an email is
+  a little Gmail card (the mark, the sender, the subject, what Rally did) that
+  comes in, travels and fades, with the page's value changing as it goes. No
+  email stays on screen after its step, and nothing on a page changes without
+  one. The flow may differ between examples; the idea may not, because it is
+  the one thing a reader is meant to take from every example. A burst is
+  honest: each extra card either changes the page too or is plainly other
+  mail. Verified visually.
+- **Nothing plays before it is scrolled to.** A story below the fold that has
+  already run when the reader arrives has shown its point to nobody. Guard:
+  `starts only once a person has scrolled to it`.
 - **Plain words on the homepage and audience pages.** No "Canvas", "Sidekick",
   "reactive" or "artifact": these readers have not met the product. The
   product's own names appear on `/canvases/`, `/sidekicks/` and
@@ -237,7 +272,8 @@ Examples are illustrations. They run no jobs and read no mail.
 `pnpm --filter @rally/site exec vitest run test/site.test.ts` renders the
 shared header, the footer's audience column, the audience grid and sitemap,
 and checks the tracked ids on the homepage. `test/story.test.ts` plays a story
-in jsdom and checks each step's state, and `test/word-swap.test.ts` checks the
+in jsdom and checks each step's state (the email arriving, leaving, and the
+page changing after it) and that it waits to be scrolled to, and `test/word-swap.test.ts` checks the
 headline's words follow a slide. How a page looks and moves has no
 automated test: run `pnpm --filter @rally/site dev`, open the page at 1440px
 and 390px, and watch each story through, as the repository's rule on visible
@@ -271,6 +307,13 @@ sign-in and the click's path already names the audience. Sending every audience
 to the app's front door was the first version: it left a new person in an empty
 app to work out what to ask, so each page now starts a Marketplace template
 written for it.
+
+The first version of the examples left each email on screen until the next
+one replaced it, and each page drew its emails its own way, some as wide
+strips. The product owner asked for one idea a reader meets everywhere: little
+Gmail cards that arrive, travel and dissipate while a value updates. So the
+leaving is in the player (`is-leaving`), the card's look and three flows are in
+`story.css`, and a page chooses a flow instead of inventing a presentation.
 
 **Consequences:** Seven pages means seven places a claim can go stale; the
 invariants above are the list to check each against. A page and its template

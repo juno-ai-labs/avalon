@@ -1,8 +1,10 @@
 <!-- The homepage's hero story: one example page per audience, each a different
      kind of page. Hand-written, drawn at its last step; story.ts plays it and
      word-swap.ts writes each slide's data-kind and data-word into the headline.
-     Contract: docs/site-audience-pages.md. -->
-<div class="story home-story" id="home-story" data-story data-story-dot>
+     Mail flows three ways across the slides: down (the default), across, and
+     one burst, where two of the three emails change nothing because they are
+     not client mail. Contract: docs/site-audience-pages.md. -->
+<div class="story home-story" id="home-story" data-story>
   <div class="story-bar">
     <div class="story-tabs" role="tablist" aria-label="Example pages, by who they are for">
       <button type="button" role="tab" id="home-story-tab-brokers" aria-controls="home-story-brokers" aria-selected="true">Brokers<i class="story-progress" aria-hidden="true"></i></button>
@@ -40,7 +42,7 @@
     <a class="story-more" href="/for/brokers/">See Rally for brokers <!-- rally:arrow --></a>
   </article>
   <article class="story-slide" data-slide data-kind="board" data-word="orders" role="tabpanel" id="home-story-wholesalers" aria-labelledby="home-story-tab-wholesalers">
-    <div class="story-mail">
+    <div class="story-mail" data-flow="across">
       <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show me every order in my inbox on a board: new, quoted, confirmed.”</p></div>
       <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Harbor Cafe</p><p class="story-subject">Can you do 40 cases by Friday?</p><p class="story-did">Added Harbor Cafe to New.</p></div>
       <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Bell &amp; Co</p><p class="story-subject">Re: Quote. Approved, go ahead</p><p class="story-did">Moved Bell &amp; Co to Confirmed.</p></div>
@@ -88,7 +90,7 @@
   <article class="story-slide" data-slide data-kind="table" data-word="client requests" role="tabpanel" id="home-story-agencies" aria-labelledby="home-story-tab-agencies">
     <div class="story-mail">
       <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Make a table of what each client has asked the three of us for, and where it stands.”</p></div>
-      <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Jen, Kestrel Labs</p><p class="story-subject">Can we move the launch video up a week?</p><p class="story-did">Added a new request from Kestrel Labs.</p></div>
+      <div class="story-burst" data-at="1" data-until="2"><div class="story-email"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Jen, Kestrel Labs</p><p class="story-subject">Can we move the launch video up a week?</p><p class="story-did">Added a new request from Kestrel Labs.</p></div><div class="story-email is-small" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Design Weekly</p><p class="story-subject">This week in type</p></div><div class="story-email is-small" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Calendar</p><p class="story-subject">Invitation: Monday standup</p></div></div>
       <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priya’s inbox</b></p><p class="story-from">Ravi, Acme Health</p><p class="story-subject">Following up on my invoice question</p><p class="story-did">Acme Health asked twice. Marked it overdue.</p></div>
       <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Mia, Brightline</p><p class="story-subject">Round 2 looks great. Approved</p><p class="story-did">Marked the Brightline copy approved.</p></div>
     </div>
@@ -107,7 +109,7 @@
     <a class="story-more" href="/for/agencies/">See Rally for agencies <!-- rally:arrow --></a>
   </article>
   <article class="story-slide" data-slide data-kind="tracker" data-word="contracts" role="tabpanel" id="home-story-legal" aria-labelledby="home-story-tab-legal">
-    <div class="story-mail">
+    <div class="story-mail" data-flow="across">
       <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Track every open legal request and who it is waiting on.”</p></div>
       <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Finance</p><p class="story-subject">Vendor agreement for review</p><p class="story-did">Added it. It is waiting on legal.</p></div>
       <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Sales</p><p class="story-subject">Answers to your questions on the MSA</p><p class="story-did">Sales answered. The MSA is back with legal.</p></div>
