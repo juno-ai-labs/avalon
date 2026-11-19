@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AnnotationCommentActionSchema, AnnotationCommentPinsSchema, AnnotationLocatorSchema, AnnotationSelectionSchema, ArtifactPickerPinSchema } from './artifact-annotations';
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The messages a host and a framed document exchange over the annotation
@@ -9,15 +10,15 @@ import { AnnotationCommentActionSchema, AnnotationCommentPinsSchema, AnnotationL
 export * from './artifact-annotation-script';
 
 /** An element's viewport rectangle, as the script reports it. */
-export const ArtifactElementRectSchema = z.strictObject({ x: z.number().finite(), y: z.number().finite(), width: z.number().finite().nonnegative(), height: z.number().finite().nonnegative() });
+export const ArtifactElementRectSchema = deferredZodSchema(() => z.strictObject({ x: z.number().finite(), y: z.number().finite(), width: z.number().finite().nonnegative(), height: z.number().finite().nonnegative() }));
 export type ArtifactElementRect = z.infer<typeof ArtifactElementRectSchema>;
 
 /** What a host sends a framed document. */
-export const AnnotationHostMessageSchema = z.discriminatedUnion('type', [
+export const AnnotationHostMessageSchema = deferredZodSchema(() => z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('rally-annotation-picking'), on: z.boolean() }),
   z.strictObject({ type: z.literal('rally-annotation-comments'), pins: AnnotationCommentPinsSchema, selected: AnnotationSelectionSchema.nullable().optional() }),
   z.strictObject({ type: z.literal('rally-annotation-restore'), locator: AnnotationLocatorSchema, exact: z.string() }),
-]);
+]));
 export type AnnotationHostMessage = z.infer<typeof AnnotationHostMessageSchema>;
 
 /**
@@ -28,12 +29,12 @@ export type AnnotationHostMessage = z.infer<typeof AnnotationHostMessageSchema>;
  * frame, heard by origin, sends none.
  */
 const keyed = { key: z.string().optional() };
-export const AnnotationFrameMessageSchema = z.discriminatedUnion('type', [
+export const AnnotationFrameMessageSchema = deferredZodSchema(() => z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('rally-annotation-ready'), pagePath: z.string(), ...keyed }),
   z.strictObject({ type: z.literal('rally-artifact-pin'), pin: ArtifactPickerPinSchema.omit({ screenshot: true }).nullable(), ...keyed }),
   z.strictObject({ type: z.literal('rally-annotation-comment-action'), action: AnnotationCommentActionSchema, ...keyed }),
   z.strictObject({ type: z.literal('rally-annotation-restored'), resolved: z.boolean(), ...keyed }),
   z.strictObject({ type: z.literal('rally-annotation-anchor'), rect: ArtifactElementRectSchema, ...keyed }),
   z.strictObject({ type: z.literal('rally-annotation-left'), ...keyed }),
-]);
+]));
 export type AnnotationFrameMessage = z.infer<typeof AnnotationFrameMessageSchema>;

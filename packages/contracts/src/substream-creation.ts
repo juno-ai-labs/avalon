@@ -3,34 +3,35 @@ import { z } from "zod";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { TranscriptAttachmentSchema, TranscriptMentionSchema, TranscriptTurnIdSchema } from "./workstream-transcript";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
-const ContextConfigScalarSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
+const ContextConfigScalarSchema = deferredZodSchema(() => z.union([z.string(), z.number().finite(), z.boolean(), z.null()]));
 /**
  * Recipes are deliberately flat. This finite JSON shape stays serializable
  * across native RPC without exporting Zod's recursive `z.json()` type through
  * every parent operation.
  */
-export const ContextConfigSchema = z.record(
+export const ContextConfigSchema = deferredZodSchema(() => z.record(
   z.string(),
   z.union([ContextConfigScalarSchema, z.array(ContextConfigScalarSchema)]),
-);
+));
 
 /** One address everywhere: drafts, preparation receipts, seeds, sockets and inference. */
-export const SubstreamAddressSchema = z.strictObject({
+export const SubstreamAddressSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   substreamId: SubstreamIdSchema,
-});
+}));
 export type SubstreamAddress = z.infer<typeof SubstreamAddressSchema>;
 
-export const ContextPluginRefSchema = z.strictObject({
+export const ContextPluginRefSchema = deferredZodSchema(() => z.strictObject({
   id: z.string().min(1),
   version: z.number().int().positive(),
-});
+}));
 export type ContextPluginRef = z.infer<typeof ContextPluginRefSchema>;
 
 /** Exported participant content only. No execution receipts, private reasoning or live actions. */
-export const SubstreamContextMessageSchema = z.strictObject({
+export const SubstreamContextMessageSchema = deferredZodSchema(() => z.strictObject({
   turnId: TranscriptTurnIdSchema,
   transcriptSequence: z.number().int().positive(),
   actor: z.enum(["human", "assistant", "external", "sidekick"]),
@@ -51,69 +52,69 @@ export const SubstreamContextMessageSchema = z.strictObject({
   if (!validHuman && !validNonHuman) {
     context.addIssue({ code: "custom", message: "context_message_author_invalid" });
   }
-});
+}));
 export type SubstreamContextMessage = z.infer<typeof SubstreamContextMessageSchema>;
 
-export const SubstreamContextCaptureSchema = z.strictObject({
+export const SubstreamContextCaptureSchema = deferredZodSchema(() => z.strictObject({
   source: SubstreamAddressSchema,
   throughTurnId: TranscriptTurnIdSchema.nullable(),
   throughSequence: z.number().int().nonnegative(),
   sourceRevision: z.number().int().nonnegative(),
   messages: z.array(SubstreamContextMessageSchema),
-});
+}));
 export type SubstreamContextCapture = z.infer<typeof SubstreamContextCaptureSchema>;
 
-export const ContextRecipePartSchema = z.strictObject({
+export const ContextRecipePartSchema = deferredZodSchema(() => z.strictObject({
   id: z.string().min(1),
   selector: ContextPluginRefSchema,
   selectorConfig: ContextConfigSchema,
   transform: ContextPluginRefSchema,
   transformConfig: ContextConfigSchema,
-});
+}));
 export type ContextRecipePart = z.infer<typeof ContextRecipePartSchema>;
 
-export const SubstreamContextPolicySchema = z.strictObject({
+export const SubstreamContextPolicySchema = deferredZodSchema(() => z.strictObject({
   revision: z.string().min(1),
   strategy: ContextPluginRefSchema,
   config: ContextConfigSchema,
-});
+}));
 export type SubstreamContextPolicy = z.infer<typeof SubstreamContextPolicySchema>;
 
-export const SubstreamContextRecipeSchema = z.strictObject({
+export const SubstreamContextRecipeSchema = deferredZodSchema(() => z.strictObject({
   policy: SubstreamContextPolicySchema,
   capture: z.enum(["none", "source"]),
   parts: z.array(ContextRecipePartSchema),
-});
+}));
 export type SubstreamContextRecipe = z.infer<typeof SubstreamContextRecipeSchema>;
 
-export const SubstreamHistoryContextPartSchema = z.strictObject({
+export const SubstreamHistoryContextPartSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("history"),
   messages: z.array(SubstreamContextMessageSchema),
-});
-export const SubstreamSummaryContextPartSchema = z.strictObject({
+}));
+export const SubstreamSummaryContextPartSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("summary"),
   text: z.string().trim().min(1),
   requestedModel: z.string().min(1),
   resolvedModel: z.string().min(1),
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
-});
-export const SubstreamContextPartSchema = z.discriminatedUnion("kind", [
+}));
+export const SubstreamContextPartSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   SubstreamHistoryContextPartSchema,
   SubstreamSummaryContextPartSchema,
-]);
+]));
 export type SubstreamContextPart = z.infer<typeof SubstreamContextPartSchema>;
 
-export const ResolvedContextPartSchema = z.strictObject({
+export const ResolvedContextPartSchema = deferredZodSchema(() => z.strictObject({
   recipe: ContextRecipePartSchema,
   sourceTurnIds: z.array(TranscriptTurnIdSchema),
   selectionHash: z.string().regex(/^[0-9a-f]{64}$/u),
   content: SubstreamContextPartSchema,
   contentHash: z.string().regex(/^[0-9a-f]{64}$/u),
-});
+}));
 export type ResolvedContextPart = z.infer<typeof ResolvedContextPartSchema>;
 
-export const PreparedSubstreamContextSchema = z.strictObject({
+export const PreparedSubstreamContextSchema = deferredZodSchema(() => z.strictObject({
   schemaVersion: z.literal(1),
   recipe: SubstreamContextRecipeSchema,
   recipeHash: z.string().regex(/^[0-9a-f]{64}$/u),
@@ -121,25 +122,25 @@ export const PreparedSubstreamContextSchema = z.strictObject({
   captureHash: z.string().regex(/^[0-9a-f]{64}$/u).nullable(),
   parts: z.array(ResolvedContextPartSchema),
   contentHash: z.string().regex(/^[0-9a-f]{64}$/u),
-});
+}));
 export type PreparedSubstreamContext = z.infer<typeof PreparedSubstreamContextSchema>;
 
 /** Only the selected seed crosses to the child, never the discarded source capture. */
-export const SubstreamInitialContextSchema = z.strictObject({
+export const SubstreamInitialContextSchema = deferredZodSchema(() => z.strictObject({
   source: SubstreamAddressSchema,
   throughTurnId: TranscriptTurnIdSchema.nullable(),
   policyRevision: z.string().min(1),
   contentHash: z.string().regex(/^[0-9a-f]{64}$/u),
   parts: z.array(SubstreamContextPartSchema),
-});
+}));
 export type SubstreamInitialContext = z.infer<typeof SubstreamInitialContextSchema>;
 
-export const SubstreamPreparationPreviewSchema = z.strictObject({
+export const SubstreamPreparationPreviewSchema = deferredZodSchema(() => z.strictObject({
   operationId: z.string().min(1),
   substreamId: SubstreamIdSchema,
   title: z.string().min(1),
   context: SubstreamInitialContextSchema,
-});
+}));
 export type SubstreamPreparationPreview = z.infer<typeof SubstreamPreparationPreviewSchema>;
 
 /**
@@ -152,7 +153,7 @@ export type SubstreamPreparationPreview = z.infer<typeof SubstreamPreparationPre
  * optional because the API can still create an idle child — the desktop no
  * longer does.
  */
-export const SubstreamOpeningMessageSchema = z.strictObject({
+export const SubstreamOpeningMessageSchema = deferredZodSchema(() => z.strictObject({
   /** The sender's identity for this turn, and what makes a retried confirm replay rather than repeat. */
   clientMessageId: z.string().min(1).max(120),
   // Both of these come from leaf modules rather than from `index`: this module
@@ -172,7 +173,7 @@ export const SubstreamOpeningMessageSchema = z.strictObject({
   confirmedParticipantUserIds: z.array(UserIdSchema).default([]),
 }).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "An opening message must include text or an attachment",
-});
+}));
 export type SubstreamOpeningMessage = z.infer<typeof SubstreamOpeningMessageSchema>;
 
 /**
@@ -182,7 +183,7 @@ export type SubstreamOpeningMessage = z.infer<typeof SubstreamOpeningMessageSche
  * surface is already showing is replaced by identity when the child's socket
  * delivers it rather than by two rows having equal text.
  */
-export const SubstreamCreationResultSchema = z.strictObject({
+export const SubstreamCreationResultSchema = deferredZodSchema(() => z.strictObject({
   substreamId: SubstreamIdSchema,
   /**
    * The title the child was created under. Provisional where the naming pass
@@ -196,5 +197,5 @@ export const SubstreamCreationResultSchema = z.strictObject({
     clientMessageId: z.string().min(1).max(120),
     createdAt: z.string().datetime({ offset: true }),
   }).nullable(),
-});
+}));
 export type SubstreamCreationResult = z.infer<typeof SubstreamCreationResultSchema>;

@@ -86,6 +86,7 @@ export * from "./projects";
 export * from "./resource-relationships";
 export { MentionSchema } from "./mention-schema";
 import { MentionSchema } from "./mention-schema";
+import { deferredZodSchema } from "./deferred-zod-schema";
 export * from "./navigation";
 export * from "./memory";
 
@@ -133,7 +134,7 @@ type CanvasLinkTarget,type LinkTarget,type OrganizationShellTarget,type Sidekick
 } from "./links";
 export { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
 
-export const TimestampSchema = z.string().datetime({ offset: true });
+export const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
 
 /**
  * Branded identifiers.
@@ -156,7 +157,7 @@ export type WorkstreamId = z.infer<typeof WorkstreamIdSchema>;
 export type HarnessRunId = z.infer<typeof HarnessRunIdSchema>;
 export type UserId = z.infer<typeof UserIdSchema>;
 export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
-export const ScopeSchema = z.enum(["personal", "workspace"]);
+export const ScopeSchema = deferredZodSchema(() => z.enum(["personal", "workspace"]));
 export const HarnessFailureCodeSchema = z.enum([
   "run_wall_time_limit_exceeded",
   "run_iteration_limit_exceeded",
@@ -248,7 +249,7 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * See `docs/feature-flags.md` for how an override composes with configuration.
  */
 export { AGENT_MODEL_OVERRIDES };
-export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
+export const AgentModelOverrideSchema = deferredZodSchema(() => z.enum(AGENT_MODEL_OVERRIDES));
 export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 
 /** Every distinct model-using Rally task with a configurable model route. */
@@ -262,17 +263,17 @@ export const AGENT_MODEL_ROLES = [
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
 /** One task's primary OpenRouter model and its ordered fallback route. */
-export const AgentModelRoutingSchema = z.object({
+export const AgentModelRoutingSchema = deferredZodSchema(() => z.object({
   model: z.string().trim().min(1),
   // Environment overrides may omit the array. Treating
   // that shape as no fallbacks keeps every evaluator and operator surface in
   // agreement instead of silently substituting a different checked-in route.
   fallbackModels: z.array(z.string().trim().min(1)).default([]),
   reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
-});
+}));
 export type AgentModelRouting = z.infer<typeof AgentModelRoutingSchema>;
 
-export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
+export const MemberRoleSchema = deferredZodSchema(() => z.enum(["owner", "admin", "member"]));
 /**
  * The roles an administrator may hand to somebody else.
  *
@@ -283,15 +284,15 @@ export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
  * one role nobody may grant, and transferring it is a different operation
  * nobody has asked for.
  */
-export const AssignableMemberRoleSchema = z.enum(["admin", "member"]);
-export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
+export const AssignableMemberRoleSchema = deferredZodSchema(() => z.enum(["admin", "member"]));
+export const IanaTimezoneSchema = deferredZodSchema(() => z.string().trim().min(1).max(100).refine((value) => {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
     return true;
   } catch {
     return false;
   }
-}, "Timezone must be a supported IANA timezone");
+}, "Timezone must be a supported IANA timezone"));
 
 export const UserSchema = z.object({
   presentation: PersonalPresentationSchema.nullable().optional(),
@@ -319,7 +320,7 @@ export const WorkspaceSchema = z.object({
   ? workspace.role === null : workspace.role !== null,
 { message: "Guests have no workspace role; members require a role" });
 
-export const WorkspaceMemberSchema = z.object({
+export const WorkspaceMemberSchema = deferredZodSchema(() => z.object({
   user: UserSchema,
   incarnation: z.string().min(1).optional(),
   revision: z.number().int().positive().optional(),
@@ -328,15 +329,15 @@ export const WorkspaceMemberSchema = z.object({
   status: z.enum(["active", "invited", "suspended"]),
   joinedAt: TimestampSchema.nullable()
 }).refine((member) => member.accessClass === "guest" ? member.role === null : member.role !== null,
-{ message: "Guests have no workspace role; members require a role" });
+{ message: "Guests have no workspace role; members require a role" }));
 
 export const WorkspaceInvitationRoleSchema = AssignableMemberRoleSchema;
 /** Set the role of a membership that already exists. */
-export const UpdateWorkspaceMemberRoleRequestSchema = z.object({
+export const UpdateWorkspaceMemberRoleRequestSchema = deferredZodSchema(() => z.object({
   role: AssignableMemberRoleSchema
-});
-export const WorkspaceInvitationStatusSchema = z.enum(["pending", "accepted", "expired", "revoked"]);
-export const WorkspaceInvitationSchema = z.object({
+}));
+export const WorkspaceInvitationStatusSchema = deferredZodSchema(() => z.enum(["pending", "accepted", "expired", "revoked"]));
+export const WorkspaceInvitationSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   email: z.string().email(),
   role: WorkspaceInvitationRoleSchema,
@@ -345,7 +346,7 @@ export const WorkspaceInvitationSchema = z.object({
   expiresAt: TimestampSchema,
   acceptedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
-});
+}));
 /**
  * Someone invited to the Organization who has not accepted yet, as every
  * member may see them: the address and when it was invited, nothing an
@@ -353,10 +354,10 @@ export const WorkspaceInvitationSchema = z.object({
  * address is the only way to name them; pickers offer them beside members so
  * a teammate can be brought into a Channel before they arrive.
  */
-export const WorkspaceInviteeSchema = z.object({
+export const WorkspaceInviteeSchema = deferredZodSchema(() => z.object({
   email: z.string().email(),
   invitedAt: TimestampSchema
-});
+}));
 export const WorkspaceInvitationPreviewSchema = z.object({
   workspaceId: IdSchema,
   workspaceName: z.string().min(1).max(120),
@@ -369,7 +370,7 @@ export const PendingWorkspaceInvitationSchema = WorkspaceInvitationPreviewSchema
   id: IdSchema,
   invitedByName: z.string().min(1)
 });
-export const WorkspaceOnboardingStateSchema = z.object({
+export const WorkspaceOnboardingStateSchema = deferredZodSchema(() => z.object({
   workspace: WorkspaceSchema.nullable().default(null),
   workspaces: z.array(WorkspaceSchema).optional(),
   invitations: z.array(PendingWorkspaceInvitationSchema)
@@ -377,29 +378,29 @@ export const WorkspaceOnboardingStateSchema = z.object({
   workspace: value.workspace,
   workspaces: value.workspaces ?? (value.workspace ? [value.workspace] : []),
   invitations: value.invitations,
-}));
+})));
 /** An Organization's display name, as chosen at creation and on every rename. */
-export const WorkspaceNameSchema = z.string().trim().min(2).max(120);
+export const WorkspaceNameSchema = deferredZodSchema(() => z.string().trim().min(2).max(120));
 /** A name to prefill when creating an organization; null when there is none to offer. */
-export const OrganizationNameSuggestionSchema = z.object({ name: WorkspaceNameSchema.nullable() });
+export const OrganizationNameSuggestionSchema = deferredZodSchema(() => z.object({ name: WorkspaceNameSchema.nullable() }));
 export type OrganizationNameSuggestion = z.infer<typeof OrganizationNameSuggestionSchema>;
-export const CreateWorkspaceRequestSchema = z.object({
+export const CreateWorkspaceRequestSchema = deferredZodSchema(() => z.object({
   name: WorkspaceNameSchema,
   region: ConfiguredRegionSchema
-});
+}));
 export const OnboardingRegionRequestSchema = z.object({ region: ConfiguredRegionSchema });
 export const ActivateWorkspaceRequestSchema = OnboardingRegionRequestSchema.extend({
   workspaceId: IdSchema
 });
-export const CreateWorkspaceInvitationRequestSchema = z.object({
+export const CreateWorkspaceInvitationRequestSchema = deferredZodSchema(() => z.object({
   email: z.string().trim().email().max(254),
   role: WorkspaceInvitationRoleSchema.default("member")
-});
-export const CreateWorkspaceInvitationResponseSchema = z.object({
+}));
+export const CreateWorkspaceInvitationResponseSchema = deferredZodSchema(() => z.object({
   invitation: WorkspaceInvitationSchema,
   inviteUrl: HttpUrlSchema,
   emailDelivery: z.enum(["sent", "skipped"])
-});
+}));
 /**
  * `POST /workspace/members`: an administrator adds someone by address, and
  * they are a member at once. Someone who has never signed in gets their
@@ -407,22 +408,22 @@ export const CreateWorkspaceInvitationResponseSchema = z.object({
  * the Organization. There is no invitation to accept.
  */
 export const AddWorkspaceMemberRequestSchema = CreateWorkspaceInvitationRequestSchema;
-export const AddWorkspaceMemberResponseSchema = z.object({
+export const AddWorkspaceMemberResponseSchema = deferredZodSchema(() => z.object({
   member: z.object({ userId: IdSchema, email: z.string().email(), role: WorkspaceInvitationRoleSchema }),
   /** Whether the email telling them was sent; the membership stands either way. */
   emailDelivery: z.enum(["sent", "skipped", "failed"]),
-});
+}));
 export type AddWorkspaceMemberResponse = z.infer<typeof AddWorkspaceMemberResponseSchema>;
-export const AcceptWorkspaceInvitationRequestSchema = z.object({
+export const AcceptWorkspaceInvitationRequestSchema = deferredZodSchema(() => z.object({
   token: z.string().min(20).max(500)
-});
-export const WorkspaceDepartureOutcomeSchema = z.enum(["left", "abandoned"]);
-export const WorkspaceDepartureRequestSchema = z.object({
+}));
+export const WorkspaceDepartureOutcomeSchema = deferredZodSchema(() => z.enum(["left", "abandoned"]));
+export const WorkspaceDepartureRequestSchema = deferredZodSchema(() => z.object({
   expectedOutcome: WorkspaceDepartureOutcomeSchema,
-});
-export const WorkspaceDepartureSchema = z.object({
+}));
+export const WorkspaceDepartureSchema = deferredZodSchema(() => z.object({
   outcome: WorkspaceDepartureOutcomeSchema,
-});
+}));
 export const WorkspaceAttentionSchema = z.object({
   /** This person's unseen `needs_input` Activity rows in the Organization: runs waiting on them. */
   waitingForYou: z.number().int().nonnegative(),
@@ -455,29 +456,29 @@ export const GOOGLE_DRIVE_CAPABILITIES = [
  * already on for everyone and whose flag exists only to turn it off, and
  * today's checked-in behavior for a setting that has no off at all.
  */
-export const ClientFeatureFlagsSchema = z.object({
+export const ClientFeatureFlagsSchema = deferredZodSchema(() => z.object({
   /** Whether Application → Developer may be offered on this device. */
   developerSettings: z.boolean().default(false),
   /** Whether desktop and web offer organization switching and plural setup. */
   multipleWorkspacesEnabled: z.boolean().default(true),
   pushNotificationsEnabled: z.boolean().default(false),
-});
+}));
 
 /** Legacy product keys retained for the workspace socket event contract. */
-export const ProductFeatureFlagKeySchema = z.enum([
+export const ProductFeatureFlagKeySchema = deferredZodSchema(() => z.enum([
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
-]);
-export const ParticipantSchema = z.object({
+]));
+export const ParticipantSchema = deferredZodSchema(() => z.object({
   user: UserSchema,
   participationReason: z.enum(["creator", "explicit", "message", "elicitation", "action"]),
   joinedAt: TimestampSchema
-});
+}));
 
-export const ViewerSchema = z.object({
+export const ViewerSchema = deferredZodSchema(() => z.object({
   user: UserSchema,
   connectedAt: TimestampSchema
-});
+}));
 
 /** The most prompt text a compact work-stream wake-up marker may expose. */
 export const WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH = 40;
@@ -630,32 +631,32 @@ export const WorkstreamSchema = z.object({
   participantExtraCount: z.number().int().nonnegative().default(0),
 });
 
-export const ExternalActorSchema = z.object({
+export const ExternalActorSchema = deferredZodSchema(() => z.object({
   provider: z.string().min(1).max(80),
   providerAccountId: z.string().min(1).max(200),
   providerUserId: z.string().min(1).max(200),
   displayName: z.string().min(1).max(180),
   avatarUrl: HttpUrlSchema.nullable(),
-});
+}));
 
-export const MessageAuthorSchema = z.discriminatedUnion("type", [
+export const MessageAuthorSchema = deferredZodSchema(() => z.discriminatedUnion("type", [
   z.object({ type: z.literal("human"), user: UserSchema }),
   z.object({ type: z.literal("external"), actor: ExternalActorSchema }),
   z.object({ type: z.literal("agent") }),
   z.object({ type: z.literal("system") })
-]);
+]));
 
 
-export const MessageAttachmentSchema = z.object({
+export const MessageAttachmentSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   fileName: z.string().min(1).max(300),
   mimeType: z.string().min(1).max(160),
   sizeBytes: z.number().int().nonnegative(),
   contentAvailable: z.boolean(),
   createdAt: TimestampSchema,
-});
+}));
 
-export const MessageSchema = z.object({
+export const MessageSchema = deferredZodSchema(() => z.object({
   id: TranscriptTurnIdSchema,
   clientMessageId: z.string().max(120).nullable(),
   workspaceId: IdSchema,
@@ -670,7 +671,7 @@ export const MessageSchema = z.object({
   attentionSequenceNumber: z.number().int().positive().nullable().optional(),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.nullable()
-});
+}));
 
 export const ResourceSchema = z.object({
   id: IdSchema,
@@ -709,7 +710,7 @@ export const WorkstreamResourceSchema = ResourceSchema.extend({
  * member and a connection are all UUIDs, and the surfaces that render
  * attribution resolve them against different authorities.
  */
-export const ResourceVersionAuthorSchema = z.discriminatedUnion("kind", [
+export const ResourceVersionAuthorSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   // Strict, like the attachment shapes: the union's whole claim is one
   // identity per kind, and a non-strict variant would quietly accept — and
   // then drop — an identity belonging to another one.
@@ -717,12 +718,12 @@ export const ResourceVersionAuthorSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("member"), userId: IdSchema }),
   z.strictObject({ kind: z.literal("connector"), connectionId: IdSchema }),
   z.strictObject({ kind: z.literal("system") }),
-]);
+]));
 
 /** Why the pointers moved. `created` is a resource's own first state. */
-export const ResourceVersionCauseSchema = z.enum(["created", "published", "refetched", "replaced", "renamed"]);
+export const ResourceVersionCauseSchema = deferredZodSchema(() => z.enum(["created", "published", "refetched", "replaced", "renamed"]));
 
-export const ResourceRevisionSchema = z.object({
+export const ResourceRevisionSchema = deferredZodSchema(() => z.object({
   resourceId: IdSchema,
   version: z.number().int().positive(),
   /**
@@ -765,17 +766,17 @@ export const ResourceRevisionSchema = z.object({
   contentAvailable: z.boolean(),
   modelContentAvailable: z.boolean(),
   sizeBytes: z.number().int().nonnegative(),
-});
+}));
 
 // Every run is always delivered to its Avalon work stream. These are the
 // additional destinations a personal automation freezes when it is saved.
-export const AutomationDeliveryTargetTypeSchema = z.enum(["slack_agent_dm", "email"]);
+export const AutomationDeliveryTargetTypeSchema = deferredZodSchema(() => z.enum(["slack_agent_dm", "email"]));
 
-export const ConnectionToolCountSchema = z.object({
+export const ConnectionToolCountSchema = deferredZodSchema(() => z.object({
   count: z.number().int().nonnegative(),
-});
+}));
 
-export const ConnectionSchema = z.object({
+export const ConnectionSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
@@ -821,10 +822,10 @@ export const ConnectionSchema = z.object({
   toolCountMissing: z.enum(["disabled", "connector_unavailable", "counting", "not_counted"]).nullable().default(null),
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
-});
+}));
 
-export const ConnectorInstallationReadResponseSchema = z.object({ installation: ConnectorInstallationSchema.nullable() });
-export const ConnectorInstallationMutationResponseSchema = z.object({ installation: ConnectorInstallationSchema });
+export const ConnectorInstallationReadResponseSchema = deferredZodSchema(() => z.object({ installation: ConnectorInstallationSchema.nullable() }));
+export const ConnectorInstallationMutationResponseSchema = deferredZodSchema(() => z.object({ installation: ConnectorInstallationSchema }));
 /**
  * What an administrator has to carry to a provider that offers no registration
  * API, returned exactly once by the setup call that generated it.
@@ -836,26 +837,26 @@ export const ConnectorInstallationMutationResponseSchema = z.object({ installati
  * replayed setup returns `null` rather than re-revealing it — a lost secret is
  * replaced by reconnecting, not by asking again.
  */
-export const ConnectorManualRegistrationSchema = z.strictObject({
+export const ConnectorManualRegistrationSchema = deferredZodSchema(() => z.strictObject({
   destination: HttpsUrlSchema,
   signingSecret: z.string().min(1).max(512),
-});
+}));
 export type ConnectorManualRegistration = z.infer<typeof ConnectorManualRegistrationSchema>;
-export const ConnectorInstallationSetupResponseSchema = z.object({
+export const ConnectorInstallationSetupResponseSchema = deferredZodSchema(() => z.object({
   installation: ConnectorInstallationSchema,
   connection: ConnectionSchema,
   manualRegistration: ConnectorManualRegistrationSchema.nullable().default(null),
-});
-export const ConnectionTestResponseSchema = z.object({ ok: z.boolean(), message: z.string(), reconnectRequired: z.boolean().optional() });
+}));
+export const ConnectionTestResponseSchema = deferredZodSchema(() => z.object({ ok: z.boolean(), message: z.string(), reconnectRequired: z.boolean().optional() }));
 
-export const GitHubRepositoryRemoteAccessSchema = z.enum(["read_only", "full_access"]);
-export const GitHubRepositoryAccessModeSchema = z.enum(["all_repositories", "selected_repositories"]);
-export const GitHubRepositoryAccessEntrySchema = z.strictObject({
+export const GitHubRepositoryRemoteAccessSchema = deferredZodSchema(() => z.enum(["read_only", "full_access"]));
+export const GitHubRepositoryAccessModeSchema = deferredZodSchema(() => z.enum(["all_repositories", "selected_repositories"]));
+export const GitHubRepositoryAccessEntrySchema = deferredZodSchema(() => z.strictObject({
   repositoryId: z.string().min(1).max(100),
   repositoryFullName: z.string().regex(/^[^/\s]{1,100}\/[^/\s]{1,100}$/u),
   remoteAccess: GitHubRepositoryRemoteAccessSchema,
-});
-export const GitHubRepositoryAccessSettingsSchema = z.strictObject({
+}));
+export const GitHubRepositoryAccessSettingsSchema = deferredZodSchema(() => z.strictObject({
   connectionId: IdSchema,
   connectionName: z.string().min(1).max(180),
   revision: z.number().int().nonnegative(),
@@ -868,16 +869,16 @@ export const GitHubRepositoryAccessSettingsSchema = z.strictObject({
     private: z.boolean(),
     remoteAccess: GitHubRepositoryRemoteAccessSchema.nullable(),
   })).max(1_000),
-});
-export const UpdateGitHubRepositoryAccessSettingsSchema = z.strictObject({
+}));
+export const UpdateGitHubRepositoryAccessSettingsSchema = deferredZodSchema(() => z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   mode: GitHubRepositoryAccessModeSchema,
   defaultRemoteAccess: GitHubRepositoryRemoteAccessSchema,
   repositories: z.array(GitHubRepositoryAccessEntrySchema).max(1_000),
-});
+}));
 
-export const ActivitySourcePluginIdsSchema = z.record(ActivitySourceBindingKeySchema, ModelPluginIdSchema);
-export const AutomationPluginIconSchema = z.enum([
+export const ActivitySourcePluginIdsSchema = deferredZodSchema(() => z.record(ActivitySourceBindingKeySchema, ModelPluginIdSchema));
+export const AutomationPluginIconSchema = deferredZodSchema(() => z.enum([
   "brand-github",
   "brand-google",
   "brand-google-drive",
@@ -887,25 +888,25 @@ export const AutomationPluginIconSchema = z.enum([
   "plug",
   "webhook",
   "world-search",
-]);
+]));
 export type AutomationPluginIcon = z.infer<typeof AutomationPluginIconSchema>;
 
-export const AutomationPluginActivitySchema = z.object({
+export const AutomationPluginActivitySchema = deferredZodSchema(() => z.object({
   canonicalId: z.string().min(1).optional(),
   connectorType: z.string().optional(),
   pluginId: ModelPluginIdSchema,
   displayName: z.string().min(1).max(200),
   icon: AutomationPluginIconSchema,
-});
+}));
 export type AutomationPluginActivity = z.infer<typeof AutomationPluginActivitySchema>;
 
-export const AutomationPluginRecommendationSchema = z.object({
+export const AutomationPluginRecommendationSchema = deferredZodSchema(() => z.object({
   pluginId: ModelPluginIdSchema,
   recommendedTools: z.array(z.string().min(1).max(160)).max(40).default([]),
   reason: z.string().min(1).max(800),
-});
+}));
 
-export const MemoryTableColumnTypeSchema = z.enum([
+export const MemoryTableColumnTypeSchema = deferredZodSchema(() => z.enum([
   "string",
   "url",
   "number",
@@ -913,15 +914,15 @@ export const MemoryTableColumnTypeSchema = z.enum([
   "boolean",
   "datetime",
   "date",
-]);
+]));
 
-export const AutomationMemoryTableColumnSchema = z.strictObject({
+export const AutomationMemoryTableColumnSchema = deferredZodSchema(() => z.strictObject({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(800),
   type: MemoryTableColumnTypeSchema,
   required: z.boolean().default(false),
   searchable: z.boolean().default(false),
-});
+}));
 
 /**
  * The longest query `memory_recall` and `table_search` accept.
@@ -931,7 +932,7 @@ export const AutomationMemoryTableColumnSchema = z.strictObject({
  */
 export const MEMORY_RECALL_QUERY_LIMIT = 2_000;
 
-export const AutomationMemoryTableSchema = z.strictObject({
+export const AutomationMemoryTableSchema = deferredZodSchema(() => z.strictObject({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(1200),
   usageInstructions: z.string().trim().min(1).max(4000),
@@ -969,9 +970,9 @@ export const AutomationMemoryTableSchema = z.strictObject({
     }
     keyNames.add(normalized);
   });
-});
+}));
 
-export const AutomationDraftElicitationSchema = z.object({
+export const AutomationDraftElicitationSchema = deferredZodSchema(() => z.object({
   responseType: z.enum(["free_text", "single_select", "multi_select"]),
   prompt: z.string().min(1).max(4000),
   placeholder: z.string().max(500).nullable().default(null),
@@ -983,9 +984,9 @@ export const AutomationDraftElicitationSchema = z.object({
   minimumSelections: z.number().int().nonnegative().default(0),
   maximumSelections: z.number().int().positive().nullable().default(null),
   allowOther: z.boolean().default(false),
-});
+}));
 
-export const ToolInvocationSchema = z.object({
+export const ToolInvocationSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   harnessRunId: IdSchema,
   toolCallId: z.string().min(1).max(160),
@@ -1007,9 +1008,9 @@ export const ToolInvocationSchema = z.object({
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable()
-});
+}));
 
-export const HarnessRunMetadataSchema = z.object({
+export const HarnessRunMetadataSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   origin: z.string().min(1).max(80),
   status: z.enum(["scheduled", "running", "needs_input", "completed", "failed", "stopped"]),
@@ -1022,9 +1023,9 @@ export const HarnessRunMetadataSchema = z.object({
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
-});
+}));
 
-export const BackgroundTaskSchema = z.object({
+export const BackgroundTaskSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   harnessRunId: IdSchema,
   title: z.string().min(1).max(300),
@@ -1035,13 +1036,13 @@ export const BackgroundTaskSchema = z.object({
   tokenCount: z.number().int().nonnegative().nullable(),
   toolUses: z.number().int().nonnegative().nullable(),
   transcriptTurnId: TranscriptTurnIdSchema.nullable()
-});
+}));
 
-export const ElicitationOptionSchema = z.object({
+export const ElicitationOptionSchema = deferredZodSchema(() => z.object({
   value: z.string().min(1).max(200),
   label: z.string().min(1).max(300),
   description: z.string().max(800).nullable()
-});
+}));
 // Must stay non-strict (`z.object`, never `strictObject`): a desktop one release behind strips fields it does not know, such as allowOther and allowSkip.
 export const ElicitationSchema = z.object({
   id: IdSchema,
@@ -1102,7 +1103,7 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   latestHarnessRun: HarnessRunMetadataSchema.nullable().optional(),
 });
 
-export const WorkstreamContextSchema = z.object({
+export const WorkstreamContextSchema = deferredZodSchema(() => z.object({
   /**
    * Vestigial, and read by nothing. Artifacts were removed in this release, but
    * this one schema is parsed on **both** sides of the wire — the route parses
@@ -1130,9 +1131,9 @@ export const WorkstreamContextSchema = z.object({
    */
   artifacts: z.array(z.unknown()).default([]),
   backgroundTasks: z.array(BackgroundTaskSchema)
-});
+}));
 
-export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
+export const TriggerDefinitionSchema = deferredZodSchema(() => z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("invocation"), artifactId: ArtifactIdSchema, bindingName: ArtifactSidekickBindingNameSchema }),
   z.object({ type: z.literal("manual") }),
   z.object({
@@ -1183,7 +1184,7 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
     suggestedSourcePluginId: ModelPluginIdSchema.optional(),
     eventTypes: z.array(z.string()).min(1)
   })
-]);
+]));
 
 /**
  * Whether a trigger's events are decided by an external-event evaluator rule.
@@ -1284,7 +1285,7 @@ export function semanticConditionsForEventType(
  * other tool's parameters take on the wire, with a description on every
  * property so the model is never left to guess what an argument is for.
  */
-export const ToolInputObjectSchema = z.looseObject({
+export const ToolInputObjectSchema = deferredZodSchema(() => z.looseObject({
   type: z.literal("object"),
   properties: z.record(z.string().min(1).max(120), z.looseObject({
     description: z.string().trim().min(1).max(800),
@@ -1300,7 +1301,7 @@ export const ToolInputObjectSchema = z.looseObject({
       context.addIssue({ code: z.ZodIssueCode.custom, path: ["required"], message: `Required property ${name} is not declared` });
     }
   }
-});
+}));
 export type ToolInputObject = z.infer<typeof ToolInputObjectSchema>;
 
 /**
@@ -1318,10 +1319,10 @@ export const CUSTOM_TOOL_RALLY_PLUGIN_IDS = ["rally_core", "rally_tables", "rall
  * A plugin a saved tool may call: a connector plugin (`plugin_*`, which must
  * also be recommended so the run loads it) or one of the Rally plugins above.
  */
-export const CustomToolPluginIdSchema = z.union([
+export const CustomToolPluginIdSchema = deferredZodSchema(() => z.union([
   z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   z.enum(CUSTOM_TOOL_RALLY_PLUGIN_IDS),
-]);
+]));
 
 /**
  * A tool the Sidekick wizard wrote and tested: a program with a name, a
@@ -1331,16 +1332,16 @@ export const CustomToolPluginIdSchema = z.union([
  * plugins it calls, each of which must also be in `recommendedPlugins` so a
  * run has them loaded before the tool runs.
  */
-export const SidekickCustomToolSchema = z.strictObject({
+export const SidekickCustomToolSchema = deferredZodSchema(() => z.strictObject({
   name: z.string().regex(/^[a-z][a-z0-9_]{2,40}$/, "Lower snake case, 3 to 41 characters, starting with a letter"),
   description: z.string().trim().min(1).max(800),
   inputSchema: ToolInputObjectSchema,
   code: z.string().min(1),
   requiredPlugins: z.array(CustomToolPluginIdSchema).min(1).max(8),
-});
+}));
 export type SidekickCustomTool = z.infer<typeof SidekickCustomToolSchema>;
 
-export const AutomationDraftSchema = z.object({
+export const AutomationDraftSchema = deferredZodSchema(() => z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
   overview: z.string().min(1).max(3000),
@@ -1460,7 +1461,7 @@ export const AutomationDraftSchema = z.object({
     }
     sourceBindings.set(trigger.sourceBindingKey, { connectorType, pluginId: trigger.suggestedSourcePluginId });
   });
-});
+}));
 
 /**
  * Everything acceptance needs that the draft has already decided.
@@ -1597,9 +1598,9 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
 });
 export type AutomationRunDefinitionV1 = z.infer<typeof AutomationRunDefinitionV1Schema>;
 
-export const AutomationRunStatusSchema = z.enum([
+export const AutomationRunStatusSchema = deferredZodSchema(() => z.enum([
   "pending", "running", "needs_input", "completed", "failed", "stopped",
-]);
+]));
 
 export const AutomationSummarySchema = z.object({
   loadable: z.boolean().default(false),
@@ -1680,13 +1681,13 @@ export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSum
  * acknowledgement: the claimant may have no connection for one of the
  * providers the last principal took with them.
  */
-export const AutomationExecutionPrincipalClaimSchema = z.strictObject({
+export const AutomationExecutionPrincipalClaimSchema = deferredZodSchema(() => z.strictObject({
   principalUserId: IdSchema,
   reboundPluginIds: z.array(z.string().min(1)),
   unboundProviders: z.array(z.string().min(1)),
   /** False when the caller already ran it and nothing needed rebinding. */
   changed: z.boolean(),
-});
+}));
 export type AutomationExecutionPrincipalClaim =
   z.infer<typeof AutomationExecutionPrincipalClaimSchema>;
 
@@ -1728,14 +1729,14 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   canvases: z.array(CanvasSummarySchema).optional(),
 });
 
-export const ApiErrorSchema = z.object({
+export const ApiErrorSchema = deferredZodSchema(() => z.object({
   error: z.object({
     code: z.string(),
     message: z.string(),
     requestId: z.string().nullable(),
     details: z.record(z.string(), z.unknown()).optional()
   })
-});
+}));
 
 export const CursorPageSchema = <T extends z.ZodType>(item: T) =>
   z.object({ items: z.array(item), nextCursor: z.string().nullable() });
@@ -1771,48 +1772,48 @@ export const DesktopExchangeRequestSchema = z.object({
    */
   timezone: IanaTimezoneSchema.optional()
 });
-export const MobileAuthStartSchema = z.strictObject({
+export const MobileAuthStartSchema = deferredZodSchema(() => z.strictObject({
   attemptId: DesktopExchangeRequestSchema.shape.attemptId,
   codeChallenge: DesktopExchangeRequestSchema.shape.attemptId,
-});
+}));
 export const MobileAuthExchangeSchema = DesktopExchangeRequestSchema.omit({ timezone: true }).strict();
 export const MobileAuthTicketSchema = MobileAuthExchangeSchema.omit({ codeVerifier: true });
 
-export const ConnectorOAuthProviderSchema = z.enum(ConnectorOAuthProviders);
-export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
-export const ConnectorOAuthStartSchema = z.object({
+export const ConnectorOAuthProviderSchema = deferredZodSchema(() => z.enum(ConnectorOAuthProviders));
+export const ConnectorOAuthAttemptStatusSchema = deferredZodSchema(() => z.enum(["pending", "succeeded", "denied", "failed"]));
+export const ConnectorOAuthStartSchema = deferredZodSchema(() => z.object({
   url: HttpUrlSchema,
   attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
-});
-export const ConnectorOAuthAttemptSchema = z.object({
+}));
+export const ConnectorOAuthAttemptSchema = deferredZodSchema(() => z.object({
   attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   provider: ConnectorOAuthProviderSchema,
   status: ConnectorOAuthAttemptStatusSchema,
   connectionId: IdSchema.nullable(),
   errorCode: z.string().regex(/^[a-z0-9_-]{1,100}$/u).nullable(),
   expiresAt: TimestampSchema,
-});
-export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
-export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
+}));
+export const RefreshTokenSchema = deferredZodSchema(() => z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u));
+export const RefreshRequestSchema = deferredZodSchema(() => z.object({ refreshToken: RefreshTokenSchema }));
 /**
  * A person choosing their timezone in Settings. `followDevice` true means
  * Set timezone automatically: the account follows whichever device reports its zone, and
  * `timezone` is this device's zone. Absent or false fixes it to `timezone`.
  */
-export const UpdateUserTimezoneRequestSchema = z.object({
+export const UpdateUserTimezoneRequestSchema = deferredZodSchema(() => z.object({
   timezone: IanaTimezoneSchema,
   followDevice: z.boolean().optional(),
-});
+}));
 /** A client reporting the zone its device is in; applied only while the account follows the device. */
-export const DeviceTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+export const DeviceTimezoneRequestSchema = deferredZodSchema(() => z.object({ timezone: IanaTimezoneSchema }));
 /** The account's timezone and whether it follows the device or was fixed by hand. */
-export const UserTimezoneSchema = z.object({
+export const UserTimezoneSchema = deferredZodSchema(() => z.object({
   timezone: IanaTimezoneSchema,
   followsDevice: z.boolean(),
-});
+}));
 export type UserTimezone = z.infer<typeof UserTimezoneSchema>;
 /** A member's personal system prompt for one Organization; empty means none. */
-export const PersonalSystemPromptSchema = z.strictObject({ personalSystemPrompt: z.string() });
+export const PersonalSystemPromptSchema = deferredZodSchema(() => z.strictObject({ personalSystemPrompt: z.string() }));
 export type PersonalSystemPrompt = z.infer<typeof PersonalSystemPromptSchema>;
 /**
  * A member's display preferences for one Organization. Whole on read and on
@@ -1867,10 +1868,10 @@ export type OfferedNotificationKind = (typeof OFFERED_NOTIFICATION_KINDS)[number
  * Lenient on read: a channel this build does not know (a newer server's, or
  * one a rollback left stored) is dropped rather than failing the whole record.
  */
-const NotificationChannelListSchema = z.array(z.string()).transform((channels) => [...new Set(channels.flatMap((channel) => {
+const NotificationChannelListSchema = deferredZodSchema(() => z.array(z.string()).transform((channels) => [...new Set(channels.flatMap((channel) => {
   const known = NotificationChannelSchema.safeParse(channel);
   return known.success ? [known.data] : [];
-}))]);
+}))]));
 /**
  * How each kind reaches this person. An empty list means it is only in
  * Activity.
@@ -1924,7 +1925,7 @@ export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
   sourceRequests: ["push", "email"],
   canvasNotices: ["push", "email"],
 };
-export const MemberPreferencesSchema = z.object({
+export const MemberPreferencesSchema = deferredZodSchema(() => z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
   showAgentWork: z.boolean(),
   /**
@@ -1935,7 +1936,7 @@ export const MemberPreferencesSchema = z.object({
   push: PushPreferencesSchema.default(DEFAULT_PUSH_PREFERENCES),
   /** Absent from a server older than it: read as every default. */
   notify: NotificationChannelsSchema.default(DEFAULT_NOTIFICATION_CHANNELS),
-});
+}));
 export type MemberPreferences = z.infer<typeof MemberPreferencesSchema>;
 export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = {
   showAgentWork: true,
@@ -1949,7 +1950,7 @@ export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = {
  * desktop older than the push switches (it saves `showAgentWork` alone)
  * leaves them as they were. An empty save changes nothing and is refused.
  */
-export const MemberPreferencesUpdateSchema = z.object({
+export const MemberPreferencesUpdateSchema = deferredZodSchema(() => z.object({
   showAgentWork: z.boolean().optional(),
   push: PushPreferencesSchema.partial().optional(),
   /** Each kind named replaces that kind's channels whole. */
@@ -1958,17 +1959,17 @@ export const MemberPreferencesUpdateSchema = z.object({
   || Object.values(value.push ?? {}).some((switched) => switched !== undefined)
   || Object.values(value.notify ?? {}).some((channels) => channels !== undefined), {
   message: "A preference to change is required.",
-});
+}));
 export type MemberPreferencesUpdate = z.infer<typeof MemberPreferencesUpdateSchema>;
 /** Each field is optional so one control can save its own; an empty body changes nothing and is refused. */
-export const UpdateWorkspaceRequestSchema = z.object({
+export const UpdateWorkspaceRequestSchema = deferredZodSchema(() => z.object({
   name: WorkspaceNameSchema.optional(),
   timezone: IanaTimezoneSchema.optional(),
 }).refine((value) => value.name !== undefined || value.timezone !== undefined, {
   message: "Name or timezone is required.",
-});
+}));
 
-export const UpdateWorkstreamRequestSchema = z.object({
+export const UpdateWorkstreamRequestSchema = deferredZodSchema(() => z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
   archived: z.boolean().optional(),
@@ -1979,9 +1980,9 @@ export const UpdateWorkstreamRequestSchema = z.object({
    * shared work with a smaller room rather than one person's property.
    */
   scope: ScopeSchema.optional()
-});
+}));
 
-export const AcknowledgeWorkstreamReadRequestSchema = z.object({
+export const AcknowledgeWorkstreamReadRequestSchema = deferredZodSchema(() => z.object({
   readThroughSequenceNumber: z.number().int().nonnegative(),
   observedManualUnreadGeneration: z.number().int().nonnegative(),
   entrypoint: z.enum([
@@ -1989,7 +1990,7 @@ export const AcknowledgeWorkstreamReadRequestSchema = z.object({
     'home_waiting', 'home_suggested', 'menu_bar', 'command_shortcut', 'deep_link', 'notification',
     'automation_run_list', 'in_app_link', 'settings', 'unknown',
   ]).optional(),
-});
+}));
 
 /** The authoritative visible pending-input queue after a reorder command. */
 export const ReorderPendingLoopInputsResultSchema = z.object({
@@ -2003,7 +2004,7 @@ export const ReorderPendingLoopInputsResultSchema = z.object({
  * without it that is addressed to the Sidekick starts a run, whoever sent it.
  * Elsewhere it means nothing.
  */
-export const SidekickMessageIntentSchema = z.enum(["edit_sidekick"]);
+export const SidekickMessageIntentSchema = deferredZodSchema(() => z.enum(["edit_sidekick"]));
 export type SidekickMessageIntent = z.infer<typeof SidekickMessageIntentSchema>;
 
 export const CreateMessageRequestSchema = z.object({
@@ -2020,12 +2021,12 @@ export const CreateMessageRequestSchema = z.object({
   message: "A message must include text or an attachment",
 });
 
-export const AddParticipantRequestSchema = z.object({ userId: IdSchema });
-const ElicitationAnswerValueSchema = z.union([
+export const AddParticipantRequestSchema = deferredZodSchema(() => z.object({ userId: IdSchema }));
+const ElicitationAnswerValueSchema = deferredZodSchema(() => z.union([
   z.string().trim().min(1).max(4000),
   z.array(z.string().trim().min(1).max(4000)).min(1).max(30)
-]);
-export const AnswerElicitationRequestSchema = z.union([
+]));
+export const AnswerElicitationRequestSchema = deferredZodSchema(() => z.union([
   z.strictObject({
     answer: ElicitationAnswerValueSchema,
     customResponse: z.string().trim().min(1).max(4000).optional(),
@@ -2034,19 +2035,19 @@ export const AnswerElicitationRequestSchema = z.union([
   z.strictObject({
     skipped: z.literal(true)
   })
-]);
-export const CreateWebhookConnectionRequestSchema = z.object({
+]));
+export const CreateWebhookConnectionRequestSchema = deferredZodSchema(() => z.object({
   displayName: z.string().min(1).max(180),
   scope: ScopeSchema,
   eventTypes: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
   idempotencyKey: z.string().trim().min(1).max(120).optional()
-});
+}));
 
 // --- Custom MCP servers ----------------------------------------------------
 
 /** How a connection to a person-configured MCP server authenticates. */
 export const CustomMcpAuthModes = ["oauth", "headers"] as const;
-export const CustomMcpAuthModeSchema = z.enum(CustomMcpAuthModes);
+export const CustomMcpAuthModeSchema = deferredZodSchema(() => z.enum(CustomMcpAuthModes));
 
 /**
  * Which of a server's tools a connection exposes.
@@ -2057,7 +2058,7 @@ export const CustomMcpAuthModeSchema = z.enum(CustomMcpAuthModes);
  * MCP annotation is a hint from the server rather than a promise to Rally.
  */
 export const CustomMcpToolPolicies = ["all_tools", "read_only_tools"] as const;
-export const CustomMcpToolPolicySchema = z.enum(CustomMcpToolPolicies);
+export const CustomMcpToolPolicySchema = deferredZodSchema(() => z.enum(CustomMcpToolPolicies));
 
 /**
  * Header entries a connection may not set. Not a defensive limit but a
@@ -2093,7 +2094,7 @@ export const MAX_CUSTOM_MCP_HEADERS = 16;
 export const MAX_CUSTOM_MCP_HEADER_VALUE_CHARS = 8_192;
 
 /** RFC 9110 field names, minus the ones the MCP transport owns. */
-export const CustomMcpRequestHeadersSchema = z.record(
+export const CustomMcpRequestHeadersSchema = deferredZodSchema(() => z.record(
   z.string()
     .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/u, "Expected an HTTP header name")
     .refine(
@@ -2112,7 +2113,7 @@ export const CustomMcpRequestHeadersSchema = z.record(
     return count >= 1 && count <= MAX_CUSTOM_MCP_HEADERS;
   },
   `Expected between 1 and ${MAX_CUSTOM_MCP_HEADERS} headers`,
-);
+));
 
 /**
  * The non-secret half of a custom MCP connection, held in `config_json`.
@@ -2122,11 +2123,11 @@ export const CustomMcpRequestHeadersSchema = z.record(
  * decryption path could see would leave a row unable to say which server it
  * points at.
  */
-export const CustomMcpConnectionConfigSchema = z.looseObject({
+export const CustomMcpConnectionConfigSchema = deferredZodSchema(() => z.looseObject({
   serverUrl: HttpsUrlSchema,
   authMode: CustomMcpAuthModeSchema,
   toolPolicy: CustomMcpToolPolicySchema.default("all_tools"),
-});
+}));
 
 const CustomMcpConnectionBaseSchema = z.object({
   displayName: z.string().trim().min(1).max(180),
@@ -2145,13 +2146,13 @@ export const StartCustomMcpConnectionRequestSchema = CustomMcpConnectionBaseSche
   toolPolicy: CustomMcpToolPolicySchema.default("all_tools"),
 });
 
-export const CustomMcpToolSummarySchema = z.object({
+export const CustomMcpToolSummarySchema = deferredZodSchema(() => z.object({
   name: z.string().min(1).max(200),
   description: z.string().max(4_000),
   readOnly: z.boolean(),
   destructive: z.boolean(),
   available: z.boolean(),
-});
+}));
 
 /**
  * What the connections screen shows for one custom MCP connection.
@@ -2161,7 +2162,7 @@ export const CustomMcpToolSummarySchema = z.object({
  * reason a catalog could not be read, which is a different state from a server
  * that advertises nothing.
  */
-export const CustomMcpConnectionSettingsSchema = z.object({
+export const CustomMcpConnectionSettingsSchema = deferredZodSchema(() => z.object({
   connectionId: IdSchema,
   connectionName: z.string().min(1).max(180),
   scope: ScopeSchema,
@@ -2172,11 +2173,11 @@ export const CustomMcpConnectionSettingsSchema = z.object({
   toolPolicyEditable: z.boolean(),
   tools: z.array(CustomMcpToolSummarySchema).max(128),
   toolsUnavailable: z.string().max(500).nullable().default(null),
-});
+}));
 
-export const UpdateCustomMcpToolPolicyRequestSchema = z.object({
+export const UpdateCustomMcpToolPolicyRequestSchema = deferredZodSchema(() => z.object({
   toolPolicy: CustomMcpToolPolicySchema,
-});
+}));
 
 /**
  * The REST recovery twin of the AgentLoopDO `snapshot` frame.
@@ -2191,13 +2192,13 @@ export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
 
 export const WORKSTREAM_REALTIME_MAX_FRAME_BYTES = 1_000_000;
 
-export const SubstreamSocketMutationTypeSchema = z.enum([
+export const SubstreamSocketMutationTypeSchema = deferredZodSchema(() => z.enum([
   "create_message",
   "answer_elicitation",
   "reorder_pending_inputs",
   "stop_harness",
   "retry_harness",
-]);
+]));
 
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
@@ -2271,12 +2272,12 @@ export const WORKSPACE_SYNC_TOPICS = [
   "viewer_preferences",
   "feature_flags",
 ] as const;
-export const WorkspaceSyncTopicSchema = z.enum(WORKSPACE_SYNC_TOPICS);
+export const WorkspaceSyncTopicSchema = deferredZodSchema(() => z.enum(WORKSPACE_SYNC_TOPICS));
 
 /** Opaque stable ordering cursor for WorkspaceDO's `(recency, id)` directory. */
-export const WorkspaceWorkstreamCursorSchema = z.string()
+export const WorkspaceWorkstreamCursorSchema = deferredZodSchema(() => z.string()
   .regex(/^\d{1,16}:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
-  .max(53);
+  .max(53));
 
 export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   ConversationViewRequestSchema,
@@ -2327,7 +2328,7 @@ const WorkstreamStateEventIdSchema = IdSchema;
  * nothing moved costs the bytes and applies nothing: every list carries the
  * waterline its pushes carry, so the client's ordinary comparison drops it.
  */
-export const WorkspaceSidebarSchema = z.strictObject({
+export const WorkspaceSidebarSchema = deferredZodSchema(() => z.strictObject({
   automations: z.strictObject({
     waterline: z.number().int().nonnegative(),
     items: z.array(AutomationSummarySchema).max(250),
@@ -2342,7 +2343,7 @@ export const WorkspaceSidebarSchema = z.strictObject({
    * reading a payload from a server that predates it draws no section.
    */
   activity: ActivityPageSchema.optional(),
-});
+}));
 
 /**
  * The workspace socket's synchronization event, and the sidebar it carries.
@@ -2356,7 +2357,7 @@ export const WorkspaceSidebarSchema = z.strictObject({
  * report news. Everywhere else an event with no topics would be a broadcast
  * saying nothing, so the refinement keeps that impossible.
  */
-export const WorkspaceSocketSyncEventSchema = z.strictObject({
+export const WorkspaceSocketSyncEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_sync"),
   /** Advertised on subscribe so newer clients do not send this command to an older server. */
   conversationViews: z.literal(true).optional(),
@@ -2392,7 +2393,7 @@ export const WorkspaceSocketSyncEventSchema = z.strictObject({
       message: "feature flags may appear only on the private subscribe answer",
     });
   }
-});
+}));
 
 /**
  * Ephemeral presence for the work stream foregrounded by this socket.
@@ -2402,25 +2403,25 @@ export const WorkspaceSocketSyncEventSchema = z.strictObject({
  * them, and the face pile needs only the room currently on screen. The current
  * user is omitted by the server.
  */
-export const WorkspacePresenceEventSchema = z.strictObject({
+export const WorkspacePresenceEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_presence"),
   occurredAt: TimestampSchema,
   workstreamId: WorkstreamIdSchema.nullable(),
   userIds: z.array(UserIdSchema),
-});
+}));
 
 /**
  * A purpose-bound socket ticket as the Worker issues it: where to connect, and
  * the single-use credential to present in `Sec-WebSocket-Protocol`.
  */
-export const SocketTicketSchema = z.object({ url: WebSocketUrlSchema, ticket: z.string().min(1) });
+export const SocketTicketSchema = deferredZodSchema(() => z.object({ url: WebSocketUrlSchema, ticket: z.string().min(1) }));
 
 /**
  * What a resource shows at its newest version: the fields a new version can
  * move, and nothing about how a conversation links it. A client merges it
  * over the resource it already holds, keeping that link's own fields.
  */
-export const ResourceHeadSchema = z.strictObject({
+export const ResourceHeadSchema = deferredZodSchema(() => z.strictObject({
   resourceId: IdSchema,
   version: z.number().int().positive(),
   title: z.string().min(1).max(300),
@@ -2428,7 +2429,7 @@ export const ResourceHeadSchema = z.strictObject({
   updatedAt: TimestampSchema,
   contentAvailable: z.boolean(),
   sizeBytes: z.number().int().nonnegative(),
-});
+}));
 export type ResourceHead = z.infer<typeof ResourceHeadSchema>;
 
 /**
@@ -2442,23 +2443,23 @@ export type ResourceHead = z.infer<typeof ResourceHeadSchema>;
  * resource's head when it next opens the conversation that holds it. Older
  * clients ignore the unknown `type`. `docs/websocket-architecture.md` owns it.
  */
-export const WorkspaceResourceVersionsEventSchema = z.strictObject({
+export const WorkspaceResourceVersionsEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_resource_versions"),
   occurredAt: TimestampSchema,
   resources: z.array(ResourceHeadSchema).min(1),
-});
+}));
 export type WorkspaceResourceVersionsEvent = z.infer<typeof WorkspaceResourceVersionsEventSchema>;
 
 /**
  * Legacy flag-update event accepted by clients across rolling deployments.
  * Current configuration is delivered on workspace subscription and HTTP reads.
  */
-export const WorkspaceFeatureFlagsEventSchema = z.strictObject({
+export const WorkspaceFeatureFlagsEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_feature_flags"),
   occurredAt: TimestampSchema,
   changedFlag: ProductFeatureFlagKeySchema.nullable(),
   flags: ClientFeatureFlagsSchema,
-});
+}));
 
 /**
  * One sidebar list and the version WorkspaceDO stamped on it.
@@ -2480,7 +2481,7 @@ export const WorkspaceFeatureFlagsEventSchema = z.strictObject({
  * per field. Here the list is the unit, one authority produces it, and the
  * whole list is replaced or ignored together.
  */
-export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
+export const WorkspaceSidebarListEventSchema = deferredZodSchema(() => z.discriminatedUnion("list", [
   z.strictObject({
     type: z.literal("workspace_sidebar_list"),
     occurredAt: TimestampSchema,
@@ -2488,7 +2489,7 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
     waterline: z.number().int().positive(),
     items: z.array(AutomationSummarySchema).max(250),
   }),
-]);
+]));
 
 export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
@@ -2505,7 +2506,7 @@ export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEvent
  * Reconnecting clients resend the same `clientMessageId` and receive the same
  * private receipt through the command's idempotent write path.
  */
-export const WorkstreamMessageDeliveryStateSchema = z.enum(["canonical", "pending"]);
+export const WorkstreamMessageDeliveryStateSchema = deferredZodSchema(() => z.enum(["canonical", "pending"]));
 export const WorkstreamMessageAdmissionReceiptSchema = z.strictObject({
   turn: z.strictObject({
     turnId: TranscriptTurnIdSchema,
@@ -2515,14 +2516,14 @@ export const WorkstreamMessageAdmissionReceiptSchema = z.strictObject({
   deliveryState: WorkstreamMessageDeliveryStateSchema,
 });
 
-const WorkstreamSocketCommandErrorSchema = z.strictObject({
+const WorkstreamSocketCommandErrorSchema = deferredZodSchema(() => z.strictObject({
   status: z.number().int().min(0).max(599),
   code: z.string().min(1).max(160),
   message: z.string().min(1).max(1_000),
   details: z.record(z.string(), z.unknown()).optional(),
-});
+}));
 
-export const WorkstreamSocketCommandResultSchema = z.union([
+export const WorkstreamSocketCommandResultSchema = deferredZodSchema(() => z.union([
   z.strictObject({
     type: z.literal("client_command_succeeded"),
     command: z.literal("create_message"),
@@ -2560,7 +2561,7 @@ export const WorkstreamSocketCommandResultSchema = z.union([
     clientMessageId: z.string().min(1).max(120).optional(),
     error: WorkstreamSocketCommandErrorSchema,
   }),
-]);
+]));
 
 const ServerEventBaseSchema = z.object({
   sequence: z.number().int().nonnegative(),
@@ -2581,7 +2582,7 @@ const StreamEventBaseSchema = ServerEventBaseSchema.extend({
  * after the stream began. `turnStartOffset` identifies the prefix that survives
  * a retry without storing that prefix twice in Durable Object storage.
  */
-const ActiveStreamCheckpointBaseSchema = z.object({
+const ActiveStreamCheckpointBaseSchema = deferredZodSchema(() => z.object({
   /** Transient identity for one run's streamed output; never a transcript turn. */
   streamId: IdSchema,
   harnessRunId: IdSchema,
@@ -2596,21 +2597,21 @@ const ActiveStreamCheckpointBaseSchema = z.object({
 }).refine((checkpoint) => checkpoint.turnStartOffset <= checkpoint.text.length, {
   message: "Turn start must fall within the accumulated stream text",
   path: ["turnStartOffset"],
-});
+}));
 /** Workstream streams always occupy a pre-reserved canonical position. */
 export const ActiveStreamCheckpointSchema = ActiveStreamCheckpointBaseSchema.and(z.object({
   transcriptSequence: z.number().int().positive(),
 }));
-export const ActiveStreamCheckpointsSchema = z.array(ActiveStreamCheckpointSchema).max(1);
+export const ActiveStreamCheckpointsSchema = deferredZodSchema(() => z.array(ActiveStreamCheckpointSchema).max(1));
 
 /** The one context-compaction operation currently owned by an agent DO. */
-export const AgentCompactionStateSchema = z.strictObject({
+export const AgentCompactionStateSchema = deferredZodSchema(() => z.strictObject({
   harnessRunId: IdSchema,
   attemptId: IdSchema,
   compactionIndex: z.number().int().positive(),
   trigger: z.enum(["manual", "auto"]),
   startedAt: TimestampSchema,
-});
+}));
 export type AgentCompactionState = z.infer<typeof AgentCompactionStateSchema>;
 
 /**
@@ -2650,7 +2651,7 @@ export const InferenceDelayStateSchema = z.object({
 });
 export type InferenceDelayState = z.infer<typeof InferenceDelayStateSchema>;
 
-export const ServerSocketEventSchema = z.discriminatedUnion("type", [
+export const ServerSocketEventSchema = deferredZodSchema(() => z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
     reason: z.enum(["initial", "reconciliation", "history_unavailable"]),
@@ -2801,7 +2802,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
      */
     requestId: IdSchema.nullable().default(null),
   })
-]);
+]));
 
 /**
  * Set on a normalized activity's metadata when the polling stream that produced
@@ -2855,27 +2856,27 @@ export const NormalizedActivitySchema = z.object({
   externalPeople: ExternalPeopleSchema.optional()
 });
 
-export const ActivityQueueMessageSchema = z.object({
+export const ActivityQueueMessageSchema = deferredZodSchema(() => z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   activityId: IdSchema,
   attempt: z.number().int().min(0).max(5).default(0)
-});
+}));
 
-export const SlackIngressQueueMessageSchema = z.object({
+export const SlackIngressQueueMessageSchema = deferredZodSchema(() => z.object({
   kind: z.literal("slack_ingress"),
   region: RegionSchema,
   workspaceId: IdSchema,
   jobId: z.string().min(1),
-});
+}));
 
-export const ExecutionPrincipalSchema = z.discriminatedUnion("type", [
+export const ExecutionPrincipalSchema = deferredZodSchema(() => z.discriminatedUnion("type", [
   z.object({ type: z.literal("user"), userId: UserIdSchema }),
   z.object({ type: z.literal("workspace"), workspaceId: WorkspaceIdSchema })
-]);
+]));
 
 /** Host receipt attribution. Contains no credentials or provider cursors. */
-export const ToolExecutionAccountSchema = z.strictObject({
+export const ToolExecutionAccountSchema = deferredZodSchema(() => z.strictObject({
   sidekickId: IdSchema,
   connectionId: IdSchema,
   principal: ExecutionPrincipalSchema,
@@ -2887,35 +2888,35 @@ export const ToolExecutionAccountSchema = z.strictObject({
   grantGeneration: z.number().int().nonnegative(),
 }).refine((account) => account.principal.type !== "user" || account.principal.userId === account.delegatedUserId, {
   path: ["delegatedUserId"], message: "A personal operation's delegate must match its serving principal",
-});
+}));
 export type ToolExecutionAccount = z.infer<typeof ToolExecutionAccountSchema>;
 
-export const ToolExecutionAccountRecordSchema = z.strictObject({
+export const ToolExecutionAccountRecordSchema = deferredZodSchema(() => z.strictObject({
   phase: z.enum(["selected", "refused", "served"]),
   account: ToolExecutionAccountSchema,
   originalAccount: ToolExecutionAccountSchema,
   /** Read compatibility for historical checkpoints; new writes omit this field. */
   resourceKeys: z.array(z.string().min(1)).optional(),
-});
+}));
 export type ToolExecutionAccountRecord = z.infer<typeof ToolExecutionAccountRecordSchema>;
 
-export const SlackOriginAttachmentSchema = z.strictObject({
+export const SlackOriginAttachmentSchema = deferredZodSchema(() => z.strictObject({
   id: z.string().min(1).max(255).nullable(),
   name: z.string().min(1).max(500),
   title: z.string().max(500).nullable(),
   mimeType: z.string().max(255).nullable(),
   fileType: z.string().max(120).nullable(),
   permalink: httpUrlSchema(2000).nullable()
-});
+}));
 
-export const SlackOriginNearbyMessageSchema = z.strictObject({
+export const SlackOriginNearbyMessageSchema = deferredZodSchema(() => z.strictObject({
   timestamp: z.string().min(1).max(80),
   userId: z.string().min(1).max(255).nullable(),
   text: z.string().max(2000),
   attachments: z.array(SlackOriginAttachmentSchema).max(10)
-});
+}));
 
-export const SlackOriginContextSchema = z.strictObject({
+export const SlackOriginContextSchema = deferredZodSchema(() => z.strictObject({
   teamId: z.string().min(1).max(255),
   /** Slack member whose message triggered this run; server-owned delivery routing metadata. */
   actorSlackUserId: z.string().min(1).max(255).optional(),
@@ -2949,20 +2950,20 @@ export const SlackOriginContextSchema = z.strictObject({
       teamId: z.string().min(1).max(255).nullable()
     })).max(32)
   }).nullable().optional()
-});
+}));
 
 /**
  * Short-lived Slack authorization attached to a user-initiated Events API
  * delivery. This is runtime-only credential material: it must never be
  * rendered into model instructions, messages, tool arguments, or logs.
  */
-export const SlackSearchAuthorizationSchema = z.strictObject({
+export const SlackSearchAuthorizationSchema = deferredZodSchema(() => z.strictObject({
   actionToken: z.string().min(1).max(4096)
-});
+}));
 
 // Not strict: a run context stored by the removed demo seeder carries a `seed`
 // key, which this schema strips rather than refuses (docs/agent-harness.md).
-export const WorkstreamWorkflowInputSchema = z.object({
+export const WorkstreamWorkflowInputSchema = deferredZodSchema(() => z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   /**
@@ -3082,15 +3083,15 @@ export const WorkstreamWorkflowInputSchema = z.object({
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   reason: z.string().min(1).max(500)
-});
-export const ConnectorPollWorkflowInputSchema = z.object({
+}));
+export const ConnectorPollWorkflowInputSchema = deferredZodSchema(() => z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   connectionId: IdSchema,
   pollScheduleId: IdSchema
-});
+}));
 
-export const AddressingClassificationSchema = z.object({
+export const AddressingClassificationSchema = deferredZodSchema(() => z.object({
   classification: z.enum(["agent_action", "human_only", "both", "uncertain"]),
   confidence: z.number().min(0).max(1),
   rationaleCode: z.enum([
@@ -3105,7 +3106,7 @@ export const AddressingClassificationSchema = z.object({
     "social_acknowledgement",
     "insufficient_signal"
   ])
-});
+}));
 
 /**
  * How long a work stream may report that it is being named.
@@ -3153,13 +3154,13 @@ export const WORKSTREAM_NAME_RESULT_MAX_LENGTH = 80;
  * the opening message, falls back the same way: a missing or malformed one
  * leaves that description standing and costs nothing else.
  */
-export const WorkstreamNameResultSchema = z.object({
+export const WorkstreamNameResultSchema = deferredZodSchema(() => z.object({
   title: z.string().trim().min(1).max(WORKSTREAM_NAME_RESULT_MAX_LENGTH),
   icon: PickableWorkstreamIconKeySchema.nullish().catch(null),
   summary: z.string().trim().min(1).nullish().catch(null),
-});
+}));
 
-export const ToolDefinitionSchema = z.object({
+export const ToolDefinitionSchema = deferredZodSchema(() => z.object({
   name: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
   /** Authored pagination only. Never accepted from remote MCP declarations. */
   pagination: z.object({ cursorParameter: z.string().min(1), sourceOnly: z.boolean().optional() }).optional(),
@@ -3177,37 +3178,37 @@ export const ToolDefinitionSchema = z.object({
   longRunning: z.boolean().optional(),
   /** Optional per-tool ceiling. The host still applies its overall run limit. */
   timeoutMs: z.number().int().positive().max(1_050_000).optional()
-});
+}));
 
 /**
  * Connector surfaces are composable. A provider such as Linear can expose its
  * ordinary resources and tools while also hosting Avalon as a native agent.
  * Legacy manifests omit this field and normalize to the resource surface.
  */
-export const ConnectorSurfaceSchema = z.enum(["resource", "native_agent", "messaging_agent"]);
+export const ConnectorSurfaceSchema = deferredZodSchema(() => z.enum(["resource", "native_agent", "messaging_agent"]));
 
-export const NativeAgentInvocationModeSchema = z.enum([
+export const NativeAgentInvocationModeSchema = deferredZodSchema(() => z.enum([
   "delegation",
   "mention",
   "follow_up"
-]);
+]));
 
-export const NativeAgentActivityKindSchema = z.enum([
+export const NativeAgentActivityKindSchema = deferredZodSchema(() => z.enum([
   "thought",
   "action",
   "elicitation",
   "response",
   "error"
-]);
+]));
 
-export const ConnectorSurfaceMaturitySchema = z.enum(["stable", "preview"]);
-export const ConnectorSurfaceRuntimeStatusSchema = z.enum(["protocol_only", "operational"]);
-export const NativeAgentSessionOwnershipSchema = z.enum([
+export const ConnectorSurfaceMaturitySchema = deferredZodSchema(() => z.enum(["stable", "preview"]));
+export const ConnectorSurfaceRuntimeStatusSchema = deferredZodSchema(() => z.enum(["protocol_only", "operational"]));
+export const NativeAgentSessionOwnershipSchema = deferredZodSchema(() => z.enum([
   "single_connection_per_provider_account",
   "connection_scoped"
-]);
+]));
 
-export const NativeAgentSurfaceSchema = z.object({
+export const NativeAgentSurfaceSchema = deferredZodSchema(() => z.object({
   capability: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
   invocationModes: z.array(NativeAgentInvocationModeSchema).min(1),
   activityKinds: z.array(NativeAgentActivityKindSchema).min(1),
@@ -3224,14 +3225,14 @@ export const NativeAgentSurfaceSchema = z.object({
   webhookResponseDeadlineMs: z.number().int().positive().max(60_000).optional(),
   /** Maximum time before the connector must publish activity or an external URL. */
   sessionAcknowledgementDeadlineMs: z.number().int().positive().max(60_000).optional()
-});
+}));
 
 /**
  * A provider-native conversational surface whose transport is owned by the
  * connector control plane. Unlike ordinary tools, inbound invocations and
  * streamed responses are never exposed to the model as callable operations.
  */
-export const MessagingAgentSurfaceSchema = z.object({
+export const MessagingAgentSurfaceSchema = deferredZodSchema(() => z.object({
   capability: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
   invocationModes: z.array(z.enum(["direct_message", "mention", "shortcut", "command", "follow_up"])).min(1),
   supportsStreaming: z.boolean(),
@@ -3243,29 +3244,29 @@ export const MessagingAgentSurfaceSchema = z.object({
   maturity: ConnectorSurfaceMaturitySchema.default("stable"),
   runtimeStatus: ConnectorSurfaceRuntimeStatusSchema,
   webhookResponseDeadlineMs: z.number().int().positive().max(60_000),
-});
+}));
 
-export const ConnectorCapabilityKindSchema = z.enum(["tool", "host", "native_agent", "messaging_agent"]);
+export const ConnectorCapabilityKindSchema = deferredZodSchema(() => z.enum(["tool", "host", "native_agent", "messaging_agent"]));
 
 /**
  * Authorization is capability based, including capabilities that do not map
  * to an agent tool. This lets native provider identities participate in OAuth
  * grants without inventing a callable tool solely to make them selectable.
  */
-export const ConnectorCapabilitySchema = z.object({
+export const ConnectorCapabilitySchema = deferredZodSchema(() => z.object({
   id: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
   kind: ConnectorCapabilityKindSchema,
   description: z.string().min(1).optional()
-});
+}));
 
-export const ConnectorActivityFilterValueTypeSchema = z.enum([
+export const ConnectorActivityFilterValueTypeSchema = deferredZodSchema(() => z.enum([
   "string",
   "number",
   "boolean",
   "string_array",
   "person_id",
   "person_id_array",
-]);
+]));
 
 /**
  * The operators a filter field offers when its manifest names none.
@@ -3285,7 +3286,7 @@ export function defaultConnectorActivityFilterOperators(
     : ["equals"];
 }
 
-export const ConnectorActivityFilterFieldSchema = z.strictObject({
+export const ConnectorActivityFilterFieldSchema = deferredZodSchema(() => z.strictObject({
   key: z.string().regex(/^[a-z][a-zA-Z0-9_]{0,63}$/),
   label: z.string().min(1).max(120),
   description: z.string().min(1).max(500),
@@ -3314,9 +3315,9 @@ export const ConnectorActivityFilterFieldSchema = z.strictObject({
 }).transform((field) => ({
   ...field,
   operators: field.operators ?? defaultConnectorActivityFilterOperators(field.valueType),
-}));
+})));
 
-export const ConnectorActivityTriggerDescriptorSchema = z.strictObject({
+export const ConnectorActivityTriggerDescriptorSchema = deferredZodSchema(() => z.strictObject({
   eventType: z.string().min(1).max(200),
   label: z.string().min(1).max(160),
   description: z.string().min(1).max(800),
@@ -3349,7 +3350,7 @@ export const ConnectorActivityTriggerDescriptorSchema = z.strictObject({
    * It just does not interrupt a person on a schedule.
    */
   digestible: z.boolean(),
-});
+}));
 
 /**
  * A connector that can hand a finished automation result to the person who
@@ -3362,14 +3363,14 @@ export const ConnectorActivityTriggerDescriptorSchema = z.strictObject({
  * only becomes a destination once the requesting user has linked their own
  * provider identity to it.
  */
-export const ConnectorUserDeliverySchema = z.object({
+export const ConnectorUserDeliverySchema = deferredZodSchema(() => z.object({
   targetType: AutomationDeliveryTargetTypeSchema,
   label: z.string().min(1).max(80),
   description: z.string().min(1).max(240),
   requiresPersonalIdentityLink: z.boolean().default(false),
-});
+}));
 
-const ConnectorManifestBaseSchema = z.object({
+const ConnectorManifestBaseSchema = deferredZodSchema(() => z.object({
   type: z.string().min(1),
   displayName: z.string().min(1),
   surfaces: z.array(ConnectorSurfaceSchema).min(1).default(["resource"]),
@@ -3385,7 +3386,7 @@ const ConnectorManifestBaseSchema = z.object({
   supportsWatches: z.boolean(),
   supportsPolling: z.boolean(),
   supportsWebhooks: z.boolean()
-});
+}));
 
 export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((manifest, context) => {
   const activityTypes = new Set<string>();
@@ -3627,9 +3628,9 @@ export function runRequesterUserId(
   return input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
 }
 
-export const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
-export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verified", "failed"]);
-export const TerminalWorkspaceSettingsSchema = z.strictObject({
+export const TerminalNetworkModeSchema = deferredZodSchema(() => z.enum(["trusted_only", "full_internet"]));
+export const TerminalNetworkVerificationStateSchema = deferredZodSchema(() => z.enum(["pending", "verified", "failed"]));
+export const TerminalWorkspaceSettingsSchema = deferredZodSchema(() => z.strictObject({
   availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
   mode: TerminalNetworkModeSchema,
   revision: z.number().int().positive(),
@@ -3637,42 +3638,42 @@ export const TerminalWorkspaceSettingsSchema = z.strictObject({
   customDomains: z.array(z.string().min(1).max(253)).max(20),
   remainingCustomSlots: z.number().int().nonnegative().max(20),
   failureCode: z.string().min(1).max(160).nullable(),
-});
-export const PreviewTerminalNetworkPolicyRequestSchema = z.strictObject({
+}));
+export const PreviewTerminalNetworkPolicyRequestSchema = deferredZodSchema(() => z.strictObject({
   expectedRevision: z.number().int().positive(),
   mode: TerminalNetworkModeSchema,
   customDomains: z.array(z.string().min(1).max(253)).max(20),
-});
-export const TerminalNetworkPolicyPreviewSchema = z.strictObject({
+}));
+export const TerminalNetworkPolicyPreviewSchema = deferredZodSchema(() => z.strictObject({
   mutationId: IdSchema,
   expectedRevision: z.number().int().positive(),
   proposedMode: TerminalNetworkModeSchema,
   customDomains: z.array(z.string().min(1).max(253)).max(20),
   remainingCustomSlots: z.number().int().nonnegative().max(20),
-});
-export const ApplyTerminalNetworkPolicyRequestSchema = z.strictObject({
+}));
+export const ApplyTerminalNetworkPolicyRequestSchema = deferredZodSchema(() => z.strictObject({
   mutationId: IdSchema,
   expectedRevision: z.number().int().positive(),
   confirmed: z.literal(true),
-});
-export const TerminalSandboxStateSchema = z.enum([
+}));
+export const TerminalSandboxStateSchema = deferredZodSchema(() => z.enum([
   "absent", "starting", "running", "stopped", "archived", "restoring", "expired", "failed",
-]);
-export const TerminalSelectedRepositorySchema = z.strictObject({
+]));
+export const TerminalSelectedRepositorySchema = deferredZodSchema(() => z.strictObject({
   id: z.number().int().positive(),
   fullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
   baseRef: z.string().min(1).max(240),
   baseSha: z.string().regex(/^[0-9a-f]{40}$/u),
   headRef: z.string().min(1).max(240),
-});
-export const TerminalProviderObservationSchema = z.strictObject({
+}));
+export const TerminalProviderObservationSchema = deferredZodSchema(() => z.strictObject({
   state: z.string().nullable(),
   observedAt: TimestampSchema.nullable(),
   nextObserveAt: TimestampSchema,
   recoverable: z.boolean().nullable(),
   errorCode: z.string().nullable(),
-});
-export const TerminalWorkstreamStateSchema = z.strictObject({
+}));
+export const TerminalWorkstreamStateSchema = deferredZodSchema(() => z.strictObject({
   providerObservation: TerminalProviderObservationSchema.nullable().optional(),
   availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
   state: TerminalSandboxStateSchema,
@@ -3683,7 +3684,7 @@ export const TerminalWorkstreamStateSchema = z.strictObject({
   finalDiffResourceId: IdSchema.nullable(),
   failureCode: z.string().min(1).max(160).nullable(),
   repository: TerminalSelectedRepositorySchema.nullable(),
-});
+}));
 export type TerminalWorkspaceSettings = z.infer<typeof TerminalWorkspaceSettingsSchema>;
 export type TerminalNetworkPolicyPreview = z.infer<typeof TerminalNetworkPolicyPreviewSchema>;
 export type TerminalWorkstreamState = z.infer<typeof TerminalWorkstreamStateSchema>;
@@ -3794,22 +3795,22 @@ export function connectorResourceAuthorizationRequestFromToolEvent(
   return parsed.success ? parsed.data : null;
 }
 
-export const ConnectorResourceAuthorizationTargetSchema = z.strictObject({
+export const ConnectorResourceAuthorizationTargetSchema = deferredZodSchema(() => z.strictObject({
   parentKind: ConversationParentKindSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
   failedToolInvocationId: z.string().min(1),
-});
+}));
 export type ConnectorResourceAuthorizationTarget = z.infer<typeof ConnectorResourceAuthorizationTargetSchema>;
-export const StartConnectorResourceAuthorizationRequestSchema = z.strictObject({
+export const StartConnectorResourceAuthorizationRequestSchema = deferredZodSchema(() => z.strictObject({
   target: ConnectorResourceAuthorizationTargetSchema,
-});
+}));
 export type StartConnectorResourceAuthorizationRequest = z.infer<typeof StartConnectorResourceAuthorizationRequestSchema>;
-export const ConnectorResourceAuthorizationStartSchema = z.strictObject({
+export const ConnectorResourceAuthorizationStartSchema = deferredZodSchema(() => z.strictObject({
   attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   status: z.enum(["pending", "succeeded"]),
   url: HttpUrlSchema.nullable(),
-});
+}));
 export type ConnectorResourceAuthorizationStart = z.infer<typeof ConnectorResourceAuthorizationStartSchema>;
 
 export interface StructuredFailureDetail {
@@ -3906,7 +3907,7 @@ export type SidekickDetail = AutomationDetail;
 export type SidekickDefinition = AutomationDraft;
 export type SidekickSummary = AutomationSummary;
 
-export const SidekickSkillSourceSchema = z.object({
+export const SidekickSkillSourceSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   revision: z.number().int().positive(),
   loadable: z.boolean(),
@@ -3914,13 +3915,13 @@ export const SidekickSkillSourceSchema = z.object({
   description: z.string(),
   whenToUse: z.string(),
   instructions: z.string(),
-});
+}));
 export type SidekickSkillSource = z.infer<typeof SidekickSkillSourceSchema>;
-export const SidekickSkillSnapshotSchema = z.object({
+export const SidekickSkillSnapshotSchema = deferredZodSchema(() => z.object({
   sources: z.array(SidekickSkillSourceSchema),
   activeRefs: z.array(z.string()),
   recommendedRefs: z.array(z.string()).optional(),
-});
+}));
 export type SidekickSkillSnapshot = z.infer<typeof SidekickSkillSnapshotSchema>;
 
 export const SidekickAttachmentSchema = z.object({
@@ -3928,19 +3929,19 @@ export const SidekickAttachmentSchema = z.object({
 });
 export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
 
-export const SidekickAttachmentsSchema = z.object({ items: z.array(SidekickAttachmentSchema) });
+export const SidekickAttachmentsSchema = deferredZodSchema(() => z.object({ items: z.array(SidekickAttachmentSchema) }));
 /** Sources eligible for an explicit workstream recommendation in this conversation. */
-export const SidekickRecommendationOptionsSchema = z.object({
+export const SidekickRecommendationOptionsSchema = deferredZodSchema(() => z.object({
   canManage: z.boolean(),
   items: z.array(SidekickAttachmentSchema.extend({ attached: z.boolean() })),
-});
+}));
 export type SidekickRecommendationOptions = z.infer<typeof SidekickRecommendationOptionsSchema>;
 
 
 export { isUnknownSocketEvent,safeParseSocketEvent } from "./socket-events";
 
-export const ClientSocketEventTypeSchema = z.union(ClientSocketEventSchema.options.map((event) => event.shape.type));
-export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClientEventSchema.options.map((event) => event.shape.type));
+export const ClientSocketEventTypeSchema = deferredZodSchema(() => z.union(ClientSocketEventSchema.options.map((event) => event.shape.type)));
+export const WorkspaceSocketClientEventTypeSchema = deferredZodSchema(() => z.union(WorkspaceSocketClientEventSchema.options.map((event) => event.shape.type)));
 
 export { ConnectorEventConsoleProviders,ConnectorInstallationProviderSchema,ConnectorInstallationProviders,ConnectorInstallationSchema,ConnectorRegistrationSchema,type ConnectorEventConsoleProvider,type ConnectorInstallation,type ConnectorInstallationProvider,type InstallationRegistration } from "./connector-installation";
 export { ConnectorApiKeyGuidanceCatalog,ConnectorApiKeyProviders,connectorApiKeyAcceptable,connectorApiKeyMismatch,isConnectorApiKeyProvider,type ConnectorApiKeyFormat,type ConnectorApiKeyGuidance,type ConnectorApiKeyProvider } from "./connector-api-keys";

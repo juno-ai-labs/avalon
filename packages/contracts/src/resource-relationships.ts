@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 export const RESOURCE_RELATIONSHIP_TYPES = [
   "attachment",
@@ -17,14 +18,14 @@ export type ResourceRelationshipType = z.infer<typeof ResourceRelationshipTypeSc
  * `ResourceRelationshipTypeSchema`; the desktop normalizes this retired value
  * to `attachment` immediately after parsing it.
  */
-export const WireResourceRelationshipTypeSchema = z.union([
+export const WireResourceRelationshipTypeSchema = deferredZodSchema(() => z.union([
   ResourceRelationshipTypeSchema,
   z.literal("suggested_activity"),
-]);
+]));
 export type WireResourceRelationshipType = z.infer<typeof WireResourceRelationshipTypeSchema>;
 
 export const RESOURCE_DIRECTIONS = ["source", "artifact"] as const;
-export const ResourceDirectionSchema = z.enum(RESOURCE_DIRECTIONS);
+export const ResourceDirectionSchema = deferredZodSchema(() => z.enum(RESOURCE_DIRECTIONS));
 export type ResourceDirection = z.infer<typeof ResourceDirectionSchema>;
 
 export function resourceDirectionForRelationship(

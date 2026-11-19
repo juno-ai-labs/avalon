@@ -339,6 +339,53 @@ resident Channel agent reads the window snapshot once.
 
 ## Changelog
 
+### 2026-11-19 — Defer `@rally/contracts` schemas; stop the HTTP graph importing the conversation object
+
+**What changed:** In `packages/contracts/src`, 573 top-level Zod schemas now wrap
+their construction in `deferredZodSchema()`. These are the object, union, enum
+and refined schemas whose methods no caller uses. About 100 stay eager: those
+with an `.extend`, `.shape`, `.options`, `.pick` or similar call somewhere in the
+tree, the small scalars the style guide keeps eager, and the recursive schemas
+that carry a type annotation. TypeScript decides which are which: a deferred
+schema is a `ZodLazy`, so an object-only call on one fails typecheck. Separately,
+`workstream-service.ts` imports `conversationObjectName` from
+`durable-objects/names` instead of `agent-loop-do`, the module that re-exports it.
+
+**Why:** Global uploads kept failing with the startup-budget form of 10021, and
+the 2026-11-18 entry below found no single module left to fix. Bundling trial
+entry points showed that `@rally/contracts` alone cost 84–111 ms of local active
+startup. That is about a third of the whole Worker, and every Worker that
+imports contracts pays it, including any Worker split off later. Six alternating
+local profiles of the full Global bundle before and after: median active startup
+fell from about 236 ms to about 191 ms (230–261 ms before, 184–225 ms after).
+The usual caveat applies: these are local proportions, not Cloudflare's numbers.
+The import fix changes nothing for today's single Worker, which loads every
+module anyway. It matters for a split: built alone, the HTTP app was 9.4 MB and
+about 304 ms with the import, and 6.2 MB and about 225 ms without it.
+
+**Considered and rejected:** Splitting the Worker first. Trial bundles of
+AgentLoopDO alone, the DOs without the HTTP app, and the HTTP app with queues and
+crons each kept 70–90% of the full cost, because contracts, connectors and the
+harness reach every piece. Giving AgentLoopDO its own Worker would also need a
+`transferred_classes` migration of every conversation's storage. Deferring by
+hand, family by family, as the 2026-09-01 entry did: the cost is spread thinly
+over hundreds of schemas (Zod's `$constructor` init, `clone` and `mergeDefs`
+dominate the profile), so only a sweep moves it. Turning off Wrangler's
+`keep_names`: its `__name` calls cost about 12 ms, but function names may be
+relied on at runtime, and that is a separate decision.
+
+**Consequences:** Each deferred schema builds on its first parse or JSON Schema
+conversion, once per isolate. Nothing enforces deferral for new contracts
+schemas yet, so a new schema is eager until someone wraps it. Calling
+`.extend()` or `.shape` on a deferred schema fails typecheck. Either make that
+schema eager again or unwrap it inside the deriving schema's own deferred
+factory, as the style guide says. Don't cast at the call site. Two leaks remain
+that matter only for a future split: `queues/migration-command-consumer.ts`
+imports `WORKSPACE_DO_SCHEMA_MIGRATIONS` from `workspace-do.ts`, which pulls
+WorkspaceDO into the queue graph, and `@rally/connectors` and
+`@rally/agent-harness` each cost about 100–130 ms alone and have not had the
+same sweep.
+
 ### 2026-11-18 — Take the Google tool catalog and a sentinel Error out of startup
 
 **What changed:** Every Google connector tool now converts its Zod input schema

@@ -1,5 +1,6 @@
 import { HttpsUrlSchema } from "./url-schemas";
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 export const ConnectorInstallationProviderSchema = z.enum(["ashby", "fireflies", "granola"]);
 /**
@@ -31,7 +32,7 @@ export type ConnectorInstallationProvider = z.infer<typeof ConnectorInstallation
  */
 export const ConnectorEventConsoleProviders = ["ashby"] as const satisfies readonly ConnectorInstallationProvider[];
 export type ConnectorEventConsoleProvider = (typeof ConnectorEventConsoleProviders)[number];
-export const ConnectorRegistrationSchema = z.strictObject({
+export const ConnectorRegistrationSchema = deferredZodSchema(() => z.strictObject({
   key: z.string().min(1), providerId: z.string().min(1).nullable(), events: z.array(z.string().min(1)).min(1),
   adoptingExistingDestination: z.boolean().default(false),
   providerIdVerified: z.boolean().default(true),
@@ -47,8 +48,8 @@ export const ConnectorRegistrationSchema = z.strictObject({
   verificationPolicy: z.enum(["active", "active_and_pending"]).default("active"),
   rotationGeneration: z.number().int().nonnegative(),
   activeSecretRef: z.string().nullable(), pendingSecretRef: z.string().nullable(),
-});
-export const ConnectorInstallationSchema = z.strictObject({
+}));
+export const ConnectorInstallationSchema = deferredZodSchema(() => z.strictObject({
   connectionId: z.string().uuid(), workspaceId: z.string().uuid(), provider: ConnectorInstallationProviderSchema,
   attemptId: z.string().uuid(), generation: z.number().int().positive(),
   maintenanceOperationId: z.string().uuid().nullable().default(null),
@@ -60,6 +61,6 @@ export const ConnectorInstallationSchema = z.strictObject({
   registrations: z.array(ConnectorRegistrationSchema),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(), lastReceivedAt: z.string().datetime().nullable(),
   error: z.string().nullable(),
-});
+}));
 export type ConnectorInstallation = z.infer<typeof ConnectorInstallationSchema>;
 export type InstallationRegistration = z.infer<typeof ConnectorRegistrationSchema>;

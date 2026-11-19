@@ -6,6 +6,7 @@ import {
   PICKABLE_APPEARANCE_ICON_KEYS,
   STORABLE_APPEARANCE_ICON_KEYS,
 } from "./appearance-icons";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The icons a person or a model may choose, section by section. The catalog,
@@ -21,10 +22,10 @@ export const WORKSTREAM_ICON_KEYS = PICKABLE_APPEARANCE_ICON_KEYS;
 export const WORKSTREAM_ICON_KEYS_STORABLE = STORABLE_APPEARANCE_ICON_KEYS;
 /** The id-derived default marks, in their original order. */
 export const GENERATED_WORKSTREAM_ICON_KEYS = GENERATED_APPEARANCE_ICON_KEYS;
-export const WorkstreamIconKeySchema = z.enum(WORKSTREAM_ICON_KEYS_STORABLE);
+export const WorkstreamIconKeySchema = deferredZodSchema(() => z.enum(WORKSTREAM_ICON_KEYS_STORABLE));
 export type WorkstreamIconKey = z.infer<typeof WorkstreamIconKeySchema>;
 /** Only what the catalog offers today; what a model's answer is held to. */
-export const PickableWorkstreamIconKeySchema = z.enum(WORKSTREAM_ICON_KEYS);
+export const PickableWorkstreamIconKeySchema = deferredZodSchema(() => z.enum(WORKSTREAM_ICON_KEYS));
 export type PickableWorkstreamIconKey = z.infer<typeof PickableWorkstreamIconKeySchema>;
 
 /**

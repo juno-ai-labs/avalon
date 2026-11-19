@@ -3,13 +3,14 @@ import { IdSchema } from "./identifiers";
 import { RegionSchema } from "./regions";
 import { z } from "zod";
 import { HttpsUrlSchema } from "./url-schemas";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 export { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 export const APNS_TOPICS = {
   macos: "ai.rallywith.desktop",
   ios: "ai.rallywith.mobile",
 } as const;
-const token = z.string().regex(/^[0-9a-f]+$/i);
+const token = deferredZodSchema(() => z.string().regex(/^[0-9a-f]+$/i));
 
 /**
  * The push services browsers subscribe through. A subscription endpoint is a
@@ -38,7 +39,7 @@ export function isWebPushServiceUrl(value: string): boolean {
 }
 
 const appVersion = z.string();
-export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", [
+export const RegisterPushDeviceRequestSchema = deferredZodSchema(() => z.discriminatedUnion("platform", [
   z.object({
     platform: z.literal("macos"),
     transport: z.literal("apns"),
@@ -64,9 +65,9 @@ export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", 
     keys: z.object({ p256dh: z.string().regex(/^B[A-Za-z0-9_-]{86}$/u), auth: z.string().regex(/^[A-Za-z0-9_-]{22}$/u) }),
     appVersion,
   }),
-]);
+]));
 /** What a browser needs to subscribe: the server's VAPID public key. */
-export const WebPushConfigurationSchema = z.object({ publicKey: z.string().min(80).max(100) });
+export const WebPushConfigurationSchema = deferredZodSchema(() => z.object({ publicKey: z.string().min(80).max(100) }));
 export type RegisterPushDeviceRequest = z.infer<typeof RegisterPushDeviceRequestSchema>;
 const PushDeliveryAddressSchema = z.object({
   region: RegionSchema,
@@ -83,7 +84,7 @@ const PushDeliveryAddressSchema = z.object({
  * The `activityItemId` form is from before the Activity feed was retired and
  * is only acknowledged: nothing queues it now.
  */
-export const PushDeliveryMessageSchema = z.union([
+export const PushDeliveryMessageSchema = deferredZodSchema(() => z.union([
   PushDeliveryAddressSchema.extend({
     intentId: z.string(),
     channel: z.literal("email").optional(),
@@ -94,7 +95,7 @@ export const PushDeliveryMessageSchema = z.union([
     activityItemId: z.string().min(1).max(400),
     channel: AutomationDeliveryTargetTypeSchema.optional(),
   }).strict(),
-]);
+]));
 export type PushDeliveryMessage = z.infer<typeof PushDeliveryMessageSchema>;
 /**
  * What a push carries for the client that opens it. `url` is the canonical
@@ -124,7 +125,7 @@ export type PushNotificationData = z.infer<typeof PushNotificationDataSchema>;
  * that completed, failed or stopped. The push renders from these alone, so a
  * later rename or a newer reply does not rewrite a notice already queued.
  */
-export const SidekickRunNotificationSchema = z.strictObject({
+export const SidekickRunNotificationSchema = deferredZodSchema(() => z.strictObject({
   kind: z.enum(["needs_input", "run_finished"]),
   sidekickId: z.string().min(1),
   runId: z.string().min(1),
@@ -132,5 +133,5 @@ export const SidekickRunNotificationSchema = z.strictObject({
   state: z.enum(["needs_input", "completed", "failed", "stopped"]),
   reply: z.string().nullable(),
   occurredAt: z.number().int().nonnegative(),
-});
+}));
 export type SidekickRunNotification = z.infer<typeof SidekickRunNotificationSchema>;

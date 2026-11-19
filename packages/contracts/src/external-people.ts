@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /** Product limit explicitly set to 10,000 people per activity (2026-10-19). */
 export const MAX_EXTERNAL_PEOPLE = 10_000;
 
-export const ExternalPersonSchema = z.strictObject({
+export const ExternalPersonSchema = deferredZodSchema(() => z.strictObject({
   provider: z.string().min(1).max(80),
   providerTenantId: z.string().min(1).max(200).nullable(),
   providerUserId: z.string().min(1).max(200).nullable(),
@@ -12,7 +13,7 @@ export const ExternalPersonSchema = z.strictObject({
   displayName: z.string().min(1).max(180).nullable(),
   role: z.string().min(1).max(80),
   sourceText: z.string().min(1).max(1000),
-});
+}));
 
 /** Keep first occurrence order and distinct roles; transport formatting is not identity. */
 export function deduplicateExternalPeople<T>(people: readonly T[]): T[] {
@@ -32,6 +33,6 @@ export function deduplicateExternalPeople<T>(people: readonly T[]): T[] {
   });
 }
 
-export const ExternalPeopleSchema = z.array(ExternalPersonSchema)
+export const ExternalPeopleSchema = deferredZodSchema(() => z.array(ExternalPersonSchema)
   .transform(deduplicateExternalPeople)
-  .pipe(z.array(ExternalPersonSchema).max(MAX_EXTERNAL_PEOPLE));
+  .pipe(z.array(ExternalPersonSchema).max(MAX_EXTERNAL_PEOPLE)));

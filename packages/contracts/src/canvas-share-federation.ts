@@ -3,6 +3,7 @@ import { z } from "zod";
 import { IdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
 import { RegionSchema } from "./regions";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /*
  * Canvases shared with a guest, shown in every other Organization they open
@@ -19,26 +20,26 @@ import { WorkstreamAppearanceSchema } from "./workstream-appearance";
  * rebuilds. `this`: their socket in `workspaceId` just subscribed. `all`: they
  * changed their switch, so every Organization they are in rebuilds.
  */
-export const SharedCanvasesRefreshMessageSchema = z.strictObject({
+export const SharedCanvasesRefreshMessageSchema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("shared_canvases_refresh"),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   userId: UserIdSchema,
   scope: z.enum(["others", "this", "all"]),
-});
+}));
 export type SharedCanvasesRefreshMessage = z.infer<typeof SharedCanvasesRefreshMessageSchema>;
 
 /** One Canvas as its own Organization answers for a guest it is shared with. */
-export const GuestSharedCanvasSchema = z.strictObject({
+export const GuestSharedCanvasSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   title: z.string().max(300),
   appearance: WorkstreamAppearanceSchema.nullable(),
   updatedAt: z.number().int().nonnegative(),
-});
+}));
 export type GuestSharedCanvas = z.infer<typeof GuestSharedCanvasSchema>;
 
 /** A Canvas shared with this person in another of their Organizations, as their list shows it. */
-export const SharedCanvasSchema = z.strictObject({
+export const SharedCanvasSchema = deferredZodSchema(() => z.strictObject({
   organization: z.strictObject({ id: WorkspaceIdSchema, name: z.string(), region: RegionSchema }),
   canvas: z.strictObject({
     id: IdSchema,
@@ -46,7 +47,7 @@ export const SharedCanvasSchema = z.strictObject({
     appearance: WorkstreamAppearanceSchema.optional(),
     updatedAt: z.string().datetime(),
   }),
-});
+}));
 export type SharedCanvas = z.infer<typeof SharedCanvasSchema>;
 
 /**
@@ -57,15 +58,15 @@ export type SharedCanvas = z.infer<typeof SharedCanvasSchema>;
  * Organizations that could not answer for this build: the client keeps what it
  * last showed from them, and a complete build follows.
  */
-export const WorkspaceSharedCanvasesEventSchema = z.strictObject({
+export const WorkspaceSharedCanvasesEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_shared_canvases"),
   occurredAt: z.string().datetime(),
   enabled: z.boolean(),
   items: z.array(SharedCanvasSchema).max(250),
   unavailable: z.array(WorkspaceIdSchema),
-});
+}));
 export type WorkspaceSharedCanvasesEvent = z.infer<typeof WorkspaceSharedCanvasesEventSchema>;
 
 /** `GET` and `PUT /workspace/me/shared-canvases`: whether other Organizations' shared Canvases join every list. */
-export const SharedCanvasesSettingSchema = z.strictObject({ enabled: z.boolean() });
+export const SharedCanvasesSettingSchema = deferredZodSchema(() => z.strictObject({ enabled: z.boolean() }));
 export type SharedCanvasesSetting = z.infer<typeof SharedCanvasesSettingSchema>;

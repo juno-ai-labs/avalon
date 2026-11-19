@@ -4,6 +4,7 @@ import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 import { WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema } from "./workstream-appearance";
 import { CanvasArtifactVisibilitySchema } from './artifact-access';
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * A Canvas is a conversation first: its id is the parent id of its
@@ -20,7 +21,7 @@ export type CanvasId = z.infer<typeof CanvasIdSchema>;
  * or every member of the Organization (and its participants, who may be
  * guests). A guest is admitted only from the participant list.
  */
-export const CanvasVisibilitySchema = z.enum(["creator", "participants", "workspace"]);
+export const CanvasVisibilitySchema = deferredZodSchema(() => z.enum(["creator", "participants", "workspace"]));
 export type CanvasVisibility = z.infer<typeof CanvasVisibilitySchema>;
 
 /**
@@ -40,10 +41,10 @@ export function canvasArtifactVisibilityFloor<
 }
 
 /** Who last changed a Canvas: a person (their id), Rally, or a Sidekick (its id). */
-export const CanvasEditorSchema = z.strictObject({
+export const CanvasEditorSchema = deferredZodSchema(() => z.strictObject({
   kind: z.enum(["person", "rally", "sidekick"]),
   id: IdSchema.nullable(),
-});
+}));
 export type CanvasEditor = z.infer<typeof CanvasEditorSchema>;
 
 /**
@@ -51,7 +52,7 @@ export type CanvasEditor = z.infer<typeof CanvasEditorSchema>;
  * besides the creator; a `creator` Canvas has none and a `participants` one
  * names at least one person.
  */
-export const CanvasAudienceUpdateSchema = z.strictObject({
+export const CanvasAudienceUpdateSchema = deferredZodSchema(() => z.strictObject({
   visibility: CanvasVisibilitySchema,
   userIds: z.array(UserIdSchema).default([]),
   artifactVisibility: CanvasArtifactVisibilitySchema.optional(),
@@ -73,15 +74,15 @@ export const CanvasAudienceUpdateSchema = z.strictObject({
   if (update.artifactVisibility !== undefined && update.artifactVisibility !== 'participants' && update.artifactVisibility !== 'workspace' && update.artifactUserIds?.length) {
     context.addIssue({ code: 'custom', path: ['artifactUserIds'], message: 'must be empty unless sharing with specific people' });
   }
-});
+}));
 export type CanvasAudienceUpdate = z.infer<typeof CanvasAudienceUpdateSchema>;
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
 
-export const CanvasRunningActivitySchema = z.object({
+export const CanvasRunningActivitySchema = deferredZodSchema(() => z.object({
   backgroundAgents: z.number().int().nonnegative(),
   sidekicks: z.number().int().nonnegative(),
-});
+}));
 export type CanvasRunningActivity = z.infer<typeof CanvasRunningActivitySchema>;
 
 /** One Canvas's directory row, as every reader of it sees it. */
@@ -114,18 +115,18 @@ export const CanvasSummarySchema = z.object({
 export type CanvasSummary = z.infer<typeof CanvasSummarySchema>;
 
 /** What one of a Canvas's artifacts is: a file of any type, a site Rally serves, or an archive. */
-export const CanvasArtifactKindSchema = z.enum(["file", "site", "archive"]);
+export const CanvasArtifactKindSchema = deferredZodSchema(() => z.enum(["file", "site", "archive"]));
 export type CanvasArtifactKind = z.infer<typeof CanvasArtifactKindSchema>;
 
 /** One artifact a Canvas's conversation generated, at its current version. */
-export const CanvasArtifactSchema = z.object({
+export const CanvasArtifactSchema = deferredZodSchema(() => z.object({
   resourceId: IdSchema,
   title: z.string(),
   mimeType: z.string().nullable(),
   kind: CanvasArtifactKindSchema,
   version: z.number().int().positive(),
   updatedAt: TimestampSchema,
-});
+}));
 export type CanvasArtifact = z.infer<typeof CanvasArtifactSchema>;
 
 /**
@@ -135,7 +136,7 @@ export type CanvasArtifact = z.infer<typeof CanvasArtifactSchema>;
  * own Chat made, which everyone in the Canvas manages and which is archived
  * with the Canvas.
  */
-export const CanvasSidekickSchema = z.object({
+export const CanvasSidekickSchema = deferredZodSchema(() => z.object({
   id: IdSchema,
   name: z.string(),
   status: z.enum(["draft", "active", "paused"]),
@@ -152,7 +153,7 @@ export const CanvasSidekickSchema = z.object({
    * older Worker.
    */
   canOpen: z.boolean().optional(),
-});
+}));
 export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
 
 /**
@@ -162,7 +163,7 @@ export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
  * `null` while they follow Settings. An empty list is muted.
  * docs/PRDs/2026-11-14_canvas-notices.
  */
-export const CanvasNoticesViewSchema = z.object({
+export const CanvasNoticesViewSchema = deferredZodSchema(() => z.object({
   purpose: z.string(),
   registeredBy: z.object({ kind: z.enum(["rally", "sidekick"]), name: z.string() }),
   participant: z.boolean(),
@@ -170,7 +171,7 @@ export const CanvasNoticesViewSchema = z.object({
   channels: z.array(z.enum(["push", "email"])).nullable(),
   /** When notices were last turned on or changed (ms). A client holding a record newer than this knows its copy is stale. */
   updatedAt: z.number().int().nonnegative(),
-});
+}));
 export type CanvasNoticesView = z.infer<typeof CanvasNoticesViewSchema>;
 
 /**
@@ -178,16 +179,16 @@ export type CanvasNoticesView = z.infer<typeof CanvasNoticesViewSchema>;
  * its notices are about, and their own choice for it (`null` follows the
  * Canvas notices default).
  */
-export const CanvasNoticeChoiceRowSchema = z.object({
+export const CanvasNoticeChoiceRowSchema = deferredZodSchema(() => z.object({
   canvasId: WorkstreamIdSchema,
   title: z.string(),
   purpose: z.string(),
   /** On its list, so its notices reach them; `false` for an Organization-wide Canvas they could join. */
   participant: z.boolean(),
   channels: z.array(z.enum(["push", "email"])).nullable(),
-});
+}));
 export type CanvasNoticeChoiceRow = z.infer<typeof CanvasNoticeChoiceRowSchema>;
-export const CanvasNoticeChoicesSchema = z.object({ canvases: z.array(CanvasNoticeChoiceRowSchema) });
+export const CanvasNoticeChoicesSchema = deferredZodSchema(() => z.object({ canvases: z.array(CanvasNoticeChoiceRowSchema) }));
 export type CanvasNoticeChoices = z.infer<typeof CanvasNoticeChoicesSchema>;
 
 /** A viewer's channels for one Canvas's notices: a list (empty mutes it), or `null` to follow Settings. */
@@ -201,14 +202,14 @@ export type CanvasNoticeChoiceUpdate = z.infer<typeof CanvasNoticeChoiceUpdateSc
  * message's structured content, drawn as a card with each viewer's own
  * controls.
  */
-export const CanvasNoticesRecordSchema = z.object({
+export const CanvasNoticesRecordSchema = deferredZodSchema(() => z.object({
   kind: z.literal("canvas_notices_record"),
   canvasId: WorkstreamIdSchema,
   purpose: z.string().min(1),
   registeredBy: z.object({ kind: z.enum(["rally", "sidekick"]), name: z.string() }),
   /** When the record was written (ms), never after the registration it records. */
   recordedAt: z.number().int().nonnegative(),
-});
+}));
 export type CanvasNoticesRecord = z.infer<typeof CanvasNoticesRecordSchema>;
 
 /** A Canvas as the person opening it sees it: its row, who it is shared with, and its artifacts newest first. */
@@ -281,13 +282,13 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
 export type CanvasSidebarRow = z.infer<typeof CanvasSidebarRowSchema>;
 
 /** `GET /canvases`: the list one viewer's sidebar holds, most recently active first. */
-export const CanvasListSchema = z.strictObject({ items: z.array(CanvasSidebarRowSchema) });
+export const CanvasListSchema = deferredZodSchema(() => z.strictObject({ items: z.array(CanvasSidebarRowSchema) }));
 
 /** The Canvas list as one viewer sees it, at the list's waterline, most recently active first. */
-export const CanvasSidebarListSchema = z.strictObject({
+export const CanvasSidebarListSchema = deferredZodSchema(() => z.strictObject({
   waterline: z.number().int().nonnegative(),
   items: z.array(CanvasSidebarRowSchema).max(250),
-});
+}));
 export type CanvasSidebarList = z.infer<typeof CanvasSidebarListSchema>;
 
 /**
@@ -297,12 +298,12 @@ export type CanvasSidebarList = z.infer<typeof CanvasSidebarListSchema>;
  * discriminator value it does not know but ignores an event type it does not
  * know (`isUnknownSocketEvent`).
  */
-export const WorkspaceCanvasListEventSchema = z.strictObject({
+export const WorkspaceCanvasListEventSchema = deferredZodSchema(() => z.strictObject({
   type: z.literal("workspace_canvas_list"),
   occurredAt: TimestampSchema,
   waterline: z.number().int().positive(),
   items: z.array(CanvasSidebarRowSchema).max(250),
-});
+}));
 export type WorkspaceCanvasListEvent = z.infer<typeof WorkspaceCanvasListEventSchema>;
 
 /**
@@ -315,20 +316,20 @@ export type WorkspaceCanvasListEvent = z.infer<typeof WorkspaceCanvasListEventSc
  * Sidekick. A caller-minted `sidekickId` makes a retry answer with the first
  * attempt's Sidekick, and `clientMessageId` sends the instructions once.
  */
-export const AddCanvasSidekickRequestSchema = z.strictObject({
+export const AddCanvasSidekickRequestSchema = deferredZodSchema(() => z.strictObject({
   sidekickId: IdSchema.optional(),
   instructions: z.strictObject({
     text: z.string().trim().min(1),
     clientMessageId: z.string().min(1).max(120),
   }),
-});
+}));
 export type AddCanvasSidekickRequest = z.infer<typeof AddCanvasSidekickRequestSchema>;
 
-export const AddedCanvasSidekickSchema = z.object({
+export const AddedCanvasSidekickSchema = deferredZodSchema(() => z.object({
   sidekickId: IdSchema,
   /** The instructions' turn in the Sidekick's conversation. */
   turnId: z.string().nullable(),
-});
+}));
 export type AddedCanvasSidekick = z.infer<typeof AddedCanvasSidekickSchema>;
 
 /**
@@ -352,17 +353,17 @@ export const CreateCanvasRequestSchema = z.strictObject({
 });
 export type CreateCanvasRequest = z.infer<typeof CreateCanvasRequestSchema>;
 
-export const CreatedCanvasSchema = z.object({
+export const CreatedCanvasSchema = deferredZodSchema(() => z.object({
   canvasId: CanvasIdSchema,
   /** The prompt's turn in the Chat, when one was sent. */
   turnId: z.string().nullable(),
   /** The Sidekick made with it, when one was asked for. Absent otherwise and from an older Worker. */
   sidekick: AddedCanvasSidekickSchema.optional(),
-});
+}));
 export type CreatedCanvas = z.infer<typeof CreatedCanvasSchema>;
 
 /** `POST /canvases/:id/pin` and `POST /automations/:id/pin`: pin in, or out of, the list's Pinned group. */
-export const SidebarPinRequestSchema = z.strictObject({ pinned: z.boolean() });
+export const SidebarPinRequestSchema = deferredZodSchema(() => z.strictObject({ pinned: z.boolean() }));
 
 /**
  * Workspace pin RPC input, first to last. `PUT /canvases/pinned-order` takes
@@ -395,7 +396,7 @@ export type CanvasUpdateRequest = z.infer<typeof CanvasUpdateRequestSchema>;
  * one (which allows a new request), with when it was declined. An id that
  * names no Canvas of theirs is `404 canvas_not_found` instead.
  */
-export const CanvasAccessSchema = z.strictObject({
+export const CanvasAccessSchema = deferredZodSchema(() => z.strictObject({
   access: z.literal("requestable"),
   title: z.null(),
   request: z.strictObject({
@@ -404,7 +405,7 @@ export const CanvasAccessSchema = z.strictObject({
     /** When it was declined; null while pending. Absent from a server older than it. */
     decidedAt: TimestampSchema.nullable().optional(),
   }).nullable(),
-});
+}));
 export type CanvasAccess = z.infer<typeof CanvasAccessSchema>;
 
 /**
@@ -416,10 +417,10 @@ export type CanvasAccess = z.infer<typeof CanvasAccessSchema>;
  * `POST /canvases/:id/discard`: the leaving client's own Chat socket, by the
  * ticket it opened with, so the Chat counts only the other clients still on it.
  */
-export const DiscardCanvasRequestSchema = z.strictObject({ leavingTicketId: z.string().uuid().optional() });
+export const DiscardCanvasRequestSchema = deferredZodSchema(() => z.strictObject({ leavingTicketId: z.string().uuid().optional() }));
 export type DiscardCanvasRequest = z.infer<typeof DiscardCanvasRequestSchema>;
 
-export const CanvasAccessRequestSchema = z.strictObject({ message: z.string().max(PUSH_BODY_PREVIEW_CHARACTERS).optional() });
+export const CanvasAccessRequestSchema = deferredZodSchema(() => z.strictObject({ message: z.string().max(PUSH_BODY_PREVIEW_CHARACTERS).optional() }));
 export type CanvasAccessRequest = z.infer<typeof CanvasAccessRequestSchema>;
 
 /**
@@ -427,9 +428,9 @@ export type CanvasAccessRequest = z.infer<typeof CanvasAccessRequestSchema>;
  * waits answers the same), or `already_participant`, the Canvas already
  * admits the caller.
  */
-export const CanvasAccessRequestResultSchema = z.strictObject({
+export const CanvasAccessRequestResultSchema = deferredZodSchema(() => z.strictObject({
   status: z.enum(["pending", "already_participant"]),
-});
+}));
 export type CanvasAccessRequestResult = z.infer<typeof CanvasAccessRequestResultSchema>;
 
 /** `POST /canvases/:id/access-requests/:userId/decision`, from a person who decides on the Canvas's participants. */
@@ -437,9 +438,9 @@ export const CanvasAccessDecisionRequestSchema = z.strictObject({ decision: z.en
 export type CanvasAccessDecisionRequest = z.infer<typeof CanvasAccessDecisionRequestSchema>;
 
 /** The request's state after the decision; a request someone already settled answers `canvas_access_request_settled`. */
-export const CanvasAccessDecisionSchema = z.strictObject({
+export const CanvasAccessDecisionSchema = deferredZodSchema(() => z.strictObject({
   state: z.enum(["approved", "denied"]),
-});
+}));
 export type CanvasAccessDecision = z.infer<typeof CanvasAccessDecisionSchema>;
 
 /**
@@ -448,10 +449,10 @@ export type CanvasAccessDecision = z.infer<typeof CanvasAccessDecisionSchema>;
  * the same file wherever it is stored or served. It is the artifact's
  * identity in its Canvas: publishing the same name again makes a new version.
  */
-export const CanvasPublishPathSchema = z.string().min(1).max(1024).refine((path) =>
+export const CanvasPublishPathSchema = deferredZodSchema(() => z.string().min(1).max(1024).refine((path) =>
   !path.startsWith("/") && ![...path].some((character) => character === "\\" || character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)
     && path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."),
-{ message: "must be a relative path of named segments" });
+{ message: "must be a relative path of named segments" }));
 
 /** Content as text, or as base64 for bytes that are not text. */
 export const CanvasPublishContentSchema = z.strictObject({
@@ -497,7 +498,7 @@ export const CanvasPublishRequestSchema = z.discriminatedUnion("kind", [
 export type CanvasPublishRequest = z.infer<typeof CanvasPublishRequestSchema>;
 
 /** What a publish did: the artifact, its version now, and whether this call changed it. */
-export const CanvasPublishedArtifactSchema = z.strictObject({
+export const CanvasPublishedArtifactSchema = deferredZodSchema(() => z.strictObject({
   resourceId: IdSchema,
   title: z.string(),
   kind: z.enum(["file", "site"]),
@@ -511,7 +512,7 @@ export const CanvasPublishedArtifactSchema = z.strictObject({
     files: z.number().int().nonnegative(),
     renderedTextLength: z.number().int().nonnegative(),
   }).optional(),
-});
+}));
 export type CanvasPublishedArtifact = z.infer<typeof CanvasPublishedArtifactSchema>;
 
 /**
@@ -523,9 +524,9 @@ export type CanvasPublishedArtifact = z.infer<typeof CanvasPublishedArtifactSche
  * and shown but not yet applied: it is the audience Rally will suggest for a
  * Canvas's artifacts. `docs/canvases.md#who-can-open-a-canvas`.
  */
-export const CanvasDefaultEditorAudienceSchema = z.enum(["creator", "workspace"]);
+export const CanvasDefaultEditorAudienceSchema = deferredZodSchema(() => z.enum(["creator", "workspace"]));
 export type CanvasDefaultEditorAudience = z.infer<typeof CanvasDefaultEditorAudienceSchema>;
-export const CanvasDefaultArtifactAudienceSchema = z.enum(["editors", "workspace", "public"]);
+export const CanvasDefaultArtifactAudienceSchema = deferredZodSchema(() => z.enum(["editors", "workspace", "public"]));
 export type CanvasDefaultArtifactAudience = z.infer<typeof CanvasDefaultArtifactAudienceSchema>;
 
 export const CanvasSharingDefaultsSchema = z.object({

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { WorkspaceIdSchema } from "./identifiers";
 import { HttpUrlSchema } from "./url-schemas";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The OAuth 2.1 vocabulary Rally's user MCP server speaks: dynamic client
@@ -39,15 +40,15 @@ export function isAllowedMcpRedirectUri(value: string): boolean {
   return (MCP_HOSTED_REDIRECT_ORIGINS as readonly string[]).includes(url.origin);
 }
 
-export const McpRedirectUriSchema = z.string().refine(isAllowedMcpRedirectUri, {
+export const McpRedirectUriSchema = deferredZodSchema(() => z.string().refine(isAllowedMcpRedirectUri, {
   message: "must be a loopback address or a Claude or ChatGPT callback",
-});
+}));
 
 /** `POST /register`. Unknown metadata is accepted and ignored, as RFC 7591 §2 allows. */
-export const McpClientRegistrationRequestSchema = z.object({
+export const McpClientRegistrationRequestSchema = deferredZodSchema(() => z.object({
   redirect_uris: z.array(McpRedirectUriSchema).min(1),
   client_name: z.string().trim().min(1).max(200).optional(),
-});
+}));
 export type McpClientRegistrationRequest = z.infer<typeof McpClientRegistrationRequestSchema>;
 
 /**
@@ -56,7 +57,7 @@ export type McpClientRegistrationRequest = z.infer<typeof McpClientRegistrationR
  * whatever the request asked for (RFC 7591 §3.2.1 lets the server replace a
  * requested value).
  */
-export const McpClientRegistrationSchema = z.object({
+export const McpClientRegistrationSchema = deferredZodSchema(() => z.object({
   client_id: z.string(),
   client_id_issued_at: z.number().int(),
   client_name: z.string(),
@@ -64,7 +65,7 @@ export const McpClientRegistrationSchema = z.object({
   token_endpoint_auth_method: z.literal("none"),
   grant_types: z.tuple([z.literal("authorization_code"), z.literal("refresh_token")]),
   response_types: z.tuple([z.literal("code")]),
-});
+}));
 export type McpClientRegistration = z.infer<typeof McpClientRegistrationSchema>;
 
 /**
@@ -84,10 +85,10 @@ export const McpAuthorizationRequestSchema = z.strictObject({
 export type McpAuthorizationRequest = z.infer<typeof McpAuthorizationRequestSchema>;
 
 /** What the consent page shows: who is asking, and where it will return. */
-export const McpAuthorizationDescriptionSchema = z.strictObject({
+export const McpAuthorizationDescriptionSchema = deferredZodSchema(() => z.strictObject({
   clientName: z.string(),
   redirectOrigin: z.string(),
-});
+}));
 export type McpAuthorizationDescription = z.infer<typeof McpAuthorizationDescriptionSchema>;
 
 export const McpAuthorizationApprovalSchema = McpAuthorizationRequestSchema.extend({
@@ -96,10 +97,10 @@ export const McpAuthorizationApprovalSchema = McpAuthorizationRequestSchema.exte
 export type McpAuthorizationApproval = z.infer<typeof McpAuthorizationApprovalSchema>;
 
 /** Where the consent page sends the browser next: the client's redirect with a code, or with an error. */
-export const McpAuthorizationRedirectSchema = z.strictObject({ redirectUrl: HttpUrlSchema });
+export const McpAuthorizationRedirectSchema = deferredZodSchema(() => z.strictObject({ redirectUrl: HttpUrlSchema }));
 
 /** `POST /token`, form-encoded. */
-export const McpTokenRequestSchema = z.discriminatedUnion("grant_type", [
+export const McpTokenRequestSchema = deferredZodSchema(() => z.discriminatedUnion("grant_type", [
   z.object({
     grant_type: z.literal("authorization_code"),
     code: z.string().min(1),
@@ -115,20 +116,20 @@ export const McpTokenRequestSchema = z.discriminatedUnion("grant_type", [
     resource: z.string().optional(),
     scope: z.string().optional(),
   }),
-]);
+]));
 export type McpTokenRequest = z.infer<typeof McpTokenRequestSchema>;
 
-export const McpTokenResponseSchema = z.object({
+export const McpTokenResponseSchema = deferredZodSchema(() => z.object({
   access_token: z.string(),
   token_type: z.literal("Bearer"),
   expires_in: z.number().int().positive(),
   refresh_token: z.string(),
   scope: z.string(),
-});
+}));
 export type McpTokenResponse = z.infer<typeof McpTokenResponseSchema>;
 
 /** An OAuth error response (RFC 6749 §5.2, RFC 7591 §3.2.2). */
-export const McpOAuthErrorBodySchema = z.strictObject({ error: z.string(), error_description: z.string() });
+export const McpOAuthErrorBodySchema = deferredZodSchema(() => z.strictObject({ error: z.string(), error_description: z.string() }));
 
 /** The one scope a grant carries: act in one Organization's Canvases as the person who approved. */
 export const MCP_SCOPE = "canvases";
@@ -145,7 +146,7 @@ export function isLoopbackMcpRedirectUri(value: string): boolean {
  * reader shows it as such beside where the app returns to. `id` is the
  * grant's session, and is what a disconnect names.
  */
-export const ConnectedMcpAppSchema = z.strictObject({
+export const ConnectedMcpAppSchema = deferredZodSchema(() => z.strictObject({
   id: z.string().min(1),
   clientName: z.string(),
   /** The distinct hosted origins its redirects return to, such as `https://claude.ai`. */
@@ -157,9 +158,9 @@ export const ConnectedMcpAppSchema = z.strictObject({
   connectedAt: z.string(),
   /** Its last token refresh, or `connectedAt` before the first. Accurate to one access token's lifetime. */
   lastActiveAt: z.string(),
-});
+}));
 export type ConnectedMcpApp = z.infer<typeof ConnectedMcpAppSchema>;
 
 /** `GET /workspace/me/connected-apps`: newest connection first. */
-export const ConnectedMcpAppsSchema = z.strictObject({ apps: z.array(ConnectedMcpAppSchema) });
+export const ConnectedMcpAppsSchema = deferredZodSchema(() => z.strictObject({ apps: z.array(ConnectedMcpAppSchema) }));
 export type ConnectedMcpApps = z.infer<typeof ConnectedMcpAppsSchema>;

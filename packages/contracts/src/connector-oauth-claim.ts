@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ConnectorCompletionUrlSchema } from "./url-schemas";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /** A connector authorization's one-time claim ticket (`docs/connectors.md`, "Claiming a connector authorization"). */
 export const CONNECTOR_CLAIM_TICKET_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
@@ -8,15 +9,15 @@ export const CONNECTOR_CLAIM_TICKET_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 /** Where a connector authorization started in the mobile app returns. */
 export const MOBILE_CONNECTOR_CALLBACK = "rally-mobile://connections/complete";
 
-export const ConnectorOAuthClaimRequestSchema = z.strictObject({
+export const ConnectorOAuthClaimRequestSchema = deferredZodSchema(() => z.strictObject({
   ticket: z.string().regex(CONNECTOR_CLAIM_TICKET_PATTERN),
-});
+}));
 
 /**
  * The handoff target the callback used to redirect to before claiming
  * existed: the client reads it exactly as it reads a completion link.
  */
-export const ConnectorOAuthClaimSchema = z.strictObject({ target: ConnectorCompletionUrlSchema });
+export const ConnectorOAuthClaimSchema = deferredZodSchema(() => z.strictObject({ target: ConnectorCompletionUrlSchema }));
 
 export type ConnectorOAuthClaimRequest = z.infer<typeof ConnectorOAuthClaimRequestSchema>;
 export type ConnectorOAuthClaim = z.infer<typeof ConnectorOAuthClaimSchema>;

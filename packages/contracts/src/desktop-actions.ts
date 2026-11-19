@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * Desktop actions: a typed request an API agent loop makes of the person's
@@ -18,13 +19,13 @@ import { z } from "zod";
  * conversation see only this description; the content stays on the desktop
  * until something the desktop runs (a finish action) reads it by handle.
  */
-export const StoredRefSchema = z.strictObject({
+export const StoredRefSchema = deferredZodSchema(() => z.strictObject({
   handle: z.string().min(1),
   kind: z.enum(["file", "json"]),
   name: z.string(),
   mimeType: z.string(),
   size: z.number().int().nonnegative(),
-});
+}));
 export type StoredRef = z.infer<typeof StoredRefSchema>;
 
 const coordinate = z.number().finite();
@@ -35,7 +36,7 @@ export const SESSION_IMPORT_FAILURE_REASONS = [
   "page_unavailable",
   "unreadable",
 ] as const;
-export const SessionImportFailureReasonSchema = z.enum(SESSION_IMPORT_FAILURE_REASONS);
+export const SessionImportFailureReasonSchema = deferredZodSchema(() => z.enum(SESSION_IMPORT_FAILURE_REASONS));
 export type SessionImportFailureReason = z.infer<typeof SessionImportFailureReasonSchema>;
 
 /** Model-reported observations, not an independent browser attestation. */
@@ -91,7 +92,7 @@ export function verifySessionImport(
   }
 }
 
-export const DesktopActionSchema = z.discriminatedUnion("kind", [
+export const DesktopActionSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   /** Persistent, isolated browser orchestration. Page evaluation is a separate operation. */
   z.strictObject({ kind: z.literal("browser.script"), code: z.string().min(1), title: z.string().optional() }),
   z.strictObject({ kind: z.literal("browser.script_reset") }),
@@ -141,7 +142,7 @@ export const DesktopActionSchema = z.discriminatedUnion("kind", [
   /** Hand the conversation the agent assembled to the desktop that started the import. */
   z.strictObject({ kind: z.literal("session_import.finish"), title: z.string().min(1), messages: z.string().min(1), verification: RecordedSessionImportVerificationSchema }),
   z.strictObject({ kind: z.literal("session_import.fail"), reason: SessionImportFailureReasonSchema }),
-]);
+]));
 export type DesktopAction = z.infer<typeof DesktopActionSchema>;
 export type DesktopActionKind = DesktopAction["kind"];
 
@@ -233,19 +234,19 @@ export const DESKTOP_ACTION_FAILURE_CODES = [
    */
   "result_too_large",
 ] as const;
-export const DesktopActionFailureCodeSchema = z.enum(DESKTOP_ACTION_FAILURE_CODES);
+export const DesktopActionFailureCodeSchema = deferredZodSchema(() => z.enum(DESKTOP_ACTION_FAILURE_CODES));
 export type DesktopActionFailureCode = z.infer<typeof DesktopActionFailureCodeSchema>;
 
-export const DesktopActionOutcomeSchema = z.discriminatedUnion("ok", [
+export const DesktopActionOutcomeSchema = deferredZodSchema(() => z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), result: z.unknown() }),
   z.strictObject({ ok: z.literal(false), code: DesktopActionFailureCodeSchema, message: z.string() }),
-]);
+]));
 export type DesktopActionOutcome = z.infer<typeof DesktopActionOutcomeSchema>;
 
-export const DesktopActionRequestSchema = z.strictObject({
+export const DesktopActionRequestSchema = deferredZodSchema(() => z.strictObject({
   id: z.string().min(1),
   action: DesktopActionSchema,
-});
+}));
 export type DesktopActionRequest = z.infer<typeof DesktopActionRequestSchema>;
 
 /**
@@ -253,7 +254,7 @@ export type DesktopActionRequest = z.infer<typeof DesktopActionRequestSchema>;
  * `session_import.finish`. A file is a stored handle, or a named file the page
  * could not copy and why.
  */
-export const BrowserImportFileSchema = z.union([
+export const BrowserImportFileSchema = deferredZodSchema(() => z.union([
   z.strictObject({
     handle: z.string().min(1),
     name: z.string().min(1).optional(),
@@ -263,11 +264,11 @@ export const BrowserImportFileSchema = z.union([
   z.strictObject({
     unavailable: z.strictObject({ name: z.string().min(1), reason: z.string().min(1) }),
   }),
-]);
-export const BrowserImportMessagesSchema = z.array(z.strictObject({
+]));
+export const BrowserImportMessagesSchema = deferredZodSchema(() => z.array(z.strictObject({
   role: z.enum(["user", "assistant"]),
   text: z.string(),
   sourceMessageId: z.string().min(1),
   files: z.array(BrowserImportFileSchema).optional(),
-})).min(1);
+})).min(1));
 export type BrowserImportMessages = z.infer<typeof BrowserImportMessagesSchema>;
