@@ -7,8 +7,10 @@
 
 /* ---- The player ---- */
 
+/* A card leaving sideways is cut at the story's edge: on a phone it would
+   otherwise widen the page and let it scroll sideways. */
 .story {
-  position: relative; text-align: left;
+  position: relative; text-align: left; overflow-x: clip;
 }
 
 .story-bar {
