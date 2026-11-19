@@ -1,3 +1,4 @@
+import { auditedAvalonTools } from "./helpers/audited-tools";
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -5,7 +6,6 @@ import { z } from "zod";
 
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
-import { __integrationTesting } from "../src/services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
@@ -171,7 +171,7 @@ function context(providerIdempotencyKey?: string) {
 describe("Avalon connector connection tools", () => {
   it("offers a trusted connector card only to user runs, and to a Sidekick run as a question", async () => {
     const { env } = fixture();
-    const userTool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const userTool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "show_connector_connection");
 
     expect(userTool?.definition).toMatchObject({
@@ -205,7 +205,7 @@ describe("Avalon connector connection tools", () => {
     // refuses by name: there is no person whose connections they read.
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
-    const workspaceTools = __integrationTesting.createAvalonTools(env, workspaceInput)
+    const workspaceTools = auditedAvalonTools(env, workspaceInput)
       .filter((candidate) => candidate.definition.capability.startsWith("connector.connection."));
     expect(workspaceTools.map((candidate) => candidate.definition.name))
       .toEqual(["get_connector_connection_state", "list_connectors", "show_connector_connection"]);
@@ -227,7 +227,7 @@ describe("Avalon connector connection tools", () => {
     };
     // A Sidekick run holds both, and its card is a question: a write keyed on
     // its receipt, as `request_elicitation` is, because it pauses the run.
-    const runTools = __integrationTesting.createAvalonTools(env, automationInput)
+    const runTools = auditedAvalonTools(env, automationInput)
       .filter((candidate) => candidate.definition.capability.startsWith("connector.connection."));
     expect(runTools.map((candidate) => [candidate.definition.name, candidate.definition.mode, candidate.definition.idempotency]))
       .toEqual([
@@ -239,7 +239,7 @@ describe("Avalon connector connection tools", () => {
 
   it("reads the current authorized connector catalog state", async () => {
     const { env, objectDatabase } = fixture();
-    const stateTool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const stateTool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "get_connector_connection_state");
 
     expect(stateTool?.definition).toMatchObject({
@@ -345,7 +345,7 @@ describe("Avalon connector connection tools", () => {
 
   it("lists every connector by family, with each account the caller can use", async () => {
     const { env, objectDatabase } = fixture();
-    const listTool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const listTool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "list_connectors");
     expect(listTool?.definition).toMatchObject({
       capability: "connector.connection.read",
@@ -411,7 +411,7 @@ describe("Avalon connector connection tools", () => {
     // A person whose personal Drive was connected was asked to connect Drive,
     // because the check looked at the workspace scope alone.
     const { env, objectDatabase } = fixture();
-    const stateTool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const stateTool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "get_connector_connection_state");
     objectDatabase.prepare(
       `INSERT INTO connector_connections
@@ -486,7 +486,7 @@ describe("Avalon connector connection tools", () => {
       .run("America/New_York", USER_ID);
     database.prepare("UPDATE workspaces SET timezone = ? WHERE id = ?")
       .run("Europe/London", WORKSPACE_ID);
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const tool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "current_time");
 
     expect(tool?.definition).toMatchObject({
@@ -511,7 +511,7 @@ describe("Avalon connector connection tools", () => {
       .run("Europe/London", WORKSPACE_ID);
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
-    const tool = __integrationTesting.createAvalonTools(env, workspaceInput)
+    const tool = auditedAvalonTools(env, workspaceInput)
       .find((candidate) => candidate.definition.name === "current_time");
 
     const workspaceTime = await tool!.execute({}, {
@@ -547,7 +547,7 @@ describe("Avalon connector connection tools", () => {
         ...baseEnv,
         SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, { roomEvents }),
       });
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const tool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");
     expect(tool?.definition.inputSchema).not.toHaveProperty("properties.targetUserId");
@@ -604,7 +604,7 @@ describe("Avalon connector connection tools", () => {
         jurisdiction: () => agents,
       }),
     });
-    const tool = __integrationTesting.createAvalonTools(env, { ...workflowInput(), substreamId: BREAKOUT_ID })
+    const tool = auditedAvalonTools(env, { ...workflowInput(), substreamId: BREAKOUT_ID })
       .find((candidate) => candidate.definition.name === "request_elicitation");
 
     await tool!.execute(
@@ -618,7 +618,7 @@ describe("Avalon connector connection tools", () => {
 
   it("refuses to execute provider-key writes without the receipt-derived key", async () => {
     const { env } = fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const tool = auditedAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
 
     await expect(tool!.execute(

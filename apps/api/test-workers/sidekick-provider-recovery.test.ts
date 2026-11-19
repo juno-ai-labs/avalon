@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
+import { auditedHarnessTools } from "../test/helpers/audited-tools";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,7 @@ import { encryptString } from "../src/lib/crypto";
 import { createHarnessRunObjectPort } from "../src/runtime/harness-run-port";
 import { createToolReceiptObjectPort } from "../src/runtime/tool-receipt-port";
 import { claimHarnessAttempt } from "../src/runtime/harness-run-runtime";
-import { __integrationTesting, reenterInterruptedWriteForRecovery } from "../src/services/integrations";
+import { reenterInterruptedWriteForRecovery } from "../src/services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { seedExecutionReceipt, seedWorkspaceControlPlane, seedWorkstreamRoot, runInput } from "./helpers/substream-fixture";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
@@ -92,10 +93,10 @@ describe("Sidekick provider recovery on real workerd", () => {
     const runs = createHarnessRunObjectPort(env, workspaceId, sidekickId);
     const first = await claimHarnessAttempt(runs, input, { attemptId: crypto.randomUUID(), owner: "first", leaseSeconds: 300 });
     if (first.state !== "claimed") throw new Error("provider_recovery_claim_failed");
-    const authoring = await __integrationTesting.loadHarnessTools(withWorkspaceRuntimeDatabase(env, workspaceId),
+    const authoring = await auditedHarnessTools(withWorkspaceRuntimeDatabase(env, workspaceId),
       { ...input, automationRun: undefined }, undefined, undefined, undefined, undefined, first.lease);
     expect(authoring.plugins.some((candidate) => candidate.canonicalId === `connection:${mayaConnection}`)).toBe(false);
-    const inventory = await __integrationTesting.loadHarnessTools(withWorkspaceRuntimeDatabase(env, workspaceId), input,
+    const inventory = await auditedHarnessTools(withWorkspaceRuntimeDatabase(env, workspaceId), input,
       undefined, undefined, undefined, undefined, first.lease);
     const plugin = inventory.plugins.find((candidate) => candidate.canonicalId === `connection:${mayaConnection}`)!;
     const tool = plugin.tools.find((candidate) => candidate.definition.name === "calendar.create_event")!;

@@ -1,3 +1,4 @@
+import { auditedAvalonTools } from "./helpers/audited-tools";
 import { asHarnessRunId, asAutomationId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { WorkstreamWorkflowInput, AutomationDraft } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
@@ -341,7 +342,7 @@ describe("reaching one resource through whichever connection can", () => {
   it("names which connection can open a file and how far", async () => {
     googleAsTwoAccounts();
     const { env, personal, workspace } = await fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput(), {
+    const tool = auditedAvalonTools(env, workflowInput(), {
       connectorTypes: ["google"],
       connections: () => [personal, workspace],
     }).find((candidate) => candidate.definition.name === "check_resource_access");
@@ -376,7 +377,7 @@ describe("reaching one resource through whichever connection can", () => {
     googleAsTwoAccounts({ visibleTo: ["workspace-token"] });
     const { env, personal, workspace } = await fixture();
     const frozenWithoutDrive = { ...workspace, grantedScopes: ["gmail.read"], toolCapabilities: ["gmail.read"] } as Frozen;
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput(), {
+    const tool = auditedAvalonTools(env, workflowInput(), {
       connectorTypes: ["google"],
       connections: () => [personal, frozenWithoutDrive],
     }).find((candidate) => candidate.definition.name === "check_resource_access");

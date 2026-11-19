@@ -1,3 +1,4 @@
+import { audited } from "../test/helpers/audited-tools";
 import { searchAudienceGroupId } from "../src/services/search-audience";
 import { ArtifactAccessMessageSchema } from "@rally/contracts/artifact-access";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
@@ -957,7 +958,7 @@ describe("Canvas artifact access propagated to local serving", () => {
       update: { visibility: "participants", userIds: [READER] },
     });
     const call = (userId: string, personAsked = false) =>
-      createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId })
+      audited([createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId })])[0]!
         .execute({ audience: "public", personAsked }, {} as never);
 
     await expect(call(READER)).rejects.toMatchObject({ code: "artifact_audience_not_manager" });
@@ -978,7 +979,7 @@ describe("Canvas artifact access propagated to local serving", () => {
   });
 
   it("names the Organization audience organization to the model and stores it as workspace", async () => {
-    const tool = createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER });
+    const tool = audited([createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })])[0]!;
     expect((tool.definition.inputSchema as { properties: { audience: { enum: string[] } } }).properties.audience.enum)
       .toEqual(["public", "organization", "editors"]);
     expect((await tool.execute({ audience: "organization", personAsked: true }, {} as never)).output)
@@ -1010,7 +1011,7 @@ describe("Canvas artifact access propagated to local serving", () => {
       },
     });
     await expect(
-      createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })
+      audited([createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })])[0]!
         .execute({ audience: "public", personAsked: true }, {} as never),
     ).rejects.toMatchObject({ code: "canvas_not_found" });
     await sync(SITE_HOST, SITE);
@@ -1020,7 +1021,7 @@ describe("Canvas artifact access propagated to local serving", () => {
   it("never lets a background agent override the audience a manager chose, whatever it claims", async () => {
     await share("editors");
     // An agent's conversation has no person in it, so its "person asked" is a default.
-    const agentCall = await createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER, defaultOnly: true })
+    const agentCall = await audited([createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER, defaultOnly: true })])[0]!
       .execute({ audience: "public", personAsked: true }, {} as never);
     expect(agentCall.output).toMatchObject({ audience: "editors", changed: false });
     await sync(SITE_HOST, SITE);
@@ -1029,7 +1030,7 @@ describe("Canvas artifact access propagated to local serving", () => {
 
   it("never lets an agent's default reopen artifacts a manager restricted in Share", async () => {
     const call = (personAsked: boolean) =>
-      createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })
+      audited([createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })])[0]!
         .execute({ audience: "public", personAsked }, {} as never);
     // A manager restricts the Canvas's artifacts in Share.
     await share("editors");

@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
+import { audited } from "../test/helpers/audited-tools";
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,7 +36,7 @@ async function tools() {
     draftState: { submitted: null }, model: "test/model",
   });
   const named = (name: string) => {
-    const tool = plugin.tools.find((candidate) => candidate.definition.name === name);
+    const tool = audited(plugin.tools).find((candidate) => candidate.definition.name === name);
     if (!tool) throw new Error(`missing_tool:${name}`);
     return tool;
   };

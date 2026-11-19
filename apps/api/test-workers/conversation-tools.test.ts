@@ -15,6 +15,7 @@
  * real Channels and Breakouts.
  */
 
+import { audited, auditedPlugin } from "../test/helpers/audited-tools";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { __integrationTesting } from "../src/services/integrations";
 import { createCanvas } from "../src/services/canvas-service";
@@ -294,7 +295,7 @@ describe("sidekick_attach_resource", () => {
       parentKind, parentId, substreamId: "0", loopId: substreamLoopId(parentId),
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
       executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
-    const plugin = createAgentCommunicationPlugin(new AgentCommunicationService(TEST_ENV, input), "");
+    const plugin = auditedPlugin(createAgentCommunicationPlugin(new AgentCommunicationService(TEST_ENV, input), ""));
     const attach = plugin.tools.find((candidate) => candidate.definition.name === "sidekick_attach_resource")!;
     const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: parentId,
       harnessRunId: input.harnessRunId, effectIntentId: crypto.randomUUID(), toolCallId: "attach-context",
@@ -303,6 +304,23 @@ describe("sidekick_attach_resource", () => {
   }
   const directLinks = () => runInDurableObject(conversation(AUTOMATION_ID), (_instance, state) =>
     state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links").toArray());
+
+  it("lists the wizard's own Sidekick under the agent id a model addresses, with no stored name", async () => {
+    await seedSidekick("0");
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "automation", parentId: AUTOMATION_ID, substreamId: "0", loopId: substreamLoopId(AUTOMATION_ID),
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const list = auditedPlugin(createAgentCommunicationPlugin(new AgentCommunicationService(TEST_ENV, input), ""))
+      .tools.find((candidate) => candidate.definition.name === "sidekicks_list")!;
+    const listed = await list.execute({}, { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID,
+      harnessRunId: input.harnessRunId, effectIntentId: crypto.randomUUID(), toolCallId: "list-sidekicks",
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal });
+    // Stored as `automation/<id>/0`; the model reads and writes `sidekick/<id>/0`.
+    expect((listed.output as { sidekicks: Array<Record<string, unknown>> }).sidekicks
+      .map(({ sidekickId, agentId, isCurrentSidekick }) => ({ sidekickId, agentId, isCurrentSidekick })))
+      .toEqual([{ sidekickId: AUTOMATION_ID, agentId: `sidekick/${AUTOMATION_ID}/0`, isCurrentSidekick: true }]);
+  });
 
   it("attaches once without a message or activation and makes the resource visible to future runs", async () => {
     await seedSidekick("0");
@@ -916,7 +934,7 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
   /** The real plugin over the real ports: WorkspaceDO's scope and each parent's admission. */
   function conversationTools(userId: string, wizard = true) {
     const input = configuration(userId, wizard);
-    const plugin = createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool]);
+    const plugin = auditedPlugin(createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool]));
     if (!plugin) throw new Error("conversations_plugin_missing");
     const byName = new Map(plugin.tools.map((tool) => [tool.definition.name, tool]));
     const context = (effectIntentId: string): HarnessToolContext => ({ workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID,
@@ -1055,7 +1073,7 @@ describe("a Sidekick's source request asked from a Canvas's Chat", () => {
       parentId: AUTOMATION_ID, substreamId: "0", loopId: substreamLoopId(AUTOMATION_ID), harnessRunId: crypto.randomUUID(),
       triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
       sidekickWizard: true, agentExchange: { teamId: chatAgent, senderAgentId: chatAgent, messageId: crypto.randomUUID() } });
-    const tool = sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false).find((candidate) => candidate.definition.name === "request_source")!;
+    const tool = audited(sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false)).find((candidate) => candidate.definition.name === "request_source")!;
     const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: input.harnessRunId,
       effectIntentId: crypto.randomUUID(), toolCallId: "ask-colleague", executionPrincipal: input.executionPrincipal,
       signal: new AbortController().signal };
@@ -1085,7 +1103,7 @@ describe("a Sidekick's source request asked from a Canvas's Chat", () => {
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
       executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "agent_message",
       backgroundAgent: true, backgroundAgentRootSubstreamId: "0" });
-    const tool = sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false).find((candidate) => candidate.definition.name === "request_source")!;
+    const tool = audited(sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false)).find((candidate) => candidate.definition.name === "request_source")!;
     const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: input.harnessRunId,
       effectIntentId: crypto.randomUUID(), toolCallId: "ask-from-wizard-agent", executionPrincipal: input.executionPrincipal,
       signal: new AbortController().signal };
@@ -1108,7 +1126,7 @@ describe("a Sidekick's source request asked from a Canvas's Chat", () => {
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
       executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "agent_message",
       backgroundAgent: true, backgroundAgentRootSubstreamId: "0" });
-    const tool = sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false).find((candidate) => candidate.definition.name === "request_source")!;
+    const tool = audited(sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false)).find((candidate) => candidate.definition.name === "request_source")!;
     const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
       effectIntentId: crypto.randomUUID(), toolCallId: "ask-from-agent", executionPrincipal: input.executionPrincipal,
       signal: new AbortController().signal };

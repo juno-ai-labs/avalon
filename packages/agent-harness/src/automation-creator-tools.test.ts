@@ -1,3 +1,4 @@
+import { auditedTools } from "@rally/contracts/model-names-audit";
 import { AutomationSetEvaluatorRulesInputV1Schema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
@@ -72,7 +73,8 @@ const eventDrivenRules = {
 const toolContext = { toolCallId: "call-1" } as never;
 
 function toolNamed(tools: ReturnType<typeof createAutomationsPlugin>["tools"], name: string) {
-  const tool = tools.find((candidate) => candidate.definition.name === name);
+  // Audited: no result or refusal these tests produce names storage (docs/agent-tools.md, rule 10).
+  const tool = auditedTools(tools, { dataProse: true }).find((candidate) => candidate.definition.name === name);
   if (!tool) throw new Error(`missing tool: ${name}`);
   return tool;
 }

@@ -1,3 +1,4 @@
+import { audited } from "./helpers/audited-tools";
 import { SITE_MANIFEST_MIME_TYPE, readStructuredFailure } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
@@ -65,7 +66,7 @@ function fixture(overrides: {
       : overrides.artifact),
     hostFor: vi.fn(async () => host satisfies ArtifactDataHost),
   } satisfies ArtifactDataToolContext;
-  const tools = createWorkstreamArtifactDataTools(context);
+  const tools = audited(createWorkstreamArtifactDataTools(context));
   return {
     host,
     context,
@@ -173,7 +174,7 @@ describe("querying a site's data", () => {
     const { context, host } = fixture({
       artifact: { artifactId: ARTIFACT, slug: "journal", mode: "active", stateful: true, scope },
     });
-    const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
+    const read = audited(createWorkstreamArtifactDataTools(context)).find((tool) => tool.definition.name === "read_artifact_table")!;
     const result = await read.execute({ resource: "journal", table: "entries" }, {} as never);
     expect(host.pageData).toHaveBeenCalledWith("entries", 0, 200, scope);
     expect(result.output).toMatchObject({ table: "entries", rows: [{ choice: "yes" }], rowsShown: expect.any(String) });
@@ -214,7 +215,7 @@ describe("querying a site's data", () => {
     const { context, host } = fixture({
       host: { pageData: vi.fn(async () => ({ ok: true as const, rows: full })) },
     });
-    const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
+    const read = audited(createWorkstreamArtifactDataTools(context)).find((tool) => tool.definition.name === "read_artifact_table")!;
     const first = await read.execute({ resource: "p", table: "votes", offset: 200 }, {} as never);
     expect(host.pageData).toHaveBeenCalledWith("votes", 200, 200, { rows: "all" });
     expect(first.output).toMatchObject({ nextOffset: 400 });

@@ -1,3 +1,4 @@
+import { auditedHarnessTools } from "./helpers/audited-tools";
 import { agentIdForAddress, asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type {
   AutomationDetail,
@@ -580,7 +581,7 @@ async function automationCreatorTool(
   input: WorkstreamWorkflowInput,
   name: string,
 ): Promise<Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"][number]> {
-  const selected = await __integrationTesting.loadHarnessTools(env(database), input);
+  const selected = await auditedHarnessTools(env(database), input);
   const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:sidekicks");
   if (!plugin) throw new Error("automations_plugin_missing");
   const tool = plugin.tools.find((candidate) => candidate.definition.name === name);
@@ -724,7 +725,7 @@ describe("connector tools selected for harness runs", () => {
     }];
     const runtimeEnv = createTestEnv({ ...env(database), CODE_LOADER: { get: vi.fn() } as unknown as WorkerLoader });
     const toolNames = async (input: WorkstreamWorkflowInput) => {
-      const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
+      const selected = await auditedHarnessTools(runtimeEnv, input);
       return [...new Set([
         ...selected.tools.map((tool) => tool.definition.name),
         ...selected.plugins.flatMap((plugin) => plugin.tools.map((tool) => `${plugin.canonicalId} ${tool.definition.name}`)),
@@ -761,7 +762,7 @@ describe("connector tools selected for harness runs", () => {
   it("offers the question tool where answers go to an agent, refusing with where to send the question", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const question = async (input: WorkstreamWorkflowInput) => {
-      const tool = (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).tools
+      const tool = (await auditedHarnessTools(runtimeEnv, input)).tools
         .find((candidate) => candidate.definition.name === "request_elicitation")!;
       return tool.execute({}, {} as never).then(() => "asked", (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }));
     };
@@ -769,7 +770,7 @@ describe("connector tools selected for harness runs", () => {
     expect(await question(childWorkflowInput())).toMatchObject({ code: "question_from_background_agent",
       routes: expect.stringContaining("with send_message") });
     // The prompt does not tell the model to use a question tool that refuses here, and does where it asks.
-    const tellsToAsk = async (input: WorkstreamWorkflowInput) => (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).corePlugins
+    const tellsToAsk = async (input: WorkstreamWorkflowInput) => (await auditedHarnessTools(runtimeEnv, input)).corePlugins
       .some((plugin) => plugin.systemMessage?.includes("Use request_elicitation") ?? false);
     expect(await tellsToAsk(childWorkflowInput())).toBe(false);
     expect(await tellsToAsk(workflowInput())).toBe(true);
@@ -787,7 +788,7 @@ describe("connector tools selected for harness runs", () => {
     database.addressHolders.set("guest@example.com", { id: "00000000-0000-7000-8000-00000000a0a2", name: "Gus",
       status: "active", access_class: "guest" });
     const offer = async (input: WorkstreamWorkflowInput, email: string) => {
-      const tool = (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).tools
+      const tool = (await auditedHarnessTools(runtimeEnv, input)).tools
         .find((candidate) => candidate.definition.name === "offer_to_add_member")!;
       return tool.execute({ email }, {} as never).then((result) => (result as { output: unknown }).output,
         (error: { code?: string }) => ({ code: error.code }));
@@ -804,7 +805,7 @@ describe("connector tools selected for harness runs", () => {
   });
 
   it("offers Sidekick management to a turn acting for the Organization, every tool refusing with who can act instead", async () => {
-    const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([])), {
+    const selected = await auditedHarnessTools(env(new ToolSelectionDatabase([])), {
       ...workflowInput(), executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
     });
     const sidekicks = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")!;
@@ -821,7 +822,7 @@ describe("connector tools selected for harness runs", () => {
       connection(OWNER_CONNECTION_ID, "personal", USER_ID),
     ]);
     const runtimeEnv = createTestEnv({ ...env(database), FIRECRAWL_API_KEY: "firecrawl-test-key" });
-    const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, childWorkflowInput());
+    const selected = await auditedHarnessTools(runtimeEnv, childWorkflowInput());
     expect(pluginConnectionIds(selected)).toEqual(expect.arrayContaining([
       WORKSPACE_CONNECTION_ID, OWNER_CONNECTION_ID,
     ]));
@@ -841,10 +842,10 @@ describe("connector tools selected for harness runs", () => {
   it("offers drafting only to Sidekick authoring and its agents, and communication to ordinary conversations", async () => {
     const database = new ToolSelectionDatabase([]);
     const runtimeEnv = env(database);
-    const room = await __integrationTesting.loadHarnessTools(runtimeEnv, workflowInput());
-    const authoring = await __integrationTesting.loadHarnessTools(runtimeEnv, automationConversationInput());
-    const child = await __integrationTesting.loadHarnessTools(runtimeEnv, childWorkflowInput(automationConversationInput()));
-    const worker = await __integrationTesting.loadHarnessTools(runtimeEnv, { ...childWorkflowInput(automationConversationInput()),
+    const room = await auditedHarnessTools(runtimeEnv, workflowInput());
+    const authoring = await auditedHarnessTools(runtimeEnv, automationConversationInput());
+    const child = await auditedHarnessTools(runtimeEnv, childWorkflowInput(automationConversationInput()));
+    const worker = await auditedHarnessTools(runtimeEnv, { ...childWorkflowInput(automationConversationInput()),
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } });
     expect(room.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
       ?.tools.map((tool) => tool.definition.name)).toEqual([
@@ -866,7 +867,7 @@ describe("connector tools selected for harness runs", () => {
   it("offers both notice tools to every loop, refusing register for a run and its worker and both for the self-review and its agents", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const noticeTools = async (input: WorkstreamWorkflowInput) => {
-      const plugin = (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
+      const plugin = (await auditedHarnessTools(runtimeEnv, input)).plugins
         .find((candidate) => candidate.canonicalId === "rally:notifications")!;
       const refusals = await Promise.all(plugin.tools.map((tool) => isRefusingTool(tool)
         ? tool.execute({}, {} as never).then(() => "not refused", (error: { code?: string }) => `${tool.definition.name}: ${error.code}`)
@@ -893,7 +894,7 @@ describe("connector tools selected for harness runs", () => {
   it("lets a Canvas's Chat, a Sidekick's wizard and their background agents ask for a source whatever started the turn, refuses a run, its worker and a self-review by name, and gives neither a run nor its worker the tool that changes delegation", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const sourcePlugin = async (input: WorkstreamWorkflowInput) =>
-      (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
+      (await auditedHarnessTools(runtimeEnv, input)).plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     // Each loop is offered all three; `request_source` either asks or refuses.
     const sourceTools = async (input: WorkstreamWorkflowInput) => ((await sourcePlugin(input))?.tools ?? [])
       .filter((tool) => ["sources_list", "request_source", "test_source_condition"].includes(tool.definition.name))
@@ -948,7 +949,7 @@ describe("connector tools selected for harness runs", () => {
     // A run reads outside content, and its background worker reads the same: both inspect delegation and neither
     // changes it. A conversation's own background agent and every loop a person is driving still can.
     const delegationTools = async (input: WorkstreamWorkflowInput) =>
-      (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
+      (await auditedHarnessTools(runtimeEnv, input)).plugins
         .filter((plugin) => plugin.canonicalId === "rally:sidekicks")
         .map((plugin) => ({ tools: plugin.tools.map((tool) => tool.definition.name).filter((name) => name.includes("deleg")),
           toldToSet: plugin.systemMessage?.includes("sidekick_set_delegation") ?? false }));
@@ -962,7 +963,7 @@ describe("connector tools selected for harness runs", () => {
 
     // The skill that says to call them is listed where they are, and nowhere else.
     const listsTheSkill = async (input: WorkstreamWorkflowInput) =>
-      __integrationTesting.builtInSkillsFor((await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins)
+      __integrationTesting.builtInSkillsFor((await auditedHarnessTools(runtimeEnv, input)).plugins)
         .some((skill) => skill.name === "setting-up-a-filtered-trigger");
     expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toBe(true);
     expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(run) })).toBe(true);
@@ -988,7 +989,7 @@ describe("connector tools selected for harness runs", () => {
         model_plugin_id: "plugin_fireflies_one",
       },
     ]);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     expect(selected.plugins.some((plugin) => plugin.modelId === "plugin_fireflies_one")).toBe(false);
     // The rest of the run is untouched: the built-in plugins are all still here.
     expect(selected.builtinPluginIds.size).toBeGreaterThan(0);
@@ -996,10 +997,10 @@ describe("connector tools selected for harness runs", () => {
 
   it("registers multimodal generation only when the main Azure inference deployment is configured", async () => {
     const database = new ToolSelectionDatabase([]);
-    const withoutAzure = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const withoutAzure = await auditedHarnessTools(env(database), workflowInput());
     expect(withoutAzure.plugins.some((plugin) => plugin.canonicalId === "rally:multimodal-generation")).toBe(false);
 
-    const withAzure = await __integrationTesting.loadHarnessTools(createTestEnv({
+    const withAzure = await auditedHarnessTools(createTestEnv({
       ...env(database),
       AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
       AZURE_INFERENCE_API_KEY: "azure-test-key",
@@ -1020,7 +1021,7 @@ describe("connector tools selected for harness runs", () => {
 
   it("authorizes every built-in plugin this run registered and denies unregistered or invented ids", async () => {
     const database = new ToolSelectionDatabase([]);
-    const selected = await __integrationTesting.loadHarnessTools(createTestEnv({
+    const selected = await auditedHarnessTools(createTestEnv({
       ...env(database),
       FIRECRAWL_API_KEY: "firecrawl-test-key",
       AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
@@ -1055,7 +1056,7 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools(createTestEnv({
+    const selected = await auditedHarnessTools(createTestEnv({
       ...env(database),
       FIRECRAWL_API_KEY: "firecrawl-test-key",
     }), workflowInput());
@@ -1286,7 +1287,7 @@ describe("connector tools selected for harness runs", () => {
         capability: "rally.sidekick.evaluators.set",
       }),
     );
-    const selected = await __integrationTesting.loadHarnessTools(env(database), automationConversationInput());
+    const selected = await auditedHarnessTools(env(database), automationConversationInput());
     const automations = selected.plugins.find((plugin) =>
       plugin.canonicalId === "rally:sidekicks"
     );
@@ -1365,7 +1366,7 @@ describe("connector tools selected for harness runs", () => {
     await expect(submit.execute(readyDraft, { toolCallId: "submit-after-drop" } as never))
       .rejects.toThrow("Load and inspect plugin_google");
 
-    const replacement = await __integrationTesting.loadHarnessTools(env(database), automationConversationInput());
+    const replacement = await auditedHarnessTools(env(database), automationConversationInput());
     __integrationTesting.recordCredentialPluginActivation(
       `connection:${WORKSPACE_CONNECTION_ID}`,
       replacement.frozenConnections,
@@ -1456,7 +1457,7 @@ describe("connector tools selected for harness runs", () => {
         capability: "rally.sidekick.evaluators.set",
       }),
     );
-    const selected = await __integrationTesting.loadHarnessTools(env(database), automationConversationInput());
+    const selected = await auditedHarnessTools(env(database), automationConversationInput());
     const automations = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     if (!automations) throw new Error("automations_plugin_missing");
     __integrationTesting.recordCredentialPluginActivation(
@@ -1506,7 +1507,7 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, [...GOOGLE_WORKSPACE_CAPABILITIES, ...GOOGLE_MAIL_CALENDAR_CAPABILITIES]),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     const plugins = selected.plugins.filter((plugin) => plugin.connectorType === "google")
       .sort((left, right) => left.modelId.localeCompare(right.modelId)).reverse();
     expect(plugins.map((plugin) => [plugin.modelId, plugin.canonicalId, plugin.displayName])).toEqual([
@@ -1539,7 +1540,7 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, ["gmail.read", "drive.read"]),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     const visibleTools: string[][] = [];
     const modelFetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
       const body = JSON.parse(String(init?.body)) as { tools: Array<{ name: string }> };
@@ -1583,7 +1584,7 @@ describe("connector tools selected for harness runs", () => {
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
     ]);
 
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
@@ -1610,7 +1611,7 @@ describe("connector tools selected for harness runs", () => {
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, GOOGLE_WORKSPACE_CAPABILITIES, "2026-08-01T00:00:00.000Z"),
     ]);
 
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([OWNER_CONNECTION_ID]));
@@ -1622,7 +1623,7 @@ describe("connector tools selected for harness runs", () => {
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, GOOGLE_WORKSPACE_CAPABILITIES, "2026-08-01T00:00:00.000Z"),
     ]);
 
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(pluginConnectionIds(selected))).toEqual(new Set([OWNER_CONNECTION_ID, WORKSPACE_CONNECTION_ID]));
@@ -1647,7 +1648,7 @@ describe("connector tools selected for harness runs", () => {
       ),
     ]);
 
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     const mail = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${OWNER_CONNECTION_ID}`);
     const drive = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${WORKSPACE_CONNECTION_ID}`);
 
@@ -1747,7 +1748,7 @@ describe("connector tools selected for harness runs", () => {
     expect(__integrationTesting.connectorSkillsForPlugins([])).toEqual([]);
     for (const capabilities of [["gmail.send"], ["docs.write"], ["gmail.read"]]) {
       const database = new ToolSelectionDatabase([connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities)]);
-      const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+      const selected = await auditedHarnessTools(env(database), workflowInput());
       expect(__integrationTesting.connectorSkillsForPlugins(selected.plugins)).toEqual([]);
     }
   });
@@ -1757,7 +1758,7 @@ describe("connector tools selected for harness runs", () => {
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, ["calendar.read"]),
       connection(WORKSPACE_CONNECTION_ID, "workspace", null, ["drive.read", "docs.read"]),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     const skills = __integrationTesting.connectorSkillsForPlugins(selected.plugins);
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe("reading-google-meeting-notes");
@@ -1772,7 +1773,7 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     const plugin = selected.plugins.find((item) => item.canonicalId.startsWith(`connection:${OWNER_CONNECTION_ID}`))!;
     // Assert the presentation the harness actually receives, including Calendar-
     // only credentials that must load a separate Docs plugin to read the file.
@@ -1799,7 +1800,7 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities, "2026-07-01T00:00:00.000Z"),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     const mail = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${OWNER_CONNECTION_ID}`);
     expect(mail?.systemMessage?.includes("Reply tools take body and either an exact known messageId or a Gmail query")).toBe(capabilities.includes("gmail.read"));
     const examples = workedExampleCalls(mail?.systemMessage ?? "")
@@ -1820,7 +1821,7 @@ describe("connector tools selected for harness runs", () => {
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
     ], [], [WORKSPACE_CONNECTION_ID]);
 
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
 
     expect(new Set(pluginConnectionIds(selected))).toEqual(new Set([OWNER_CONNECTION_ID, WORKSPACE_CONNECTION_ID]));
     expect(selected.connectionByTool.get("drive.search")).toBe(WORKSPACE_CONNECTION_ID);
@@ -1835,7 +1836,7 @@ describe("connector tools selected for harness runs", () => {
   it.each(combinedGoogleReceipts)("replays a pre-split Google $mode receipt without relaxing its fences", async (receipt) => {
     const database = new ToolSelectionDatabase([connection(OWNER_CONNECTION_ID, "personal", USER_ID,
       [...GOOGLE_WORKSPACE_CAPABILITIES, ...GOOGLE_MAIL_CALENDAR_CAPABILITIES])]);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     const pluginId = `connection:${OWNER_CONNECTION_ID}:drive`;
     const policy = __integrationTesting.resolveHarnessToolReceiptPolicy({ pluginId,
       canonicalToolName: receipt.canonicalToolName, capability: receipt.capability,
@@ -1855,7 +1856,7 @@ describe("connector tools selected for harness runs", () => {
   // Captured by running the actual pre-PR host and connector at aaa417c5f3,
   // independently of the compatibility reconstruction this test exercises.
   it.each(preTextPageReceipts)("fences pre-text-pagination $canonicalToolName receipts by operation", async receipt => {
-    const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([
+    const selected = await auditedHarnessTools(env(new ToolSelectionDatabase([
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, [...GOOGLE_WORKSPACE_CAPABILITIES]),
     ])), workflowInput());
     const policy = __integrationTesting.resolveHarnessToolReceiptPolicy({ pluginId: receipt.pluginId,
@@ -1872,16 +1873,16 @@ describe("connector tools selected for harness runs", () => {
     const row = connection(OWNER_CONNECTION_ID, "personal", USER_ID, [...GOOGLE_WORKSPACE_CAPABILITIES, ...GOOGLE_MAIL_CALENDAR_CAPABILITIES]);
     const database = new ToolSelectionDatabase([row]);
     database.defaultPluginIds = [saved];
-    const before = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+    const before = await auditedHarnessTools(env(database), automationRunInput());
     expect(before.plugins.filter((plugin) => plugin.connectorType === "google" && plugin.preload).map((plugin) => plugin.modelId))
       .toEqual([saved]);
     row.granted_scopes_json = JSON.stringify(retained);
-    const after = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+    const after = await auditedHarnessTools(env(database), automationRunInput());
     expect(after.plugins.filter((plugin) => plugin.connectorType === "google").map((plugin) => ({
       modelId: plugin.modelId, preload: plugin.preload, explicit: plugin.explicit,
     }))).toEqual([{ modelId: "plugin_google", preload: true, explicit: true }]);
     database.defaultPluginIds = [removed];
-    const denied = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+    const denied = await auditedHarnessTools(env(database), automationRunInput());
     expect(denied.plugins.filter((plugin) => plugin.connectorType === "google").map((plugin) => plugin.preload)).toEqual([false]);
   });
 
@@ -1895,7 +1896,7 @@ describe("connector tools selected for harness runs", () => {
     );
 
     database.defaultPluginIds = ["plugin_google"];
-    const selected = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+    const selected = await auditedHarnessTools(env(database), automationRunInput());
 
     // Read from the automation for this run, by the reference the loop carries.
     // A scheduled activation names only the run, in the request shape every
@@ -1909,7 +1910,7 @@ describe("connector tools selected for harness runs", () => {
 
     // A continuation names the revision `continueRun` handed it, which may be
     // newer than the one the run started with.
-    await __integrationTesting.loadHarnessTools(env(database), {
+    await auditedHarnessTools(env(database), {
       ...automationRunInput(),
       automationContinuation: { stopGeneration: 0, senderName: "Member", source: { kind: "run" } },
     });
@@ -1938,7 +1939,7 @@ describe("connector tools selected for harness runs", () => {
       [WORKSPACE_CONNECTION_ID],
     );
 
-    const selected = await __integrationTesting.loadHarnessTools(
+    const selected = await auditedHarnessTools(
       env(database),
       automationRunInput(),
     );
@@ -1968,7 +1969,7 @@ describe("connector tools selected for harness runs", () => {
     );
     const input = automationRunInput("schedule");
 
-    const selected = await __integrationTesting.loadHarnessTools(env(database), input);
+    const selected = await auditedHarnessTools(env(database), input);
 
     // The write halves used to be stripped here. They are not any more: the
     // trigger no longer decides the tool surface, and an automation that
@@ -2044,7 +2045,7 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([row]);
     const providerFetch = vi.fn<typeof globalThis.fetch>();
     vi.stubGlobal("fetch", providerFetch);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await auditedHarnessTools(env(database), workflowInput());
     const plugin = selected.plugins.find((candidate) =>
       candidate.canonicalId === `connection:${OWNER_CONNECTION_ID}`
     )!;

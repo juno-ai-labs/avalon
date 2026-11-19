@@ -1,3 +1,4 @@
+import { audited } from "./helpers/audited-tools";
 import { readFileSync } from 'node:fs';
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
@@ -324,7 +325,7 @@ function toolContext(runInput: WorkstreamWorkflowInput, receipt: string) {
 }
 
 function tableTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
-  const tool = createMemoryTableTools(routedEnv(env, runInput), runInput)
+  const tool = audited(createMemoryTableTools(routedEnv(env, runInput), runInput))
     .find((candidate) => candidate.definition.name === name);
   if (!tool) throw new Error(`missing tool ${name}`);
   return tool;
@@ -339,7 +340,7 @@ describe("memory scopes and durable tables", () => {
 
     // The run's tools never carry a scope selector: the three memory tools
     // take a query, a fact, or a fact id, and nothing that names where to look.
-    for (const tool of createMemoryTools(routedEnv(env, input("owner")), input("owner"))) {
+    for (const tool of audited(createMemoryTools(routedEnv(env, input("owner")), input("owner")))) {
       expect(Object.keys((tool.definition.inputSchema as { properties: object }).properties)).not.toContain("scopes");
       expect(Object.keys((tool.definition.inputSchema as { properties: object }).properties)).not.toContain("scopeKind");
     }
@@ -528,7 +529,7 @@ describe("memory scopes and durable tables", () => {
     const created = await tableTool(env, firstRun, "create").execute({
       scopeKind: "organization",
       name: "Seen blog entries",
-      description: "One row per blog entry discovered by this workspace.",
+      description: "One row per blog entry discovered by this Organization.",
       usageInstructions: "Insert by canonical URL before reporting. Query only candidate URLs or pending rows.",
       columns: [
         { name: "itemKey", description: "Canonical URL", type: "url", required: true, searchable: false },
@@ -712,7 +713,7 @@ describe("memory scopes and durable tables", () => {
   it("keeps model-facing revision guidance tied to an exact producing read", () => {
     const { env } = fixture();
     const runInput = input("owner");
-    const tableTools = createMemoryTableTools(env, runInput);
+    const tableTools = audited(createMemoryTableTools(env, runInput));
     const tableQueryDefinition = tableTools.find((tool) => tool.definition.name === "query")?.definition;
 
     expect(tableQueryDefinition?.description).toContain("memoryTableRowIds");
