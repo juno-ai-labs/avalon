@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { RegionSchema } from './regions';
+import { deferredZodSchema } from "./deferred-zod-schema";
 
-const uuidV7 = z.string().uuid().refine((value) => value[14] === '7');
-export const MobileCrashScopeSchema = z.strictObject({
+const uuidV7 = deferredZodSchema(() => z.string().uuid().refine((value) => value[14] === '7'));
+export const MobileCrashScopeSchema = deferredZodSchema(() => z.strictObject({
   userId: z.string().uuid(), workspaceId: z.string().uuid(), route: RegionSchema,
-});
+}));
 export type MobileCrashScope = z.infer<typeof MobileCrashScopeSchema>;
-export const CrashUploadMetadataSchema = z.strictObject({
+export const CrashUploadMetadataSchema = deferredZodSchema(() => z.strictObject({
   uploadId: uuidV7,
   installationId: uuidV7,
   route: RegionSchema,
@@ -19,7 +20,7 @@ export const CrashUploadMetadataSchema = z.strictObject({
   channel: z.enum(['development', 'alpha', 'beta', 'stable']),
   format: z.enum(['minidump', 'mobile-json']).default('minidump'),
   owner: MobileCrashScopeSchema.optional(),
-});
+}));
 export type CrashUploadMetadata = z.infer<typeof CrashUploadMetadataSchema>;
 
 // Existing external crash-summary bounds. Slice before Zod traverses/clones
@@ -32,7 +33,7 @@ function prefix(value: unknown, length: number): unknown {
 
 // Raw text stays in regional R2. Only these closed/numeric fields may become
 // an external issue summary; exception messages and filenames never do.
-export const MobileCrashPayloadSchema = z.discriminatedUnion('kind', [
+export const MobileCrashPayloadSchema = deferredZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('ios-native'),
     report: z.string(),
@@ -51,13 +52,13 @@ export const MobileCrashPayloadSchema = z.discriminatedUnion('kind', [
     fatal: z.boolean(),
     updateId: z.string().uuid().nullable(),
   }),
-]);
+]));
 export type MobileCrashPayload = z.infer<typeof MobileCrashPayloadSchema>;
 
-export const MobileCrashReportSchema = z.strictObject({
+export const MobileCrashReportSchema = deferredZodSchema(() => z.strictObject({
   scope: MobileCrashScopeSchema,
   metadata: CrashUploadMetadataSchema,
   payload: MobileCrashPayloadSchema,
   deleteAfter: z.number().finite(),
-});
+}));
 export type MobileCrashReport = z.infer<typeof MobileCrashReportSchema>;

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import configuration from '../../../config/regions.json';
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /** Deployment identity, independent of geographical placement. */
-export const RegionSchema = z.string().regex(/^[a-z][a-z0-9-]*$/u);
+export const RegionSchema = deferredZodSchema(() => z.string().regex(/^[a-z][a-z0-9-]*$/u));
 export type Region = z.infer<typeof RegionSchema>;
 export interface RegionConfiguration {
   workerName: string;

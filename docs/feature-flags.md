@@ -75,7 +75,7 @@ routing capability.
 
 | Roles | Default model | Shared override |
 | --- | --- | --- |
-| `canvas`, `sidekick_run` | `openai/gpt-6.1-terra` | `OPENROUTER_PRIMARY_MODEL` |
+| `canvas`, `sidekick_run` | `openai/gpt-6.1-sol` | `OPENROUTER_PRIMARY_MODEL` |
 | `sidekick_wizard`, `memory_sweep` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
 | `resource_naming` | `openai/gpt-6.1-terra` | `OPENROUTER_FASTER_MODEL` |
 
@@ -198,6 +198,17 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 `AGENT_MODEL_ENV_KEYS`; no service provisioning or admin editor is required.
 
 ## Changelog
+
+### 2026-11-19 — Move the primary default to GPT-6.1 Sol
+
+Canvas and Sidekick runs now default to `openai/gpt-6.1-sol`; resource naming
+stays on Terra through the faster group. The reason for leaving Terra was not
+recorded. Sol runs at the provider's default reasoning, by choice: no registry
+entry or route sets `low`. A 2026-10-02 trial on one import found the default
+about 2.3x slower and 2.5x more expensive than `low` (`agent-harness.md`). Pins
+and explicit routes keep precedence. A primary default must
+support sanitized tool calls and image input with fallbacks disabled, so a
+fallback cannot hide an unsupported request shape.
 
 ### 2026-11-10 — Organization-owned model selector visibility
 

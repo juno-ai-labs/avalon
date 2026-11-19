@@ -6,9 +6,10 @@ import type { Region } from "@rally/contracts/regions";
  * the regional API. See docs/forced-migrations.md.
  */
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /** Cloudflare renders a Durable Object ID as 64 lowercase hex characters. */
-export const DurableObjectIdSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+export const DurableObjectIdSchema = deferredZodSchema(() => z.string().regex(/^[0-9a-f]{64}$/u));
 
 const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const NUMERIC_SEGMENT = /^[0-9]{1,12}$/u;
@@ -43,12 +44,12 @@ export function isOpaqueDurableObjectName(value: string): boolean {
     || FIXED_SEGMENTS.has(segment) || configuredRegions.includes(segment));
 }
 
-export const OpaqueDurableObjectNameSchema = z.string().refine(
+export const OpaqueDurableObjectNameSchema = deferredZodSchema(() => z.string().refine(
   isOpaqueDurableObjectName,
   { message: "durable_object_name_is_not_opaque" },
-);
+));
 
-export const DurableObjectMigrationCommandSchema = z.object({
+export const DurableObjectMigrationCommandSchema = deferredZodSchema(() => z.object({
   /**
    * Identifies this message. The consumer is naturally idempotent — forcing an
    * object twice wakes it twice and reports twice — so this is not a dedupe
@@ -91,7 +92,7 @@ export const DurableObjectMigrationCommandSchema = z.object({
   if (command.objectId === null) {
     context.addIssue({ code: "custom", path: ["objectId"], message: "migration force requires an object ID" });
   }
-});
+}));
 export type DurableObjectMigrationCommand = z.infer<typeof DurableObjectMigrationCommandSchema>;
 
 /**

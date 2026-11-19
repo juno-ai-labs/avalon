@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ConnectorConnectionCardIds } from './connector-connection-card';
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * What a person may be: every other colour around the ring, plus `black`.
@@ -34,7 +35,7 @@ export const PERSONAL_COLOR_ALIASES = {
   slate: 'black',
 } as const satisfies Record<(typeof PERSONAL_COLOR_KEYS_RETIRED)[number], (typeof PERSONAL_COLOR_KEYS)[number]>;
 
-export const PersonalColorSchema = z.enum([...PERSONAL_COLOR_KEYS, ...PERSONAL_COLOR_KEYS_RETIRED]);
+export const PersonalColorSchema = deferredZodSchema(() => z.enum([...PERSONAL_COLOR_KEYS, ...PERSONAL_COLOR_KEYS_RETIRED]));
 
 /** The palette key an accent paints with, following a retired name to its replacement. */
 export function personalColorKey(color: z.infer<typeof PersonalColorSchema>): (typeof PERSONAL_COLOR_KEYS)[number] {
@@ -42,7 +43,7 @@ export function personalColorKey(color: z.infer<typeof PersonalColorSchema>): (t
     ? PERSONAL_COLOR_ALIASES[color as keyof typeof PERSONAL_COLOR_ALIASES]
     : (color as (typeof PERSONAL_COLOR_KEYS)[number]);
 }
-export const PersonalAvatarSchema = z.enum(['circle', 'rounded', 'diamond', 'flower', 'spark', 'arch']);
+export const PersonalAvatarSchema = deferredZodSchema(() => z.enum(['circle', 'rounded', 'diamond', 'flower', 'spark', 'arch']));
 export const PersonalPresentationSchema = z.object({
   // The regional identity bridge already requires names of at most 255 characters.
   displayName: z.string().trim().min(1).max(255).optional(),
@@ -51,17 +52,17 @@ export const PersonalPresentationSchema = z.object({
   avatar: PersonalAvatarSchema,
   revision: z.number().int().nonnegative(),
 });
-export const AccountOnboardingSchema = z.object({
+export const AccountOnboardingSchema = deferredZodSchema(() => z.object({
   eligible: z.boolean(),
   introduced: z.boolean(),
   presentation: PersonalPresentationSchema.nullable(),
   revision: z.number().int().nonnegative(),
-});
-export const UpdateAccountOnboardingSchema = z.strictObject({
+}));
+export const UpdateAccountOnboardingSchema = deferredZodSchema(() => z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   introduced: z.literal(true).optional(),
   presentation: PersonalPresentationSchema.omit({ revision: true }).optional(),
-});
+}));
 /**
  * Connectors the onboarding picker may offer, derived from the connection-card
  * catalog plus the two identities that have no card because they are not a
@@ -73,8 +74,8 @@ export const UpdateAccountOnboardingSchema = z.strictObject({
  * selection rejected and could connect nothing at all. A new connection card is
  * now selectable in onboarding by construction.
  */
-export const OnboardingConnectorIdSchema = z.enum([...ConnectorConnectionCardIds, 'custom-mcp', 'x']);
-export const OnboardingConnectorSelectionSchema = z.templateLiteral([z.enum(['workspace', 'you']), ':', OnboardingConnectorIdSchema]);
+export const OnboardingConnectorIdSchema = deferredZodSchema(() => z.enum([...ConnectorConnectionCardIds, 'custom-mcp', 'x']));
+export const OnboardingConnectorSelectionSchema = deferredZodSchema(() => z.templateLiteral([z.enum(['workspace', 'you']), ':', OnboardingConnectorIdSchema]));
 export const OnboardingJourneySchema = z.object({
   path: z.enum(['creator', 'member']),
   stage: z.enum(['connectors', 'people', 'profile', 'complete']),
@@ -93,14 +94,14 @@ export const OnboardingJourneySchema = z.object({
  * above for the same reason. A selection nobody can act on any more is noise, so
  * it is dropped on the way out.
  */
-export const StoredOnboardingConnectorSelectionsSchema = z.array(z.unknown()).transform((values) =>
+export const StoredOnboardingConnectorSelectionsSchema = deferredZodSchema(() => z.array(z.unknown()).transform((values) =>
   values.filter((value): value is z.infer<typeof OnboardingConnectorSelectionSchema> =>
-    OnboardingConnectorSelectionSchema.safeParse(value).success));
+    OnboardingConnectorSelectionSchema.safeParse(value).success)));
 /** Connector selections are read from old rows only; nothing writes them since the step was retired. */
-export const UpdateOnboardingJourneySchema = z.strictObject({
+export const UpdateOnboardingJourneySchema = deferredZodSchema(() => z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   stage: OnboardingJourneySchema.shape.stage,
-});
+}));
 export type PersonalPresentation = z.infer<typeof PersonalPresentationSchema>;
 export type AccountOnboarding = z.infer<typeof AccountOnboardingSchema>;
 export type UpdateAccountOnboarding = z.infer<typeof UpdateAccountOnboardingSchema>;

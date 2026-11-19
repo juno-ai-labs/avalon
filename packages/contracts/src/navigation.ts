@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { IdSchema, WorkstreamIdSchema } from "./identifiers";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * A pinned artifact: a resource Rally generated in a thread's Main, with what
@@ -10,7 +11,7 @@ import { WorkstreamAppearanceSchema } from "./workstream-appearance";
  * The Thread, Channel and Breakout pin kinds, and the Activity feed this file
  * also held, retired with those surfaces in the Canvases and Sidekicks pivot.
  */
-export const ArtifactPinSchema = z.strictObject({
+export const ArtifactPinSchema = deferredZodSchema(() => z.strictObject({
   /** The resource. */
   id: IdSchema,
   /** The thread whose Main the artifact was generated in, which opens it. */
@@ -32,9 +33,9 @@ export const ArtifactPinSchema = z.strictObject({
     appearance: WorkstreamAppearanceSchema.nullable(),
     spaceIds: z.array(IdSchema),
   }),
-});
+}));
 export type ArtifactPin = z.infer<typeof ArtifactPinSchema>;
 
 /** Every artifact a person pinned that they can still see, in their order. */
-export const ArtifactPinListSchema = z.array(ArtifactPinSchema);
+export const ArtifactPinListSchema = deferredZodSchema(() => z.array(ArtifactPinSchema));
 export type ArtifactPinList = z.infer<typeof ArtifactPinListSchema>;

@@ -1,9 +1,10 @@
 import { HttpUrlSchema } from './url-schemas';
 import { z } from 'zod';
+import { deferredZodSchema } from "./deferred-zod-schema";
 
-export const SearchCategorySchema = z.enum(['all', 'messages', 'links', 'artifacts', 'files']);
+export const SearchCategorySchema = deferredZodSchema(() => z.enum(['all', 'messages', 'links', 'artifacts', 'files']));
 export type SearchCategory = z.infer<typeof SearchCategorySchema>;
-export const SearchRequestSchema = z.strictObject({
+export const SearchRequestSchema = deferredZodSchema(() => z.strictObject({
   query: z.string().trim().min(1),
   // Accepted and ignored: desktop builds before 1.305 still send it. The
   // response carries no completeness flag; an undecided candidate is omitted.
@@ -11,10 +12,10 @@ export const SearchRequestSchema = z.strictObject({
   category: SearchCategorySchema,
   pageSize: z.number().int().min(1).max(50).optional(),
   cursor: z.string().min(1).optional(),
-});
+}));
 export type SearchRequest = z.infer<typeof SearchRequestSchema>;
-const TextRangeSchema = z.strictObject({ start: z.number().int().nonnegative(), end: z.number().int().nonnegative() });
-export const SearchResultSchema = z.strictObject({
+const TextRangeSchema = deferredZodSchema(() => z.strictObject({ start: z.number().int().nonnegative(), end: z.number().int().nonnegative() }));
+export const SearchResultSchema = deferredZodSchema(() => z.strictObject({
   id: z.string(),
   category: z.enum(['messages', 'links', 'artifacts', 'files']),
   title: z.string(),
@@ -32,13 +33,13 @@ export const SearchResultSchema = z.strictObject({
     z.strictObject({ kind: z.literal('message'), parentKind: z.enum(['canvas', 'automation']), workstreamId: z.string().uuid(), substreamId: z.string(), turnId: z.string(), transcriptSequence: z.number().int().positive(), range: TextRangeSchema }),
     z.strictObject({ kind: z.literal('resource'), resourceId: z.string().uuid(), mimeType: z.string().nullable(), range: TextRangeSchema }),
   ]),
-});
+}));
 export type SearchResult = z.infer<typeof SearchResultSchema>;
-export const SearchResponseSchema = z.strictObject({
+export const SearchResponseSchema = deferredZodSchema(() => z.strictObject({
   results: z.array(SearchResultSchema),
   nextCursor: z.string().nullable().optional(),
   timings: z.strictObject({ scopeMs: z.number().nonnegative(), retrievalMs: z.number().nonnegative(),
     hydrationMs: z.number().nonnegative(), serverMs: z.number().nonnegative() }).optional(),
-});
+}));
 
 export type SearchResponse = z.infer<typeof SearchResponseSchema>;

@@ -4,6 +4,7 @@ import {
   UserIdSchema,
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 export const AutomationIdSchema = IdSchema.brand<"AutomationId">();
 export type AutomationId = z.infer<typeof AutomationIdSchema>;
@@ -20,7 +21,7 @@ export const asAutomationId = (value: string): AutomationId => AutomationIdSchem
  * automation *is* is the room that owns a `workstream`-scoped one, and a run
  * sends there with its own tool.
  */
-export const AutomationScopeSchema = z.enum(["personal", "workspace"]);
+export const AutomationScopeSchema = deferredZodSchema(() => z.enum(["personal", "workspace"]));
 export type AutomationScope = z.infer<typeof AutomationScopeSchema>;
 /**
  * A scope as stored before the `workstream` (Thread-owned) scope was retired:
@@ -32,8 +33,8 @@ export type AutomationScope = z.infer<typeof AutomationScopeSchema>;
  * Organization would widen a private Thread's Sidekick past what the
  * directory migration kept. A manager widens it explicitly if they mean to.
  */
-export const StoredAutomationScopeSchema = z.enum(["personal", "workspace", "workstream"])
-  .transform((scope): AutomationScope => scope === "workstream" ? "personal" : scope);
+export const StoredAutomationScopeSchema = deferredZodSchema(() => z.enum(["personal", "workspace", "workstream"])
+  .transform((scope): AutomationScope => scope === "workstream" ? "personal" : scope));
 
 /**
  * Who a Sidekick is shared with: its author alone (`personal`), every member
@@ -43,11 +44,11 @@ export const StoredAutomationScopeSchema = z.enum(["personal", "workspace", "wor
  * their whole sidebar. A `people` Sidekick is stored with scope `personal`
  * and its list in `sidekick_audience`.
  */
-export const SidekickAudienceSchema = z.enum(["personal", "workspace", "people"]);
+export const SidekickAudienceSchema = deferredZodSchema(() => z.enum(["personal", "workspace", "people"]));
 export type SidekickAudience = z.infer<typeof SidekickAudienceSchema>;
 
 /** A manager's change to who a Sidekick is shared with; `userIds` only, and always, for `people`. */
-export const SidekickAudienceUpdateSchema = z.strictObject({
+export const SidekickAudienceUpdateSchema = deferredZodSchema(() => z.strictObject({
   audience: SidekickAudienceSchema,
   userIds: z.array(UserIdSchema).default([]),
 }).superRefine((update, context) => {
@@ -55,15 +56,15 @@ export const SidekickAudienceUpdateSchema = z.strictObject({
     context.addIssue({ code: "custom", path: ["userIds"],
       message: "must name people exactly when the audience is people" });
   }
-});
+}));
 export type SidekickAudienceUpdate = z.infer<typeof SidekickAudienceUpdateSchema>;
 
-export const AutomationLifecycleStateSchema = z.enum(["draft", "active", "paused", "deleted"]);
+export const AutomationLifecycleStateSchema = deferredZodSchema(() => z.enum(["draft", "active", "paused", "deleted"]));
 export type AutomationLifecycleState = z.infer<typeof AutomationLifecycleStateSchema>;
 
 /** Provenance for already admitted runs, including retired kinds in stored history.
  * Active trigger configuration is defined separately by TriggerDefinitionSchema. */
-export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
+export const AutomationRunTriggerV1Schema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("invocation"), artifactId: ArtifactIdSchema,
     artifactVersion: z.number().int().positive(), bindingName: z.string().min(1), operationId: z.string().min(1),
@@ -88,7 +89,7 @@ export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
     receiptId: IdSchema,
     occurredAt: z.number().int().nonnegative(),
   }),
-]);
+]));
 export type AutomationRunTriggerV1 = z.infer<typeof AutomationRunTriggerV1Schema>;
 
 /**
@@ -99,13 +100,13 @@ export type AutomationRunTriggerV1 = z.infer<typeof AutomationRunTriggerV1Schema
  * then have to migrate whenever a field changed shape. The run id is also the
  * child substream id under the automation.
  */
-export const AutomationRunReferenceV1Schema = z.strictObject({
+export const AutomationRunReferenceV1Schema = deferredZodSchema(() => z.strictObject({
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
   runId: IdSchema,
   definitionRevision: z.number().int().positive(),
   trigger: AutomationRunTriggerV1Schema,
-});
+}));
 export type AutomationRunReferenceV1 = z.infer<typeof AutomationRunReferenceV1Schema>;
 
 /**
@@ -115,7 +116,7 @@ export type AutomationRunReferenceV1 = z.infer<typeof AutomationRunReferenceV1Sc
  * specific to an activation lives here, inside the `structuredContent` every
  * other typed row already uses.
  */
-export const AutomationActivationV1Schema = z.strictObject({
+export const AutomationActivationV1Schema = deferredZodSchema(() => z.strictObject({
   type: z.literal("automation_activation"),
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
@@ -176,7 +177,7 @@ export const AutomationActivationV1Schema = z.strictObject({
    * read from there live.
    */
   question: z.strictObject({ elicitationId: IdSchema }).optional(),
-});
+}));
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 
 /**
@@ -189,7 +190,7 @@ export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema
  * under `definitionRevision`: an earlier revision's runs followed an earlier
  * procedure and are not this review's evidence.
  */
-export const SidekickReviewNoticeV1Schema = z.strictObject({
+export const SidekickReviewNoticeV1Schema = deferredZodSchema(() => z.strictObject({
   kind: z.literal("sidekick_review_due"),
   schemaVersion: z.literal(1),
   reviewId: IdSchema,
@@ -225,7 +226,7 @@ export const SidekickReviewNoticeV1Schema = z.strictObject({
     needsInput: z.array(IdSchema),
     completed: z.array(IdSchema),
   }),
-});
+}));
 export type SidekickReviewNoticeV1 = z.infer<typeof SidekickReviewNoticeV1Schema>;
 
 /**
@@ -249,7 +250,7 @@ export function automationActivationName(structuredContent: unknown): string {
  * reviewed, created, and later edited; this carries only what the card shows
  * and the id it links to.
  */
-export const AutomationDraftProposedV1Schema = z.strictObject({
+export const AutomationDraftProposedV1Schema = deferredZodSchema(() => z.strictObject({
   type: z.literal("automation_draft_proposed"),
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
@@ -260,5 +261,5 @@ export const AutomationDraftProposedV1Schema = z.strictObject({
   suggestedScope: StoredAutomationScopeSchema,
   /** False when the agent still has a blocking question. */
   ready: z.boolean(),
-});
+}));
 export type AutomationDraftProposedV1 = z.infer<typeof AutomationDraftProposedV1Schema>;

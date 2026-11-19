@@ -5,7 +5,7 @@ import type {
 
 import type { Env } from "../env";
 import { AutomationService } from "./automation-service";
-import { engineeringUserAuth } from "./engineering-creation";
+import { engineeringUserAuth } from "./engineering-user-auth";
 
 /**
  * Pause or resume a Sidekick as a selected user, through the same service the

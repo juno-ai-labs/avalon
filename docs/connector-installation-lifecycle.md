@@ -14,7 +14,7 @@ and Granola use the same execution path; ordinary tool activation remains in
 | `packages/connectors/src/installation.ts` | Provider-management facet and explicit automatic/manual support. |
 | `packages/connectors/src/{ashby,fireflies,granola}.ts` | Documented provider calls and manual recovery instructions. |
 | `apps/api/src/durable-objects/connector-installation-{protocol,storage}.ts` | Typed commands, atomic reservation, dispatch receipts, generation fences, and cleanup snapshots. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Schema migrations and workspace/retirement authority. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-do-schema-migrations.ts` | Workspace/retirement authority; the second file holds the WorkspaceDO schema migration list. |
 | `apps/api/src/services/connector-installation-service.ts` | Shared Queue-driven provider execution. |
 | `apps/api/src/services/connector-installation-plan.ts` | Reviewed configuration diff, grant intersection and replacement-before-removal dependencies. |
 | `apps/api/src/services/connector-maintenance-service.ts` | Frozen regional operations and concurrency-safe per-target progress. |

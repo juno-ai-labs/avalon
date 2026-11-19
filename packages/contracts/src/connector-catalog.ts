@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 /**
  * The connector product catalog: every connector a person can add to Rally,
@@ -302,12 +303,12 @@ export function connectorAuthorizationStatus(status: string): "healthy" | "recon
   return "healthy";
 }
 
-export const ConnectorConnectionStateSchema = z.enum([
+export const ConnectorConnectionStateSchema = deferredZodSchema(() => z.enum([
   "connected",
   "reconnect_required",
   "not_connected",
   "unavailable",
-]);
+]));
 export type ConnectorConnectionState = z.infer<typeof ConnectorConnectionStateSchema>;
 
 const STATE_PRECEDENCE = ["connected", "reconnect_required", "not_connected", "unavailable"] as const;
@@ -323,7 +324,7 @@ export function bestConnectorConnectionState(states: readonly ConnectorConnectio
  * when a card can connect it, `settings` otherwise. `accounts` is every saved
  * connection behind those rows; a person may hold two Google accounts.
  */
-export const ConnectorProductStateSchema = z.strictObject({
+export const ConnectorProductStateSchema = deferredZodSchema(() => z.strictObject({
   connectorId: z.enum(ConnectorProductIds),
   name: z.string(),
   description: z.string(),
@@ -339,7 +340,7 @@ export const ConnectorProductStateSchema = z.strictObject({
     state: z.enum(["connected", "reconnect_required"]),
     account: z.string().nullable(),
   })),
-});
+}));
 export type ConnectorProductState = z.infer<typeof ConnectorProductStateSchema>;
 
 /** A saved connection as the fold reads it; the caller has already narrowed it to what the caller may see. */
@@ -419,13 +420,13 @@ export function connectorProductStateSummary(state: ConnectorProductState): stri
   return `${state.connectorId}: ${state.connections.map(({ scope, state }) => `${scope} ${state}`).join(", ")}`;
 }
 
-export const ConnectorListResultSchema = z.strictObject({
+export const ConnectorListResultSchema = deferredZodSchema(() => z.strictObject({
   families: z.array(z.strictObject({
     family: z.enum(ConnectorFamilies),
     label: z.string(),
     connectors: z.array(ConnectorProductStateSchema).min(1),
   })),
-});
+}));
 export type ConnectorListResult = z.infer<typeof ConnectorListResultSchema>;
 
 /**

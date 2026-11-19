@@ -2435,7 +2435,7 @@ describe('Organization settings', () => {
     // One menu per eligible row, each with an accessible name only that row
     // can answer to. `Sam` appears twice on purpose: a name alone would leave a
     // screen-reader user unable to tell the two rows apart. The owner's menu is
-    // disabled: theirs is the one role the server refuses to reassign or remove.
+    // disabled: only an owner may act on an owner.
     const names = screen.getAllByRole('button', { name: /member actions$/ }).map((control) => control.getAttribute('aria-label'));
     expect(screen.getByRole('button', { name: 'Adam (adam@example.com) member actions' })).toBeDisabled();
     expect(names).toEqual([
@@ -2446,6 +2446,8 @@ describe('Organization settings', () => {
     ]);
 
     await openMemberActions('Sam (sam@example.com) member actions');
+    // Ownership is the owners' to grant, so an administrator is not offered it.
+    expect(screen.queryByRole('menuitem', { name: 'Make owner' })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make administrator' }));
     await waitFor(
       () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(member.id, 'admin'),
@@ -2465,6 +2467,54 @@ describe('Organization settings', () => {
     // owner's alone, and an administrator now has that option too.
     expect(within(screen.getByRole('combobox', { name: 'Role' })).getByRole('option', { name: 'Administrator' }))
       .toBeInTheDocument();
+  });
+
+  it('lets an owner make another owner, and take ownership back down to administrator', async () => {
+    const secondOwner = { ...secondAdmin, role: 'owner' };
+    api.setWorkspaceMemberRole.mockResolvedValue(undefined);
+    api.getWorkspaceMembers.mockResolvedValue([owner, secondOwner, member]);
+    renderSettings(workspace);
+    openSettingsSection('Members');
+    expect(await screen.findByText('Sam')).toBeVisible();
+
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make owner' }));
+    // Nothing is granted until the owner confirms; cancelling grants nothing.
+    const confirm = await screen.findByRole('dialog', { name: 'Make Sam an owner?' });
+    expect(api.setWorkspaceMemberRole).not.toHaveBeenCalled();
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(api.setWorkspaceMemberRole).not.toHaveBeenCalled();
+
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make owner' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Make Sam an owner?' }))
+      .getByRole('button', { name: 'Make owner' }));
+    await waitFor(
+      () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(member.id, 'owner'),
+      { timeout: 10_000 },
+    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await openMemberActions('Riley (riley@example.com) member actions');
+    expect(screen.getByRole('menuitem', { name: 'Suspend' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove owner' }));
+    await waitFor(
+      () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(secondOwner.id, 'admin'),
+      { timeout: 10_000 },
+    );
+
+    // Stepping down yourself is asked first: only another owner can undo it.
+    api.setWorkspaceMemberRole.mockClear();
+    await openMemberActions('Adam (adam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove owner' }));
+    const stepDown = await screen.findByRole('dialog', { name: 'Stop being an owner?' });
+    expect(api.setWorkspaceMemberRole).not.toHaveBeenCalled();
+    fireEvent.click(within(stepDown).getByRole('button', { name: 'Remove owner' }));
+    await waitFor(
+      () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(owner.id, 'admin'),
+      { timeout: 10_000 },
+    );
   });
 
   it('offers an ordinary member no member-role controls at all', async () => {

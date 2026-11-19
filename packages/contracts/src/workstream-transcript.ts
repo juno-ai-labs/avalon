@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { HttpUrlSchema } from "./url-schemas";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
-const UtcTimestampSchema = z.string().datetime({ offset: true });
+const UtcTimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
 
 /**
  * Stable identity for one canonical transcript turn.
@@ -12,7 +13,7 @@ const UtcTimestampSchema = z.string().datetime({ offset: true });
  */
 export const TranscriptTurnIdSchema = z.string().min(1);
 
-export const TranscriptIntervalSchema = z.object({
+export const TranscriptIntervalSchema = deferredZodSchema(() => z.object({
   intervalId: z.string().min(1),
   startedAtUtc: UtcTimestampSchema,
   stoppedAtUtc: UtcTimestampSchema.nullable(),
@@ -21,7 +22,7 @@ export const TranscriptIntervalSchema = z.object({
   boundarySource: z.enum(["rally", "provider", "normalized", "recovered"]),
   timingAccuracy: z.enum(["observed", "upper_bound"]),
   revision: z.number().int().positive(),
-});
+}));
 
 /**
  * One plugin's work inside one assistant turn, resolved by the server.
@@ -78,22 +79,22 @@ export const TranscriptActivitySchema = z.object({
   revision: z.number().int().positive(),
 });
 
-export const TranscriptMentionSchema = z.object({
+export const TranscriptMentionSchema = deferredZodSchema(() => z.object({
   type: z.enum(["person", "connector"]),
   userId: z.string().nullable(),
   connectorType: z.string().nullable(),
   startOffset: z.number().int().nonnegative(),
   endOffset: z.number().int().positive(),
-});
+}));
 
-export const TranscriptAttachmentSchema = z.object({
+export const TranscriptAttachmentSchema = deferredZodSchema(() => z.object({
   id: z.string().uuid(),
   fileName: z.string().min(1).max(300),
   mimeType: z.string().min(1).max(160),
   sizeBytes: z.number().int().nonnegative(),
   contentAvailable: z.boolean(),
   createdAt: UtcTimestampSchema,
-});
+}));
 
 export const TranscriptTextBlockSchema = z.object({
   type: z.literal("text"),
@@ -122,7 +123,7 @@ export const TranscriptTextBlockSchema = z.object({
   }).optional(),
 });
 
-export const TranscriptToolBlockSchema = z.object({
+export const TranscriptToolBlockSchema = deferredZodSchema(() => z.object({
   type: z.literal("tool"),
   blockId: z.string().min(1),
   blockIndex: z.number().int().nonnegative(),
@@ -135,9 +136,9 @@ export const TranscriptToolBlockSchema = z.object({
   participantSafeResult: z.unknown().nullable(),
   error: z.string().nullable(),
   activityId: z.string().min(1).nullable(),
-});
+}));
 
-export const TranscriptThinkingBlockSchema = z.object({
+export const TranscriptThinkingBlockSchema = deferredZodSchema(() => z.object({
   type: z.literal("thinking"),
   blockId: z.string().min(1),
   blockIndex: z.number().int().nonnegative(),
@@ -147,13 +148,13 @@ export const TranscriptThinkingBlockSchema = z.object({
   // private Bind-loop projection.
   summary: z.null(),
   activityId: z.string().min(1),
-});
+}));
 
-export const TranscriptBlockSchema = z.discriminatedUnion("type", [
+export const TranscriptBlockSchema = deferredZodSchema(() => z.discriminatedUnion("type", [
   TranscriptTextBlockSchema,
   TranscriptToolBlockSchema,
   TranscriptThinkingBlockSchema,
-]);
+]));
 
 export const TranscriptTurnSchema = z.object({
   transcriptSequence: z.number().int().positive(),
@@ -228,12 +229,12 @@ export const TranscriptTurnSchema = z.object({
   }
 });
 
-export const TranscriptRangeSchema = z.object({
+export const TranscriptRangeSchema = deferredZodSchema(() => z.object({
   startInclusive: z.number().int().positive(),
   endExclusive: z.number().int().positive(),
-}).refine((range) => range.endExclusive >= range.startInclusive, "invalid_transcript_range");
+}).refine((range) => range.endExclusive >= range.startInclusive, "invalid_transcript_range"));
 
-export const TranscriptRangeResultSchema = z.object({
+export const TranscriptRangeResultSchema = deferredZodSchema(() => z.object({
   purpose: z.enum(["unread", "latest", "unread_and_latest", "requested"]),
   requested: TranscriptRangeSchema,
   covered: TranscriptRangeSchema,
@@ -247,7 +248,7 @@ export const TranscriptRangeResultSchema = z.object({
    * exactly the nullable joins `pluginRuns` exists to stop depending on.
    */
   pluginRuns: z.array(TranscriptPluginRunSchema).default([]),
-});
+}));
 
 /** Set by the team on 2026-10-21, matching the desktop's hydration page size. */
 export const DEFAULT_TRANSCRIPT_READ_TURNS = 20;
@@ -280,7 +281,7 @@ export type ConversationTextPage = z.infer<typeof ConversationTextPageSchema>;
  * What a Sidekick run's conversation spent, for its first page: model calls
  * as the provider counted them, and each tool's calls and time.
  */
-export const SidekickRunUsageSchema = z.strictObject({
+export const SidekickRunUsageSchema = deferredZodSchema(() => z.strictObject({
   model: z.strictObject({
     calls: z.number().int().nonnegative(),
     failedAttempts: z.number().int().nonnegative(),
@@ -302,19 +303,19 @@ export const SidekickRunUsageSchema = z.strictObject({
     ms: z.number().nullable(),
     maxMs: z.number().nullable(),
   })),
-});
+}));
 
 export type SidekickRunUsage = z.infer<typeof SidekickRunUsageSchema>;
 
 /** Internal inspection does not seat a viewer or acknowledge the conversation. */
-export const SidekickRunTranscriptResultSchema = z.strictObject({
+export const SidekickRunTranscriptResultSchema = deferredZodSchema(() => z.strictObject({
   transcriptAvailability: z.enum(["available", "not_provisioned"]),
   turns: z.array(TranscriptTurnSchema),
   throughSequence: z.number().int().nonnegative(),
   nextAfterSequence: z.number().int().nonnegative().nullable(),
   /** On the first page only. */
   usage: SidekickRunUsageSchema.optional(),
-});
+}));
 
 /**
  * A participant input accepted by the substream-owned loop but not yet
@@ -322,7 +323,7 @@ export const SidekickRunTranscriptResultSchema = z.strictObject({
  * sequence or attention ordinal: assigning either would make presentation
  * state canonical before Bind has accepted the user message.
  */
-export const PendingTranscriptInputSchema = z.object({
+export const PendingTranscriptInputSchema = deferredZodSchema(() => z.object({
   inputId: z.string().min(1),
   futureTurnId: z.string().min(1),
   inputSequence: z.number().int().positive(),
@@ -376,9 +377,9 @@ export const PendingTranscriptInputSchema = z.object({
       path: [input.authorSnapshot !== null ? "authorSnapshot" : "authorUserId"],
     });
   }
-});
+}));
 
-export const WorkstreamTranscriptSnapshotSchema = z.object({
+export const WorkstreamTranscriptSnapshotSchema = deferredZodSchema(() => z.object({
   snapshotId: z.string().min(1),
   snapshotThrough: z.number().int().nonnegative(),
   eventSequence: z.number().int().nonnegative(),
@@ -401,15 +402,15 @@ export const WorkstreamTranscriptSnapshotSchema = z.object({
   activeTurns: z.array(TranscriptTurnSchema),
   /** Server-authoritative presentation overlays, never canonical turns. */
   pendingInputs: z.array(PendingTranscriptInputSchema),
-});
+}));
 
-export const WorkstreamTranscriptRangeRequestSchema = z.object({
+export const WorkstreamTranscriptRangeRequestSchema = deferredZodSchema(() => z.object({
   snapshotId: z.string().min(1),
   range: TranscriptRangeSchema,
   resumeAfterEventSequence: z.number().int().nonnegative(),
-});
+}));
 
-export const WorkstreamTranscriptEventSchema = z.discriminatedUnion("type", [
+export const WorkstreamTranscriptEventSchema = deferredZodSchema(() => z.discriminatedUnion("type", [
   z.object({
     type: z.literal("turn_upserted"),
     eventSequence: z.number().int().positive(),
@@ -426,7 +427,7 @@ export const WorkstreamTranscriptEventSchema = z.discriminatedUnion("type", [
     eventSequence: z.number().int().nonnegative(),
     reason: z.enum(["history_unavailable", "snapshot_expired", "sequence_ahead"]),
   }),
-]);
+]));
 
 export type TranscriptInterval = z.infer<typeof TranscriptIntervalSchema>;
 export type TranscriptActivity = z.infer<typeof TranscriptActivitySchema>;

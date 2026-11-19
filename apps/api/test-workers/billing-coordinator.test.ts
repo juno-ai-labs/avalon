@@ -8,6 +8,7 @@ import { initializeOrganizationBilling } from '../src/services/billing-coordinat
 import { stripeWebhookRoutes, billingRoutes } from '../src/routes/billing';
 import { asUserId, asWorkspaceId } from '@rally/contracts';
 import { errorHandler } from '../src/middleware/errors';
+import { startWaitBudget, waitBudget } from './helpers/wait-budget';
 import billingMigration from '../../../packages/db/migrations/0131_billing.sql?raw';
 import signupMigration from '../../../packages/db/migrations/0132_signup_trials.sql?raw';
 import usageMigration from '../../../packages/db/usage-migrations/0001_usage_ledger.sql?raw';
@@ -41,6 +42,7 @@ beforeEach(async () => {
   await billingAccount(testEnv(), ORG);
   await env.DB.prepare("UPDATE billing_accounts SET customer_id = 'cus_1'").run();
   await configureActor();
+  startWaitBudget();
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -163,10 +165,15 @@ it('creates a no-card signup trial through the actor and refreshes payment readi
     throw new Error(`Unexpected provider call: ${url}`);
   });
   expect(initializeOrganizationBilling(configured, ORG)).toBeUndefined();
-  await expect.poll(async () => env.DB.prepare('SELECT status, payment_method_ready FROM billing_accounts WHERE workspace_id = ?').bind(ORG).first()).toEqual({ status: 'trialing', payment_method_ready: 0 });
+  await expect.poll(async () => env.DB.prepare('SELECT status, payment_method_ready FROM billing_accounts WHERE workspace_id = ?').bind(ORG).first(), { timeout: waitBudget() }).toEqual({ status: 'trialing', payment_method_ready: 0 });
   expect(await env.DB.prepare('SELECT plan FROM workspaces WHERE id = ?').bind(ORG).first()).toEqual({ plan: 'growth' });
   expect(await env.DB.prepare('SELECT subscription_id FROM billing_signup_trials WHERE workspace_id = ?').bind(ORG).first()).toEqual({ subscription_id: 'sub_signup' });
-  await expect(Promise.resolve(stub().overages(ORG, true))).rejects.toMatchObject({ code: 'billing_overage_unavailable' });
+  // The deferred refresh writes D1 before it releases the actor, and the actor
+  // rejects rather than queues a second call: wait for the lock, not the row.
+  const overageOutcome = () => Promise.resolve(stub().overages(ORG, true)).then(() => 'accepted', (error: { code?: string }) => error.code);
+  let outcome: string | undefined;
+  await expect.poll(async () => (outcome = await overageOutcome()), { timeout: waitBudget() }).not.toBe('billing_busy');
+  expect(outcome).toBe('billing_overage_unavailable');
   ready = true;
   const app = new Hono<HonoAppEnv>(); app.onError(errorHandler); app.route('/webhook', stripeWebhookRoutes);
   const body = JSON.stringify({ type: 'customer.updated', data: { object: { id: 'cus_1' } } });
