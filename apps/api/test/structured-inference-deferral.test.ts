@@ -100,8 +100,8 @@ describe("structured inference telemetry lifecycle", () => {
       parse: (value) => value, defer: (promise) => { deferred.push(promise); },
     });
     await Promise.all(deferred);
-    expect(result.model).toBe("openai/gpt-6.1-terra");
-    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).model).toBe("openai/gpt-6.1-terra");
+    expect(result.model).toBe("openai/gpt-6.1-sol");
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).model).toBe("openai/gpt-6.1-sol");
   });
 
   it("refuses a persisted Azure-only route before contacting OpenRouter", async () => {

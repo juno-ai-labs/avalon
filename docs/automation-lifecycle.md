@@ -343,11 +343,10 @@ the Organization object), carrying the rest of the list in its cursor, so the
 wizard hands an agent the assignment and no ids.
 
 The authoring wizard, and the background agents it starts, have their own model
-route, `sidekick_wizard`, defaulting to GPT-6.1 Sol through
-`OPENROUTER_SMARTER_MODEL`. Activations and their delegation workers use
-`sidekick_run`, defaulting to GPT-5.6 Terra through `OPENROUTER_PRIMARY_MODEL`.
-Ordinary Canvas conversations use `canvas`. Explicit model
-pins still win; see [`feature-flags.md`](feature-flags.md). For work requested
+route, `sidekick_wizard`, through `OPENROUTER_SMARTER_MODEL`. Activations and
+their delegation workers use `sidekick_run`, through `OPENROUTER_PRIMARY_MODEL`.
+Ordinary Canvas conversations use `canvas`. Default models and explicit model
+pins are in the routing table in [`feature-flags.md`](feature-flags.md#agent-model-routing). For work requested
 after an external change, authoring guidance loads `polling-for-events`, inspects
 declared events and resolves the specific source before choosing a timer. When
 a suitable event can express the requested change, the wizard uses it and
