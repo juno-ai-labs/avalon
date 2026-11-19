@@ -159,7 +159,7 @@ all of them is almost always what the person wanted, not one message each.
   what inspection rules out.
 - **An interval under ten minutes because the person said "right away".** Use
   the floor and say so. What they actually want is a webhook: draft one when the
-  workspace already has a webhook connection declaring that event, and otherwise
+  Organization already has a webhook connection declaring that event, and otherwise
   say that wiring one up is a conversation with the team.
 - **Reaching for \`resource_watch\`.** Nothing starts a Sidekick from it. Use the
   source's declared events, or an interval.

@@ -3,14 +3,14 @@ export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Linux sandbox (a priva
 
 /**
  * The Terminal plugin's system message for one run: the base text, then the
- * shared-sandbox note a Sidekick needs, then the workspace's current egress mode.
+ * shared-sandbox note a Sidekick needs, then the Organization's current egress mode.
  */
 export function renderTerminalPluginSystemMessage(input: { sidekick: boolean; fullInternet: boolean }): string {
   const sidekickGuidance = input.sidekick
-    ? " This Sidekick's wizard, activations, and background agents share one sandbox. Eligible delegates can use these shared files; changing the coordinating user or withdrawing a delegation does not erase earlier files. New resource imports still require the selected user's current access. Publications belong to its home conversation when it has one, so reuse the original site's path to update it. import_resource can resolve a known Rally resource ID using the execution user's read access even when the resource is not attached or listed. Try the known site ID before requesting an attachment; mentioning an ID does not change permissions. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
+    ? " This Sidekick's wizard, activations, and background agents share one sandbox. Eligible delegates can use these shared files; changing the coordinating user or withdrawing a delegation does not erase earlier files. New resource imports still require the selected user's current access. A run's publications go into a Canvas attached to this Sidekick, so reuse the original site's path to update it. import_resource can resolve a known Rally resource ID using the execution user's read access even when the resource is not attached or listed. Try the known site ID before requesting an attachment; mentioning an ID does not change permissions. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
     : "";
   const egressGuidance = input.fullInternet
-    ? " Current workspace egress is Full internet."
-    : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
+    ? " Current Organization egress is Full internet."
+    : " Current Organization egress is Trusted only; a network failure may mean the destination is not approved, so ask an Organization owner to review Terminal network targets instead of trying to bypass it.";
   return `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${sidekickGuidance}${egressGuidance}`;
 }

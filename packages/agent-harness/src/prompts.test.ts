@@ -181,7 +181,7 @@ describe("prompt renderers", () => {
       },
       canvasTitle: {
         actual: renderCanvasTitleMessages("Can you draft a launch plan for the Oslo coffee pop-up next month?"),
-        hash: "46867a4a12471e49d34ce70b2b59ec926fe22b17056ddccc7222a8dbc6ce1b3a",
+        hash: "bdbac2dae619a4db31fcfc151948ff36ad6163054d0067c167feba50b9da7573",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -195,7 +195,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "84dd4a9207d3eb1ba2ae94fa521bccbbea69e01577071671c579910b89845da2",
+        hash: "adb4f9a19e2188b796c26bc311bdb13ffd3dd883914e8b4c019b15ddfb15c2bb",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -203,7 +203,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "77c4875fe6558c9219b1f5dca2346034996014bbc4121da0a5e703e302477e06",
+        hash: "6bd6d3553c3d5b98f70f6647983c1ab63be43c5c83012c3f344d101e5d23e628",
       },
     };
 

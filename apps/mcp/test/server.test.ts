@@ -349,7 +349,7 @@ describe("skills, resources and prompts", () => {
     const { body } = await rpc(api(() => Response.json({})).binding, request("prompts/get", { name: "catch_up", arguments: { canvas: "Q3 launch" } }));
     expect((body as unknown as { result: { messages: Array<{ role: string; content: { text: string } }> } }).result.messages).toEqual([{
       role: "user", content: { type: "text",
-        text: "Catch me up on the Rally Canvas \"Q3 launch\": find it, read its whole Chat and its artifacts' latest versions, then tell me what changed, what was decided and what is still open." } }]);
+        text: "Catch me up on the Rally Canvas \"Q3 launch\": find it, read its whole Chat and its artifact's latest version, then tell me what changed, what was decided and what is still open." } }]);
   });
 });
 
