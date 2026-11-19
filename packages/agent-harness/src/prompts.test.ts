@@ -93,7 +93,7 @@ describe("prompt renderers", () => {
             { authorType: "agent", authorName: "Rally", message: "The release is still running." },
           ],
         }),
-        hash: "ab494d08e651338963b22e999b2e6e41249db9f45165bf62c503352711043fe0",
+        hash: "7b6a3ca256366915e706fe81b388e054ce4acf9f639ae2a2e3094219690850af",
       },
       memorySweep: {
         actual: renderMemorySweepMessages({

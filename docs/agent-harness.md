@@ -1912,9 +1912,8 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 multi-player platform for self-updating artifacts: people and Rally build each
 Canvas's one artifact in its Chat, and Sidekicks keep it current." Its
 fixed-overhead ceiling went from 8,500 to 10,000 bytes. The addressing
-classifier now classifies a message "in a shared Rally conversation, where
-people and Rally work together on a Canvas or a Sidekick", not "in a
-collaborative workstream". The durable-table tools name a Canvas's scope
+classifier now classifies a message "in a shared Rally conversation", not "in
+a collaborative workstream". The durable-table tools name a Canvas's scope
 `canvas` (`MODEL_MEMORY_SCOPE_KINDS`, mapped to the stored `workstream` by
 `modelMemoryScopeKind` and `storedMemoryScopeKind`), in their schema, outputs
 and refusals. `current_time` reports `canvas timezone` instead of `workspace
@@ -1927,8 +1926,13 @@ reads first.
 
 **Considered and rejected.** Keeping "collaborative workstream" because the
 addressing eval's baseline (`evals/addressing/baseline-2026-09-16.json`) was
-measured on it: the product decision outranks the baseline, which needs a
-re-run on the new wording. Fitting the opening line under 8,500 by trimming
+measured on it. Three runs per wording on the 123 committed cases measured the
+change instead. A longer wording, "in a shared Rally conversation, where people
+and Rally work together on a Canvas or a Sidekick", cost DeepSeek V4 Flash 3.6
+points (77.0% to 73.4%) by pushing people-only messages toward `agent_action`.
+The short wording matched the old on DeepSeek (77.0%) and was within about two
+cases of it on GPT-6.1 Sol (87.3% old, 85.9% short; two runs of one wording
+differ by about four cases). Fitting the opening line under 8,500 by trimming
 other rules: the cuts available removed instructions tests pin.
 
 **Consequences.** The addressing baseline is stale until re-measured. Stored

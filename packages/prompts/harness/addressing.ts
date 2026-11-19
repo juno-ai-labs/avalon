@@ -18,7 +18,7 @@ export interface AddressingPromptInput {
 const MAX_RECENT_MESSAGES = 10;
 const MAX_RECENT_MESSAGE_CHARACTERS = 1_000;
 
-const SYSTEM_PROMPT = `Classify whether Rally should act on the newest human message in a shared Rally conversation, where people and Rally work together on a Canvas or a Sidekick.
+const SYSTEM_PROMPT = `Classify whether Rally should act on the newest human message in a shared Rally conversation.
 
 Outcomes:
 - agent_action: asks Rally to answer, investigate, create, change, retrieve, or otherwise work.
