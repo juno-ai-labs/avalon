@@ -90,6 +90,9 @@ stored rows silently breaks every existing record.
 - **Resource provider values**: `avalon_upload` (23), `avalon_note` (9),
   `avalon_generated` (5). Written by `packages/db/src/index.ts`, read by
   queries and by triggers in `packages/db/migrations/0029`, `0045`, `0089`.
+  A model does not read them: a tool result says `rally_upload`, `rally_note`
+  and `rally_generated` (`RESOURCE_PROVIDER_MODEL_NAMES`,
+  [`agent-tools.md`](agent-tools.md) rule 10). The stored value is unchanged.
 - **Web tool names**: `avalon.web_search`, `avalon.web_fetch`, constrained by a
   `CHECK` in `packages/db/migrations/0009` — the constraint has to move with
   the value.

@@ -791,16 +791,52 @@ The maps in use: `ORGANIZATION_MODEL_NAMES` (`workspace` reads `organization`
 for a connection's scope, a Sidekick's scope, a Canvas's artifact audience and
 the execution authority in the system prompt), `MEMORY_SCOPE_MODEL_NAMES`
 (`workstream` reads `canvas`) and `MEMORY_SUBJECT_MODEL_NAMES` (`thread` reads
-`canvas`), both in [`agent-memory.md`](agent-memory.md). A key that holds an id
-is named for the product too: `sidekickId`, never `automationId`.
+`canvas`), both in [`agent-memory.md`](agent-memory.md), and
+`RESOURCE_PROVIDER_MODEL_NAMES` (a resource Rally holds, stored under
+`avalon_upload`, `avalon_generated` or `avalon_note`, reads `rally_upload`,
+`rally_generated` or `rally_note`). A key that holds an id is named for the
+product too: `sidekickId`, never `automationId`; `canvasId`, never
+`workstreamId`; `eventId`, never `workspaceEventId`.
 
 Two meanings of `workspace` are not the Organization and stay: a sandbox's
 files in the Terminal tools (`/workspace`, "the workspace root"), and a
 provider's own word for an account (a Slack or Granola workspace, a Google
 Workspace document). `apps/api/test/tool-schema-descriptions.test.ts` walks
 every authored tool and fails on `workstream`, `substream`, or a `workspace`
-outside those surfaces. It reads descriptions and schemas, not results: a
-result is covered by the test of the tool that returns it.
+outside those surfaces. It reads descriptions and schemas.
+
+**Results are audited where they are produced.**
+`packages/contracts/src/model-names-audit.ts` walks what a tool returned and
+what it threw, as the model reads them (`failureAsModelReads` applies
+`modelFailure`): every key, every one-token value (an enum value, a code, an
+id) and every sentence, for `workstream`, `substream`, `workspace`,
+`automation`, `avalon`, and the retired product words `thread`, `channel`,
+`breakout`, `space` and `project`. `summary` is not walked, because it never
+reaches the model. `auditedTools` wraps a tool list so each call a suite
+already makes fails with `StorageNameLeakError` on a leak, and the suites that
+execute tools build them through it (`apps/api/test/helpers/audited-tools.ts`:
+`auditedAvalonTools`, `auditedHarnessTools`, `audited`, `auditedPlugin`,
+`auditedExecutors`). A new tool's test builds its tools the same way; that is
+the whole cost of being covered. Three things the audit lets through, each
+named in the module: the two meanings of `workspace` above; the sandbox
+variable `AVALON_RESOURCE_DIR` and the `avalon/<slug>` branch namespace, which
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) keeps; and, where a
+suite says its prose is fixture data (`dataProse`), a retired product word in a
+sentence, since a title may honestly say "project". A provider's own vocabulary
+(`channel` for Slack) is allowed per suite with `allowWords`.
+
+What the audit runs, and what it does not: it runs every Rally tool a suite
+executes against the real migrations or workerd (the resource, artifact data,
+artifact audience, connector state, wake-up, elicitation, member offer,
+memory, table, Sidekick authoring, run reader, delegation, source,
+conversation, web, Terminal and generation tools, `sidekicks_list` and
+`sidekick_attach_resource`, and every Rally MCP tool the server's tests call).
+It does not run a connector's provider tools, whose results are the
+provider's payload and need a fake of each provider's API; the Code Mode
+`execute` tool and saved custom tools, whose value is whatever the inner
+calls returned, each already translated at its own tool; the notification
+tools' success paths and the agent messaging tools other than the two above,
+which need a live team of conversation objects. Those were read, not run.
 
 ### 11. Consistency across a tool family
 
@@ -1145,7 +1181,7 @@ model-actionable drift check. See
 | `run_command` | `{ command: string, cwd?: string, timeoutMs?: integer, description?: string }` | `{ state, terminationReason, exitCode, stdout, stderr, outputResourceId?, startedAt, completedAt, stdoutTruncated, stderrTruncated, durationMs }`. Nonzero exit is a completed command result, not an executor exception. Standard `git` and `gh` commands are available after repository checkout; `read_only` credentials reject remote mutation, while `full_access` may push and manage a PR. |
 | `checkout_repository` | `{ repositoryFullName: string, requiredRemoteAccess?: "read_only" | "full_access" }` | `{ repository, repositoryId, connectionId, connectionName, baseRef, baseSha, headRef, remoteAccess, localEditsAllowed: true, remoteWritesAllowed, outcome, backup }`; `backup` is the attached recovery resource created before replacing prior workspace state, or `null` when there was nothing to preserve. |
 | `import_resource` | `{ resourceId: UUID }` or `{ resourceId: UUID, destinationPath: string, overwrite?: boolean }` | `{ resourceId, filePath, outcome, mimeType, sizeBytes, sourceSha256 }`; `outcome` is `created`, `replaced`, or deterministic `reused`. For a **site** resource `destinationPath` names the directory root to materialize into and the output adds `fileCount`; `filePath` is reused for that root rather than a second key appearing beside it, so the round trip is `filePath` in, `filePath` out and a republish targets what the import returned. `overwrite` is whole-tree replacement, never a merge — merging would leave files a prior version deleted lying in the tree for the next publish to ship back. |
-| `publish_resource` | `{ filePath: string, displayName?: string, description?: string }`; `filePath` may name a **directory** beneath `AVALON_RESOURCE_DIR` | A discriminated union on `publishKind` (`file` | `site` | `archive`), decided by the directory's root entry — see [Publishing a directory](#publishing-a-directory) below. A *file* returns `{ resourceId, title, resourceType: "generated_file", provider: "avalon_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`. Identity is `(work stream, normalized publish path)`: publishing the same path again updates that resource in place — new content, mime type, metadata, and `displayName` when one is given — and returns the same `resourceId`. Equal content returns it untouched, which is also how a replay of one call is absorbed. `createdAt` stays the first publish's timestamp across updates, so it is not a witness that this call's bytes landed. A different path, or the same path from another conversation, is a different document. |
+| `publish_resource` | `{ filePath: string, displayName?: string, description?: string }`; `filePath` may name a **directory** beneath `AVALON_RESOURCE_DIR` | A discriminated union on `publishKind` (`file` | `site` | `archive`), decided by the directory's root entry — see [Publishing a directory](#publishing-a-directory) below. A *file* returns `{ resourceId, title, resourceType: "generated_file", provider: "rally_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`. Identity is `(work stream, normalized publish path)`: publishing the same path again updates that resource in place — new content, mime type, metadata, and `displayName` when one is given — and returns the same `resourceId`. Equal content returns it untouched, which is also how a replay of one call is absorbed. `createdAt` stays the first publish's timestamp across updates, so it is not a witness that this call's bytes landed. A different path, or the same path from another conversation, is a different document. |
 | `publish_branch_and_pr` | `{ title: string, body: string }` | `{ repository, baseRef, headRef, commitSha, publishedSha, outcome, pullRequest: { number, url, title, state: "open" } }`; `outcome` is `created`, convergent `updated`, or recovered `unchanged`. |
 
 ### Publishing a directory
@@ -1431,6 +1467,21 @@ start `page_`. A failure's code reaches the model in product words
 (`modelFailure`). A run row names its Sidekick `sidekickId`. A standing test
 walks every authored tool for the words.
 
+Then results, tool by tool. `list_resources` names its owner `canvasId` or
+`sidekickId`, not `workstreamId`, and a resource Rally holds reads
+`rally_upload`, `rally_generated` or `rally_note` there and in
+`publish_resource`, `generate_image`, `edit_image` and `generate_audio`.
+`runs_read` names the event that started a run `eventId` and shows a recorded
+`workstream_read_resource` as `read_resource`, in the transcript and the usage
+summary. `request_source` and `sources_list` answer `connect.scope:
+"organization"`. The Rally MCP server's `invite_canvas_guests` answers which
+Canvas an invitation `opens` in place of the stored target. The wake-up limit
+says "This conversation", a fact filed under a retired subject no longer says
+"shared space", a connector refuses with "The Organization's connection", and
+Granola's and Ashby's plugin prose names the Organization. A result audit
+(`model-names-audit.ts`, rule 10) now runs inside the suites that execute
+tools.
+
 **Why:** the product names Canvases, Sidekicks and Organizations, and every
 storage name a model could see was a leftover of an earlier pivot. A model
 told about a Canvas and then handed `workstream`, or told about an
@@ -1449,14 +1500,23 @@ naming the table `workspace_metrics`, a path under `/workspace`.
 
 **Consequences:** a new tool that takes or returns a stored enum uses
 `modelEnum` and `modelName`, and a new stored word a model must not see goes
-in the map and in the standing test. A stored name is accepted on the way in
+in the map and in the standing test, and a new tool's suite builds its tools
+through `auditedTools` so its results are walked. A stored name is accepted on the way in
 and never offered, so saved Sidekick instructions keep working; removing that
 alias later breaks them. `rally_workstream` is still answered inside a
 program (`HarnessPlugin.modelIdAliases`), and a page id issued as
 `workstream_…` is still redeemed. A connection card's summary keeps the stored
 scope, because a client recovers the card from it. The surface hash of every
 tool whose description or schema changed is new, so a receipt recorded before
-the deploy is not replayed after it, as with any description change.
+the deploy is not replayed after it, as with any description change. A result
+recorded before the deploy keeps the stored word it was written with: a
+replayed receipt or an old turn of a conversation can still show
+`workstreamId` or `avalon_upload`, and nothing reads those keys back. The
+desktop card for a source request accepts `organization` and `workspace` for
+the same reason. Left as they are, each a decision
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) already records:
+`AVALON_RESOURCE_DIR` and the `avalon/<slug>` branch namespace, which a model
+has to type or read exactly.
 Capability strings (`workstream.resources.read`, `granola.workspace.read`) are
 not sent to a provider and were left; the wizard's `plugins_list` does return
 them. `sidekick_runs_read` returns an earlier run's stored results and errors
