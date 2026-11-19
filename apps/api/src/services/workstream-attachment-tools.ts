@@ -130,7 +130,7 @@ export function createWorkstreamAttachmentTools(
         name: "list_resources",
         pagination: { cursorParameter: "cursor" },
         description: options.modelToolPrefix === "sidekick"
-          ? ATTACHMENT_LIST_RESOURCES_DESCRIPTION.replace("this work stream", "this Sidekick draft's frozen attachment set")
+          ? ATTACHMENT_LIST_RESOURCES_DESCRIPTION.replace("this conversation", "this Sidekick draft's frozen attachment set")
           : ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
         capability: `${capabilityPrefix}.list`,
         mode: "read",

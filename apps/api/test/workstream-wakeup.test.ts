@@ -923,7 +923,7 @@ describe("firing a due wake-up", () => {
     expect(objectGet(breakout.store, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", breakout.row.id))
       .toEqual({ status: "fired" });
     expect(wakeupNotes(breakout.store)).toEqual([
-      "Rally woke this thread up as scheduled: Check the private deploy",
+      "Rally woke this conversation up as scheduled: Check the private deploy",
     ]);
     expect(objectGet(breakout.store, "SELECT origin FROM runs WHERE run_id = ?", outcome.harnessRunId!))
       .toEqual({ origin: "scheduled_wakeup" });
@@ -1029,7 +1029,7 @@ describe("firing a due wake-up", () => {
         automationContinuation: { stopGeneration: 4, senderName: "Rally", source: { kind: "run" } },
       });
       expect(wakeupNotes(run.store)).toEqual([
-        "Rally woke this thread up as scheduled: Start the monitoring window",
+        "Rally woke this conversation up as scheduled: Start the monitoring window",
       ]);
       expect(wakeupNotes(objectStore)).toEqual([]);
     });
@@ -1210,7 +1210,7 @@ describe("firing a due wake-up", () => {
     // The cut lands between words, never inside one.
     expect(message.text_content.replace(/…$/u, "")).toMatch(/\w$/u);
     expect(prompt).toContain(
-      message.text_content.replace("Rally woke this thread up as scheduled: ", "").replace(/…$/u, ""),
+      message.text_content.replace("Rally woke this conversation up as scheduled: ", "").replace(/…$/u, ""),
     );
   });
 

@@ -249,7 +249,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   checkout_repository: {
     name: "checkout_repository",
-    description: "Choose and materialize one exact GitHub repository for this thread. The model chooses within connector policy; Rally backs up recoverable workspace state before replacement. read_only remote access still permits local edits and commits but never push or remote mutation.",
+    description: "Choose and materialize one exact GitHub repository for this conversation. The model chooses within connector policy; Rally backs up recoverable workspace state before replacement. read_only remote access still permits local edits and commits but never push or remote mutation.",
     capability: "terminal.repository.checkout",
     mode: "write",
     idempotency: "record_before_execute",
@@ -283,7 +283,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   publish_resource: {
     name: "publish_resource",
-    description: "Publish one stable non-empty regular file, or a whole directory, beneath AVALON_RESOURCE_DIR as a generated work-stream resource. filePath is relative to that output directory (/workspace/.rally-output), not the workspace root that read_file and write_file use, so write or copy the finished file beneath AVALON_RESOURCE_DIR before publishing it. A directory with index.js at its root publishes as a reactive site Rally hosts and serves; one with index.html at its root publishes as a reactive static site; any other directory publishes as one downloadable archive. The result's publishKind says which of file, site, or archive it became. Publishing the same filePath again updates that resource in place — new content, and a new title when displayName differs from the one you last gave, so a person's rename survives a republish that repeats it — instead of creating a second one, so republish the same path to revise it. A Canvas holds one artifact, so build everything a Canvas shows into that one; see replaceCanvasArtifact.",
+    description: "Publish one stable non-empty regular file, or a whole directory, beneath AVALON_RESOURCE_DIR as a generated resource of this conversation. filePath is relative to that output directory (/workspace/.rally-output), not the workspace root that read_file and write_file use, so write or copy the finished file beneath AVALON_RESOURCE_DIR before publishing it. A directory with index.js at its root publishes as a reactive site Rally hosts and serves; one with index.html at its root publishes as a reactive static site; any other directory publishes as one downloadable archive. The result's publishKind says which of file, site, or archive it became. Publishing the same filePath again updates that resource in place — new content, and a new title when displayName differs from the one you last gave, so a person's rename survives a republish that repeats it — instead of creating a second one, so republish the same path to revise it. A Canvas holds one artifact, so build everything a Canvas shows into that one; see replaceCanvasArtifact.",
     capability: "terminal.resource.publish",
     mode: "write",
     idempotency: "provider_key",
@@ -298,7 +298,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   publish_branch_and_pr: {
     name: "publish_branch_and_pr",
-    description: "Optionally publish the committed work-stream branch and create or update its pull request through Rally's typed publisher. Standard git push and gh pr commands are also available for full-access repositories.",
+    description: "Optionally publish the committed branch Rally prepared for this conversation and create or update its pull request through Rally's typed publisher. Standard git push and gh pr commands are also available for full-access repositories.",
     capability: "terminal.repository.publish",
     mode: "write",
     idempotency: "record_before_execute",

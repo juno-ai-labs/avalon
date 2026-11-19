@@ -1212,7 +1212,7 @@ async function loadTriggerFencedTranscriptMessages(
     const row = await transcript.message({ messageId });
     const sequence = row?.sequence_number;
     if (!Number.isSafeInteger(sequence) || (sequence ?? -1) < 0) {
-      throw Object.assign(new Error("The run trigger message is not available in this work stream"), { code });
+      throw Object.assign(new Error("The run trigger message is not available in this conversation"), { code });
     }
     return sequence!;
   };

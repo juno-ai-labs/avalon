@@ -63,7 +63,7 @@ export const AttachmentKindSchema = z.enum(ATTACHMENT_KINDS);
 export type AttachmentKind = z.infer<typeof AttachmentKindSchema>;
 
 export const ATTACHMENT_LIST_RESOURCES_DESCRIPTION = [
-  "List resources visible in this thread. Filter with attachmentKind using exactly one of these values:",
+  "List resources visible in this conversation. Filter with attachmentKind using exactly one of these values:",
   ...ATTACHMENT_KIND_ENTRIES.map((entry) => `- ${entry.kind} — ${entry.description}`),
   "Omit attachmentKind to list every kind. Do not use or guess MIME types.",
   "Use list_resources_next with pageId copied from nextPageId to continue. Stop when nextPageId is null.",
@@ -421,7 +421,7 @@ export const AttachmentReadResourceArgumentsSchema = z.strictObject({
 });
 export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
   resourceId: CanonicalUuidSchema
-    .describe("The one resource to search inside, as a Rally `resourceId` from list_resources or another known reference. This searches that resource alone, never the whole thread, so searching several means one call each."),
+    .describe("The one resource to search inside, as a Rally `resourceId` from list_resources or another known reference. This searches that resource alone, never the whole conversation, so searching several means one call each."),
   query: z.string().min(1).max(1_000)
     .describe("What to look for inside the resource, in plain words, for example `renewal date`. Wording that does not appear in the text returns no passages, which is an answer about this resource rather than an error; try the words the document itself would use before concluding it says nothing."),
   limit: z.number().int().min(1).max(5)

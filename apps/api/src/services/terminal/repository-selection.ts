@@ -110,7 +110,7 @@ export function createTerminalRepositorySelector(
       if (context.executionPrincipal.type !== "user") {
         throw new TerminalToolError(
           "repository_user_authority_required",
-          "Repository checkout requires an active participant's user authority. Run this work stream from an active participant account.",
+          "Repository checkout requires an active participant's user authority. Run this conversation from an active participant account.",
           { reason: "An organization Sidekick cannot choose a repository until it has explicit repository authority." },
         );
       }
@@ -129,7 +129,7 @@ export function createTerminalRepositorySelector(
       if (!participant || !member) {
         throw new TerminalToolError(
           "repository_user_authority_required",
-          "The requesting user is no longer an active participant in this work stream. Repository checkout was not changed.",
+          "The requesting user is no longer an active participant in this conversation. Repository checkout was not changed.",
           { reason: "Ask an active participant to run the repository task." },
         );
       }

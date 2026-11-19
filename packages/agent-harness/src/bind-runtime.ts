@@ -2779,8 +2779,8 @@ async function createPluginRuntime(
         if (authorization === "denied") {
           throw classifiedToolFailure(
             "plugin_not_authorized",
-            "That plugin is no longer authorized. Do not use its tools unless a workspace owner restores the connection.",
-            { reason: "Ask a workspace owner to restore this plugin connection before retrying." },
+            "That plugin is no longer authorized. Do not use its tools unless an Organization owner restores the connection.",
+            { reason: "Ask an Organization owner to restore this plugin connection before retrying." },
           );
         }
         if (authorization === "indeterminate") {

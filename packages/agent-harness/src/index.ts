@@ -2807,7 +2807,7 @@ const automationDraftSubmissionJsonSchema = {
     suggestedScope: {
       type: "string",
       enum: ["personal", "workspace"],
-      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope cannot change. personal uses the run-as person's connections; workspace uses shared Organization connections."
+      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope cannot change. Scope decides who owns and manages the Sidekick, not whose connections its runs use: personal belongs to the requester, workspace to the Organization."
     },
     ready: {
       type: "boolean",
@@ -3747,7 +3747,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "people_search",
-    description: "Search authorized workspace people and return canonical person IDs for evaluator rules. Every result also carries `you`: the person this run acts for, so \"me\", \"my\", and \"I\" resolve without guessing at a name.",
+    description: "Search this Organization's people and return canonical person IDs for evaluator rules. Every result also carries `you`: the person this run acts for, so \"me\", \"my\", and \"I\" resolve without guessing at a name.",
     capability: "rally.sidekick.people.search",
     mode: "read",
     idempotency: "safe",
@@ -3758,7 +3758,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
         query: {
           type: "string",
           minLength: 1,
-          description: "A person's name, partial name, or email address, for example `Dana` or `dana@example.com`. It searches this workspace's own people, so somebody who is not a member here is absent rather than reported as missing.",
+          description: "A person's name, partial name, or email address, for example `Dana` or `dana@example.com`. It searches this Organization's own people, so somebody who is not a member here is absent rather than reported as missing.",
         },
       },
       required: ["query"],

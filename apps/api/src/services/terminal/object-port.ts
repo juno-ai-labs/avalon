@@ -159,7 +159,7 @@ export function createTerminalObjectPort(
           : body?.error === "workstream_terminal_identity_mismatch"
             ? {
                 code: "workstream_terminal_identity_mismatch",
-                message: "Rally's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
+                message: "Rally's Terminal authority rejected an internal request because it was routed to the wrong conversation. Retrying the same operation will not repair the route.",
                 outcome: "rejected",
                 retryable: false,
               }

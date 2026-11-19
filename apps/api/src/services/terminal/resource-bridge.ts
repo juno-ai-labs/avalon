@@ -663,7 +663,7 @@ export function createTerminalResourceBridge(
             "destination_required",
             suggestion
               ? `Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Use ${suggestion}, then publish that same path to update this site; a different path would mint a second site at a second URL.`
-              : "Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Rally cannot recover the path this site publishes from, so choose the one this work stream last published it from — publishing a different path would mint a second site at a second URL.",
+              : "Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Rally cannot recover the path this site publishes from, so choose the one this conversation last published it from — publishing a different path would mint a second site at a second URL.",
             {
               field: "destinationPath",
               reason: suggestion
@@ -709,8 +709,8 @@ export function createTerminalResourceBridge(
       if (row.content_sha256 && digest !== row.content_sha256) {
         throw new TerminalToolError(
           "resource_hash_mismatch",
-          "The stored resource bytes changed while importing. Re-list the work-stream resources and retry from the current version.",
-          { reason: "Re-list work-stream resources and retry the import from its current version." },
+          "The stored resource bytes changed while importing. Re-list this conversation's resources and retry from the current version.",
+          { reason: "Re-list this conversation's resources and retry the import from its current version." },
         );
       }
       const automatic = !("destinationPath" in input);
