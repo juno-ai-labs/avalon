@@ -8,9 +8,13 @@ import type { ToolReceiptFence } from "../durable-objects/workstream-tool-receip
 
 function pageInput(prefixes: readonly [string, ...string[]], wirePrefix: string, operation: string, previous = false) {
   const prefix = prefixes[0];
-  const escapedPrefix = prefixes.map((entry) => entry.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join("|");
+  const escaped = prefixes.map((entry) => entry.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
+  // One namespace keeps the pattern it always had: the pattern is part of the
+  // tool's advertised schema, and so of the surface hash a stored receipt is
+  // matched against. Only a plugin with a retired namespace gets alternation.
+  const escapedPrefix = escaped.length === 1 ? escaped[0]! : `(?:${escaped.join("|")})`;
   const schema = z.strictObject({ pageId: z.string()
-    .regex(new RegExp(`^(?:${escapedPrefix})_[a-z]+_[a-z]+_[a-z]+_[a-z]+$`, "u"))
+    .regex(new RegExp(`^${escapedPrefix}_[a-z]+_[a-z]+_[a-z]+_[a-z]+$`, "u"))
     .describe("Copy the page ID returned by this plugin. Send it alone; filters and page size are retained automatically.") });
   const field = previous ? "previousPageId" : operation === "read_resource" ? "nextPageId or readPageId" : "nextPageId";
   const message = `Send only {"pageId":"<copied ID>"}. pageId must start with "${prefix}_", followed by exactly four lowercase words separated by underscores. Copy ${field} exactly from a tool result; do not invent or repair an ID. If that field is null, stop: there is no page. If you have no ID, call ${stableWireToolName(wirePrefix, operation)} to start a new read.`;
