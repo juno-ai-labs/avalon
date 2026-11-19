@@ -2394,7 +2394,7 @@ async function loadAutomationCreatorPluginCatalog(
     // it: call its tools, or be started by its events. A connector with no
     // tools that exists only to be a trigger (Ashby's Organization events)
     // would be impossible to draft from with a filter on tools alone.
-    const eventCapable = adapter.manifest.activityTriggers.length > 0 || Boolean(adapter.webhookActivity);
+    const eventCapable = adapter.manifest.activityTriggers.length > 0;
     if (!dynamicCapability && !staticDefinitions.length && !eventCapable) continue;
     // The scope this connector's events need, named only when this connection
     // is on the wrong side of it: the drafting tools turn it into the sentence
@@ -6214,7 +6214,7 @@ async function loadHarnessTools(
     // A connection with no callable tool still belongs to a run that drafts
     // an automation: loading it is how the drafting tools learn it was
     // chosen as a trigger source. It contributes no tools to the run.
-    const eventCapable = adapter.manifest.activityTriggers.length > 0 || Boolean(adapter.webhookActivity);
+    const eventCapable = adapter.manifest.activityTriggers.length > 0;
     if (
       !dynamicCapability
       && !staticDefinitions.some((definition) => grantedScopes.includes(definition.capability))
