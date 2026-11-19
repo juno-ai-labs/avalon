@@ -73,7 +73,7 @@ gone. Two things make a name qualify, and either is enough:
 - **The plugin is always active**, so a prefix on it distinguishes nothing — the
   model cannot load it, cannot unload it, and has no second source of the same
   capability to tell it apart from. `rally_discovery`, `rally_skills`,
-  `rally_core`, `rally_workstream`, and `rally_agents` are these.
+  `rally_core`, `rally_resources`, and `rally_agents` are these.
 - **The canonical name is already the one the model knows.** `rally_terminal`
   and `rally_multimodal_generation` are loadable, but `read_file`, `edit_file`,
   `write_file`, `apply_patch`, `run_command`, `generate_image` and
@@ -109,7 +109,7 @@ to reach for if `send_message` turns out to mislead a model in practice.
 iterates Bind's own `corePlugins` — discovery, skills, and whatever the host
 passes as `corePlugins`, which on the API side is `createWorkstreamCorePlugins`:
 `rally_core`, `rally_tables`, `rally_memory`, and nothing else. Every other
-plugin, including always-active ones like `rally_workstream` and `rally_agents`,
+plugin, including always-active ones like `rally_resources` and `rally_agents`,
 is assembled into `plugins` and sits outside the
 guard. For those, two identical wire names resolve to whichever plugin sorts
 first by canonical id, silently.
@@ -757,6 +757,51 @@ do not expose internal structure the model should not reason about. A tool that
 takes the id a person would recognize and resolves the internal layers itself is
 both safer and shorter than one that makes the model navigate them.
 
+**Storage names are internal jargon too.** The product is Canvases and
+Sidekicks in an Organization. Storage keeps the names of earlier pivots: an
+Organization is a `workspace`, a Canvas's id is a `workstream` id, a
+conversation is a `substream`, a Sidekick is an `automation`, a Canvas's
+remembered facts are filed under `thread`. A model shown one of those words
+cannot connect it to what a person calls the thing, so none of them crosses to
+a model, in a tool's name, description, schema, result or failure. Storage,
+columns, RPC fields, Durable Object names, logs and receipts keep the stored
+name; a tool translates where a value crosses.
+`packages/contracts/src/model-names.ts` is the one implementation:
+
+- `modelEnum(stored, names)` is a stored enum as a tool parameter. Its JSON
+  Schema offers the model names alone, it parses to the stored value, and it
+  still accepts the stored name, because instructions a Sidekick saved before
+  a rename may spell it. `modelName` and `modelValues` are the same map on the
+  way out.
+- `withModelNames(result, names, keys)` translates the named fields of a
+  result at any depth. It is for a result built by code the product's screens
+  share (a connector's state, a Sidekick's definition). Only the listed keys
+  are touched, so a provider's or a person's data that says `workspace` is
+  never rewritten.
+- `modelFailure` translates a failure's code and a message that is, or opens
+  with, a code (`workstream_archived` reads `canvas_archived`). It is called
+  at the three places a failure crosses to a model: a live tool result
+  (`bind-runtime.ts`), a result rebuilt from its receipt for a later run
+  (`projectModelProtocolTranscript`), and a call inside a program (the Code
+  Mode gateway). A sentence is left as written, because it may echo a table or
+  a path the model sent and has to echo it exactly. The `tool_failed` event,
+  the receipt and the logs keep the stored code.
+
+The maps in use: `ORGANIZATION_MODEL_NAMES` (`workspace` reads `organization`
+for a connection's scope, a Sidekick's scope, a Canvas's artifact audience and
+the execution authority in the system prompt), `MEMORY_SCOPE_MODEL_NAMES`
+(`workstream` reads `canvas`) and `MEMORY_SUBJECT_MODEL_NAMES` (`thread` reads
+`canvas`), both in [`agent-memory.md`](agent-memory.md). A key that holds an id
+is named for the product too: `sidekickId`, never `automationId`.
+
+Two meanings of `workspace` are not the Organization and stay: a sandbox's
+files in the Terminal tools (`/workspace`, "the workspace root"), and a
+provider's own word for an account (a Slack or Granola workspace, a Google
+Workspace document). `apps/api/test/tool-schema-descriptions.test.ts` walks
+every authored tool and fails on `workstream`, `substream`, or a `workspace`
+outside those surfaces. It reads descriptions and schemas, not results: a
+result is covered by the test of the tool that returns it.
+
 ### 11. Consistency across a tool family
 
 A model that learns one tool in a family generalizes to the rest, so make the
@@ -1370,6 +1415,52 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-19 — No storage name crosses to a model
+
+**What changed:** rule 10 now covers storage names, and one module,
+`packages/contracts/src/model-names.ts`, translates them at the tool boundary.
+A connection's scope, a Sidekick's scope, a Canvas's artifact audience and a
+durable table's scope read `organization` where storage says `workspace`
+(`show_connector_connection`, the connector state and list, the resource
+access check, `create_sidekick`, `submit_draft`, the Sidekick lists, the
+wizard's plugin catalog, `set_artifact_audience`, the Rally MCP server's
+Canvas tools). The always-active resources plugin's model id is
+`rally_resources`, not `rally_workstream`, and the page ids its tools mint
+start `page_`. A failure's code reaches the model in product words
+(`modelFailure`). A run row names its Sidekick `sidekickId`. A standing test
+walks every authored tool for the words.
+
+**Why:** the product names Canvases, Sidekicks and Organizations, and every
+storage name a model could see was a leftover of an earlier pivot. A model
+told about a Canvas and then handed `workstream`, or told about an
+Organization and offered `workspace`, has to guess they are the same thing,
+and models guessed wrong: the system prompt carried a glossary line for it.
+The durable-table scope `canvas` (earlier the same day) and the 2026-11
+`automation` to `sidekick` agent id were each done by hand; a third and
+fourth hand-written map is how the next one gets missed.
+
+**Alternatives rejected:** renaming storage, which is the months of migration
+[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) declines. One
+rewrite of every tool result at the harness, which would also rewrite a
+provider's own `workspace` (Slack, Google Workspace) and a person's data.
+Rewriting a failure's whole message, which mangles what it echoes: a SQL error
+naming the table `workspace_metrics`, a path under `/workspace`.
+
+**Consequences:** a new tool that takes or returns a stored enum uses
+`modelEnum` and `modelName`, and a new stored word a model must not see goes
+in the map and in the standing test. A stored name is accepted on the way in
+and never offered, so saved Sidekick instructions keep working; removing that
+alias later breaks them. `rally_workstream` is still answered inside a
+program (`HarnessPlugin.modelIdAliases`), and a page id issued as
+`workstream_…` is still redeemed. A connection card's summary keeps the stored
+scope, because a client recovers the card from it. The surface hash of every
+tool whose description or schema changed is new, so a receipt recorded before
+the deploy is not replayed after it, as with any description change.
+Capability strings (`workstream.resources.read`, `granola.workspace.read`) are
+not sent to a provider and were left; the wizard's `plugins_list` does return
+them. `sidekick_runs_read` returns an earlier run's stored results and errors
+as they were recorded.
 
 ### 2026-11-17 — An agent can list connectors by family, and see each account
 

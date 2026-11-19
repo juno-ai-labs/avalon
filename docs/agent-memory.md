@@ -10,7 +10,8 @@ tools let a run recall, remember and forget, and every activation starts with
 a digest of the facts relevant to it ([The digest](#the-digest)). The stored
 subject kinds still carry their Thread-era names: a Canvas's facts are filed
 as `thread` with the Canvas id, and `channel` and `breakout` subjects are read
-by no conversation now.
+by no conversation now. A model never reads those names
+([What a model is shown](#what-a-model-is-shown)).
 
 The promise this module makes: **a fact reaches a reader only while they may
 open every conversation it came from today, and only when its subject admits
@@ -646,7 +647,49 @@ when nothing it cites is in the window, and never defaults to `person`. The mode
 `subjectKind` is a request the host checks against the placement, never an
 authority. `retracted_by` records who forgot a fact.
 
+## What a model is shown
+
+Storage keeps the names it had before Canvases, and a model reads the
+product's. The translation is at the tool and prompt boundary, on the shared
+primitive in `packages/contracts/src/model-names.ts`
+([`agent-tools.md`](agent-tools.md#10-do-not-leak-internal-jargon-into-anything-the-model-sees)
+owns the rule):
+
+| Stored | A model reads and writes | Where |
+| --- | --- | --- |
+| subject kind `thread` | `canvas` | `recall`'s `subject.kind`, the sweep's placement, candidates and `subjectKind` (`MEMORY_SUBJECT_MODEL_NAMES`, `sweepSubjectKind`, `narrowOperation`) |
+| subject kinds `channel`, `breakout` | `earlier_space`, read only | `recall` and the sweep's candidates. The sweep is offered `organization`, `canvas`, `person` and `sidekick` (`MEMORY_SWEEP_SUBJECT_KINDS`), because nothing produces a retired room |
+| table scope kind `workstream` | `canvas` | `rally_tables` schema, results and refusals (`MEMORY_SCOPE_MODEL_NAMES`) |
+| table scope kind `workspace` | `organization` | the same |
+
+The sweep's placement no longer carries a retired room's parent Thread or its
+Channels: a Canvas and a Sidekick have neither. A stored table scope name is
+still accepted from a model, for a Sidekick whose saved instructions spell it,
+and is never offered. The `memory_facts` CHECK constraint, `memory_scopes.kind`
+and every RPC shape keep the stored names.
+
 ## Changelog
+
+### 2026-11-19 — A model reads canvas and organization, never thread or workspace
+
+**What changed.** The table in [What a model is shown](#what-a-model-is-shown):
+`recall` and the sweep name a Canvas's subject `canvas`, the sweep is no
+longer offered `channel` or `breakout` and its placement drops the retired
+room fields, and a durable table's Organization scope is `organization`.
+
+**Why.** The product names Canvases and Organizations. `thread`, `channel`,
+`breakout` and `workspace` were leftovers of earlier pivots that a model had
+to be told how to read, and the sweep was offered two subject kinds that no
+conversation can produce, each a way to file a fact where nobody reads it.
+
+**Rejected.** Rebuilding `memory_facts` to store `canvas`: the CHECK
+constraint means a table rebuild, and the stored name costs nothing once the
+boundary translates it. Accepting `thread` from the sweep as well: its answer
+is held to a strict schema written in this change, not to saved instructions.
+
+**To respect.** A new subject or scope kind gets a row in its map and in the
+table above. The sweep maps `canvas` back to `thread` in `narrowOperation`; a
+second writer of sweep operations must do the same.
 
 ### 2026-11-09 — Withdraw archived Canvas memory sources
 

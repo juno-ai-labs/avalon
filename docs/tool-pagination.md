@@ -31,7 +31,12 @@ replacement of matching strings in arbitrary provider content.
 The wrapper strips the cursor argument from the first-call schema and adds an
 `_next` tool accepting only `pageId`. It replaces the declared slots with
 server-issued aliases such as `google_2_quiet_amber_rapid_otter`. The prefix is
-the connection's stable plugin wire name, or `workstream` / `table` for built-ins.
+the connection's stable plugin wire name, or `page` / `table` for built-ins.
+The built-in namespace was `workstream` until 2026-11-19, a storage name the
+model is no longer shown; `PaginationHost.retiredPrefixes` keeps a page issued
+under it redeemable, and a host with no retired namespace advertises the same
+`pageId` pattern it always did, because the pattern is part of the surface
+hash a stored receipt is matched against.
 The four words reuse Rally's frozen word lists. A unique constraint detects
 collisions and allocation retries; a slug is a lookup key, not a credential.
 

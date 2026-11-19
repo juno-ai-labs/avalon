@@ -412,6 +412,16 @@ agents; this is the record of what each step left behind.
 | Canvases and Sidekicks ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) | A **Thread**, a **Channel** and a **Breakout** became nothing: they were deleted, not renamed. The product is two sections, **Canvases** and **Sidekicks**. | A Canvas id is a `workstream` id (`WorkstreamId`, `artifact_registry.workstream_id`, `artifact_state.workstream_id`); a Canvas's Chat is substream `"0"`; a Sidekick is an `automation`; the conversation Durable Object, renamed from `SubstreamAgent` to `AgentLoopDO`, keeps its `SUBSTREAM_AGENTS` binding and `workstream:<parent>:substream:<id>:loop` object names, since those are identities. Client names such as `WorkstreamDetail`, `useWorkstreamSocket` and `WorkstreamComposer` stay. The `spaces`, `channels` and Thread tables stay in storage. A few readers left over from plan step C-2 still query `channels` and `spaces` or keep triggers on them (`memory-digest-sync.ts`, `workspace-conversation-view.ts`, `workspace-do.ts` and `workspace-memory-facts-storage.ts`); the tables are dropped once those readers go. |
 | Demo removal (2026-11-08) | Demo preparation was deleted, not renamed. Ace's operator credential, which it named, outlived it and now guards workspace retirement, access recovery and connector maintenance. | The Worker secret `DEMO_OPERATORS_JSON` and the operator role value `demos` in its map (and in each region's Ace token configuration). Code calls them `requireAceOperator` and `ACE_OPERATOR_ROLE`. **Later rename:** the secret and the role are a coordinated rotation — set the new secret beside the old in every region, move Ace's tokens, then drop the old — so they are listed here rather than renamed in passing. |
 
+**No storage name in that table reaches a model.** A model reads the product
+name wherever a value crosses to it, in a tool's schema, result or failure and
+in every prompt: `organization` for `workspace`, `canvas` for `workstream` and
+for the memory subject `thread`, `conversation` for `substream`, `sidekick`
+for `automation`. The translation is at the boundary and storage is untouched;
+[`agent-tools.md`](agent-tools.md#10-do-not-leak-internal-jargon-into-anything-the-model-sees)
+owns the rule and `packages/contracts/src/model-names.ts` the mechanism. The
+engineering MCP server is the deliberate exception: its tools run SQL against
+storage, so its instructions say that a Canvas id is a `workstream` id there.
+
 ## What this inventory does not settle
 
 - **Which Avalon references are permanent.** Three are now settled: the

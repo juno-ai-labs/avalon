@@ -100,7 +100,12 @@ that completed, so the model never repeats them.
 ### Nested calls
 
 `GatewaySession.call(plugin, tool, input)` resolves the tool against the run's
-active plugins through the runtime view and refuses by name, with a reason
+active plugins through the runtime view. A plugin answers to its model id and
+to any earlier one it declares (`HarnessPlugin.modelIdAliases`, read by
+`pluginAnswersTo`), so a program copied from an older turn that still calls
+`tools.rally_workstream` reaches `rally_resources`; the call is recorded under
+the current id, and `writeToolKeys` counts a write through either id as the
+same write. Anything else is refused by name, with a reason
 code: a plugin not in the run, the two program plugins and the wizard's
 `sidekick_tool_test` (a program cannot run a program), a plugin outside a
 saved tool's `requiredPlugins`, a plugin not loaded, a loop control

@@ -58,7 +58,9 @@ clients preserve editors by copying the current `participantUserIds`.
 A Canvas's Chat, and any background agent it started, sets the artifact
 audience with `set_artifact_audience`, as its person and under Share's
 manager rule; it changes `artifact_visibility`
-alone and never names people. `artifact_visibility_chosen` (migration 148)
+alone and never names people. The tool offers and returns `organization` for
+the stored `workspace`, as the Rally MCP server's Canvas tools do
+([`agent-tools.md`](agent-tools.md#10-do-not-leak-internal-jargon-into-anything-the-model-sees)). `artifact_visibility_chosen` (migration 148)
 records that someone set it: Share saves that send an artifact audience, and
 every tool call, mark it, and every Canvas that existed before the migration
 counts as chosen. An agent's default (`personAsked: false`) changes only an
