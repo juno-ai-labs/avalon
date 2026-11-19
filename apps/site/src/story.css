@@ -84,8 +84,8 @@
 /* Stepping. With no script a slide rests at its last step: what a later step
    replaces is hidden, and everything that arrives is shown. */
 .story:not(.is-live) [data-until],
-.story.is-live .is-gone,
-.story.is-live [data-at]:not(.is-on) {
+.story.is-live .is-gone:not(.story-mail > *),
+.story.is-live [data-at]:not(.is-on):not(.story-mail > *) {
   display: none !important;
 }
 
@@ -99,14 +99,17 @@
   grid-area: 1 / 1;
 }
 
+/* Mail that is not showing is hidden but keeps its own layout, a burst's row
+   included, so the slot is exactly as tall as its tallest message. */
 .story.is-live .story-mail > .is-gone,
 .story.is-live .story-mail > [data-at]:not(.is-on) {
-  display: block !important; visibility: hidden;
+  visibility: hidden;
 }
 
+/* The ask keeps its own height when an email or a burst makes the slot taller. */
 .story-ask {
-  border: 1px solid var(--line); border-radius: 10px; background: #f8f8f1; padding: 12px 15px;
-  min-width: 0;
+  align-self: start; border: 1px solid var(--line); border-radius: 10px; background: #f8f8f1;
+  padding: 12px 15px; min-width: 0;
 }
 
 /* An email is a little Gmail card: the mark, who it is from, the subject, and
