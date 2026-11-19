@@ -42,6 +42,26 @@ export const SIDEKICK_RUN_USAGE_NOTE = "Each model call sends the whole conversa
 const attachmentToolName = /^(?:workstream_)?(?:list_resources|read_resource(?:_next|_previous)?|search_resource|summarize_resource|view_resource)$/u;
 
 /**
+ * A run's trigger as its reader is shown it. An event that started a run is
+ * stored as `workspaceEventId`; the model reads `eventId`.
+ */
+function triggerForModel(trigger: z.infer<typeof ReviewDefinitionSchema>["trigger"]) {
+  if (trigger.kind !== "external_event") return trigger;
+  const { workspaceEventId, ...rest } = trigger;
+  return { ...rest, eventId: workspaceEventId };
+}
+
+/**
+ * A recorded tool name as its reader is shown it. A receipt written while the
+ * resource tools carried their plugin's wire prefix names them
+ * `workstream_read_resource`; the tool is `read_resource` now, and the reader
+ * can only call it by that name.
+ */
+function toolNameForModel(toolName: string): string {
+  return toolName.replace(/^workstream_/u, "");
+}
+
+/**
  * Who reads runs: the wizard in its Main, and the background agents it starts
  * there. A run's activation and its delegation workers never do. Mirrored by
  * `conversationModelRole`, which puts the same agents on the wizard's route.
@@ -83,12 +103,13 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
     // continuation "this run changed" covers the turns and their tool calls,
     // not the output bodies, whose presence depends on a payload read.
     const header = afterSequence === 0 ? { definitionRevision: definition.definitionRevision,
-      definition: definition.definition, trigger: definition.trigger, resultSummary: definition.resultSummary,
-      ...(page.usage ? { usage: { ...page.usage, note: SIDEKICK_RUN_USAGE_NOTE } } : {}) } : {};
+      definition: definition.definition, trigger: triggerForModel(definition.trigger), resultSummary: definition.resultSummary,
+      ...(page.usage ? { usage: { ...page.usage, tools: page.usage.tools.map((used) => ({ ...used, toolName: toolNameForModel(used.toolName) })),
+        note: SIDEKICK_RUN_USAGE_NOTE } } : {}) } : {};
     const contentHash = await sha256(JSON.stringify({ ...header, turns: page.turns.map((turn) => ({
       turnId: turn.turnId, transcriptSequence: turn.transcriptSequence, actor: turn.actor,
       blocks: turn.blocks.flatMap((block): unknown[] => block.type === "thinking" ? []
-        : block.type === "tool" ? [{ type: "tool", toolCallId: block.toolCallId, toolName: block.toolName, status: block.status }] : [block]) })) }));
+        : block.type === "tool" ? [{ type: "tool", toolCallId: block.toolCallId, toolName: toolNameForModel(block.toolName), status: block.status }] : [block]) })) }));
     if (cursor?.contentHash && cursor.contentHash !== contentHash) throw new ApiError(409, "sidekick_history_evidence_changed",
       "Run evidence changed or is no longer accessible. Start a new runs_read.");
     // A rebuilt continuation loads exactly the outputs the first fragment carried.
@@ -109,17 +130,17 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
         workspaceId, workstreamId: sidekickId, substreamId: runId, principal: input.executionPrincipal,
         invocationId: receipt.effectIntentId, capability,
       }, port) !== "valid")) {
-        return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: call.toolName,
+        return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: toolNameForModel(call.toolName),
           resultAvailability: "unavailable", reason: "resource_access_or_version_unavailable" }] as const;
       }
-      if (!receipt) return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: call.toolName,
+      if (!receipt) return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: toolNameForModel(call.toolName),
         status: call.status, input: call.participantSafeInput, summary: call.participantSafeResult, error: call.error,
         resultAvailability: "summary_only" }] as const;
       const output = receipt.outputRef && (served === null || served.has(call.toolCallId)) ? await loadOutput(receipt.outputRef) : null;
       const placeholder = output !== null && typeof output === "object"
         && (("transient" in output && output.transient === true) || ("truncated" in output && output.truncated === true));
       const full = output !== null && !placeholder;
-      return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: receipt.toolName,
+      return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: toolNameForModel(receipt.toolName),
         activationId: receipt.runId, status: receipt.status,
         // A sweep or a retry settles a call when it runs, so only a completed call's span is its duration.
         ...(receipt.status === "completed" && receipt.startedAt !== null && receipt.settledAt !== null

@@ -1,3 +1,4 @@
+import { ORGANIZATION_MODEL_NAMES, withModelNames } from "@rally/contracts/model-names";
 import { requireUsageAllowance } from "./usage-admission";
 import { z } from "zod";
 import { judgeSemanticTriggerCondition, type HarnessTool } from "@rally/agent-harness";
@@ -138,7 +139,7 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
     definition: {
       name: name("request_source"),
       description: "Ask Organization members to let events from one of their accounts start a Sidekick, optionally only events meeting a written filter. Each person gets a request only they can approve or decline, in Rally (and by email once they have signed in); this returns each request's state and never waits for an answer. Nobody is approved by asking, the person you work for included. To change a filter, ask again with the new one. "
-        + "Ask even when a person has not connected that account, or its sign-in has lapsed; do not hold the ask back for anyone to connect first. Each request's connection says where they stand (connected, reconnect_required, not_connected). Tell the person you work for who still has to connect or reconnect, and how: when the request's connect.card is set, their request in this conversation connects it as they approve; when it is null, the account is connected in Settings, by an administrator when connect.scope is workspace. "
+        + "Ask even when a person has not connected that account, or its sign-in has lapsed; do not hold the ask back for anyone to connect first. Each request's connection says where they stand (connected, reconnect_required, not_connected). Tell the person you work for who still has to connect or reconnect, and how: when the request's connect.card is set, their request in this conversation connects it as they approve; when it is null, the account is connected in Settings, by an administrator when connect.scope is organization. "
         + "For the person you work for too, a request with connect.card set is the connection prompt: do not also call show_connector_connection for that account.",
       capability: "rally.sidekick.sources.request", mode: "write" as const, idempotency: "record_before_execute" as const,
       inputSchema: z.toJSONSchema(RequestSourceInputSchema),
@@ -166,7 +167,8 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
       }
       // The whole result is the card's input: the client reads each request's
       // id from it and draws its live state.
-      return { output: asked, summary: `Asked ${asked.requests.length === 1 ? "one person" : `${asked.requests.length} people`} for a source` };
+      // The connection to make is stored as `workspace` for the Organization's.
+      return { output: withModelNames(asked, ORGANIZATION_MODEL_NAMES, ["scope"]), summary: `Asked ${asked.requests.length === 1 ? "one person" : `${asked.requests.length} people`} for a source` };
     },
   }, {
     definition: {
@@ -238,5 +240,6 @@ function requestOutput(request: Pick<SidekickSourceRequestView, "requestId" | "p
   | "condition" | "state" | "requestedByName" | "connection" | "connect">) {
   return { requestId: request.requestId, userId: request.person.userId, name: request.person.displayName,
     connectorType: request.connectorType, eventTypes: request.eventTypes, condition: request.condition,
-    state: request.state, requestedByName: request.requestedByName, connection: request.connection, connect: request.connect };
+    state: request.state, requestedByName: request.requestedByName, connection: request.connection,
+    connect: withModelNames(request.connect, ORGANIZATION_MODEL_NAMES, ["scope"]) };
 }

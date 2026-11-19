@@ -21,6 +21,14 @@ describe('the card a source request tool call draws', () => {
     });
   });
 
+  it('paints a request whose connection the tool named organization, as the view a card reads stores it', () => {
+    // The tool answers a model, which reads the Organization's connection as `organization`.
+    const asked = (scope: string) => ({ ...view(FIRST), connection: 'not_connected', connect: { scope, card: null } });
+    expect(sidekickSourceRequestCardFromToolEvent({
+      name: 'sidekick_request_source', status: 'completed', output: { sidekickId: SIDEKICK, requests: [asked('organization')] },
+    })).toEqual({ sidekickId: SIDEKICK, requestIds: [FIRST], asked: [asked('workspace')] });
+  });
+
   it('draws from the ids alone when the rest of the output is not a request this client knows', () => {
     // A live row carries the activity's prose as its name and the tool's own under `wireName`.
     expect(sidekickSourceRequestCardFromToolEvent({
