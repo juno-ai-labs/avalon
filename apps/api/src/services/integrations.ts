@@ -6000,6 +6000,7 @@ async function loadHarnessTools(
     prefix: string,
     connectionId: string | null,
     wirePrefix = prefix,
+    retiredPrefixes: readonly string[] = [],
   ): HarnessTool[] => {
     if (!tool.definition.pagination) return [tool];
     const expanded = withToolPagination(tool, { receipts: pageReceipts,
@@ -6007,14 +6008,15 @@ async function loadHarnessTools(
         if (!paginationLease) throw new Error("pagination_attempt_lease_missing");
         return { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner };
       },
-      prefix, wirePrefix, connectionId,
+      prefix, wirePrefix, connectionId, retiredPrefixes,
     });
     for (const pageTool of expanded) paginationSources.set(pageTool, tool);
     return expanded;
   };
-  // The page-ID namespaces stay `table_` and `workstream_`: they name where a
-  // page came from, are stored on issued rows, and are validated on the way
-  // back in. Only `rally:workstream`'s model-facing prefix went away.
+  // The page-ID namespaces are `table_` and `page_`: they name where a page
+  // came from, are stored on issued rows, and are validated on the way back
+  // in. `page_` was `workstream_`, the conversation's storage name, until the
+  // model stopped being shown it; an ID issued under it is still redeemed.
   // Filled by the connection loop below; the access check reads it when it
   // runs, by which point every connection of the run is in it.
   const frozenConnections = new Map<string, FrozenConnectorPlugin>();
@@ -6025,7 +6027,7 @@ async function loadHarnessTools(
     connections: () => [...frozenConnections.values()],
   }).flatMap((tool) => {
     const tableTool = tool.definition.capability.startsWith("table.");
-    return expandPages(tool, tableTool ? "table" : "workstream", null, tableTool ? "table" : "");
+    return expandPages(tool, tableTool ? "table" : "page", null, tableTool ? "table" : "", tableTool ? [] : ["workstream"]);
   }).map((tool) =>
     // Both pause on a question a person answers; where answers go to an agent
     // instead, neither may ask one, and each says where to send the question
@@ -8404,11 +8406,15 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
   if (workstreamTools.length === 0) return null;
   return {
     canonicalId: AVALON_WORKSTREAM_PLUGIN_ID,
-    modelId: "rally_workstream",
+    // Named for what its tools hold. `rally_workstream`, the storage name of a
+    // conversation, is still answered so a program copied from an older turn
+    // reaches these tools.
+    modelId: "rally_resources",
+    modelIdAliases: ["rally_workstream"],
     // No wire prefix. This plugin is always active and every tool here names
     // its own object — `list_resources`, `schedule_wakeup`, `run_subagent` —
-    // so `workstream_` repeated the one context the run never leaves. Page IDs
-    // keep the `workstream_` namespace; see `expandPages`.
+    // so a prefix repeated the one context the run never leaves. Page IDs
+    // carry the `page_` namespace; see `expandPages`.
     shortWireName: "",
     displayName: "Resources and wake-ups",
     searchAliases: ["task", "resources", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],

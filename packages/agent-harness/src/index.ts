@@ -3997,6 +3997,11 @@ export class HarnessPluginActivationError extends Error {
   }
 }
 
+/** Whether a model-sent plugin id names this plugin: its `modelId` or an earlier one. */
+export function pluginAnswersTo(plugin: Pick<HarnessPlugin, "modelId" | "modelIdAliases">, modelId: unknown): boolean {
+  return plugin.modelId === modelId || (typeof modelId === "string" && (plugin.modelIdAliases ?? []).includes(modelId));
+}
+
 /**
  * What a plugin may read of the run it is registered in: which plugins are
  * active right now, and the plugins the run holds at all. Handed to a plugin's
@@ -4017,6 +4022,12 @@ export interface HarnessPlugin {
   canonicalId: string;
   /** Stable identifier exposed to the model (`rally_core` or `plugin_google`). */
   modelId: string;
+  /**
+   * Earlier model-facing ids of this plugin. Never rendered; a program that
+   * still calls the plugin by one (copied from an older turn of the
+   * conversation) reaches it, so renaming `modelId` breaks nothing recorded.
+   */
+  modelIdAliases?: readonly string[];
   shortWireName: string;
   /** Static, code-authored label used only for catalog display and discovery. */
   displayName?: string;

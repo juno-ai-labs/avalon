@@ -7,6 +7,7 @@ import {
   formatToolArgumentValidationError,
   normalizeToolArguments,
   omitUnspecifiedToolArguments,
+  pluginAnswersTo,
   validateToolArguments,
   type BeforeToolCallDecision,
   type HarnessPlugin,
@@ -298,6 +299,8 @@ export class GatewaySession {
         }
         const resolved = this.resolve(pluginModelId, toolName);
         record.mode = resolved.tool.definition.mode;
+        // Recorded under the plugin's current id, whichever one the program wrote.
+        record.tool = `${resolved.plugin.modelId}.${resolved.tool.definition.name}`;
         const run = () => this.execute(index, resolved.plugin, resolved.tool, rawInput, record);
         return resolved.tool.serial ? await this.serialized(run, label) : await run();
       } catch (error) {
@@ -341,9 +344,9 @@ export class GatewaySession {
   private resolve(pluginModelId: unknown, toolName: unknown): { plugin: HarnessPlugin; tool: HarnessTool } {
     const label = `${String(pluginModelId)}.${String(toolName)}`;
     const callable = callableTools(this.options.view, this.options.allowedPluginIds);
-    const plugin = callable.find((entry) => entry.plugin.modelId === pluginModelId);
+    const plugin = callable.find((entry) => pluginAnswersTo(entry.plugin, pluginModelId));
     if (!plugin) {
-      const known = this.options.view.plugins().find((candidate) => candidate.modelId === pluginModelId);
+      const known = this.options.view.plugins().find((candidate) => pluginAnswersTo(candidate, pluginModelId));
       const available = callable.map((entry) => entry.plugin.modelId);
       if (!known) throw refusal(label, "unknown_plugin", `no plugin named ${String(pluginModelId)} is in this run.`, available);
       if (known.canonicalId === CODE_PLUGIN_ID || known.canonicalId === CUSTOM_TOOLS_PLUGIN_ID) {

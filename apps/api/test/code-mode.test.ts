@@ -21,6 +21,7 @@ import {
   GatewaySession,
   callableTools,
   checkProgram,
+  writeToolKeys,
   customToolFailure,
   finishProgram,
   programTestWarnings,
@@ -160,6 +161,23 @@ describe("GatewaySession", () => {
     expect(host.started).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: "program-call:call:0", pluginId: "rally:core", input: { n: 2 } }));
     expect(host.complete).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: "program-call:call:0", pluginId: "rally:core", policy: expect.objectContaining({ canonicalToolName: "current_time" }) }));
     expect(session.calls.map((call) => [call.index, call.tool, call.outcome])).toEqual([[0, "rally_core.current_time", "completed"]]);
+  });
+
+  it("answers a plugin's earlier model id, and records the call under its current one", async () => {
+    // A program copied from an older turn still names the plugin by the id
+    // that turn was shown.
+    const { host } = await hostOver();
+    const resources = { ...plugin("rally:workstream", "rally_resources", [tool({ name: "list_resources" })]), modelIdAliases: ["rally_workstream"] };
+    const session = new GatewaySession({ host, view: view([resources]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null });
+    expect(await session.gateway.call("rally_workstream", "list_resources", {})).toEqual({ ok: true, output: { echoed: {} } });
+    expect(await session.gateway.call("rally_resources", "list_resources", {})).toEqual({ ok: true, output: { echoed: {} } });
+    expect(session.calls.map((call) => [call.tool, call.outcome])).toEqual([
+      ["rally_resources.list_resources", "completed"], ["rally_resources.list_resources", "completed"],
+    ]);
+    expect(await session.gateway.call("rally_canvas", "list_resources", {})).toMatchObject({ ok: false, code: "code_call_refused", error: expect.stringContaining("no plugin named rally_canvas is in this run") });
+    // The pre-run check reads a write through the earlier id as the same write.
+    const writes = { ...resources, tools: [tool({ name: "write_artifact_data", mode: "write" })] };
+    expect([...writeToolKeys([{ plugin: writes, tools: writes.tools }])]).toEqual(["rally_resources.write_artifact_data", "rally_workstream.write_artifact_data"]);
   });
 
   it("replays a completed child the host already holds, and halts the program on an ambiguous one, without executing", async () => {

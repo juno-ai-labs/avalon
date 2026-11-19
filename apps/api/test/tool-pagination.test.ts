@@ -53,26 +53,38 @@ describe("model-facing authored pagination", () => {
 
   it("keeps the page-ID namespace while naming the tools by their unprefixed wire names", () => {
     // `rally:workstream` advertises `list_resources` with no wire prefix, but a
-    // page ID is still minted and validated as `workstream_<four words>`: the
+    // page ID is still minted and validated as `page_<four words>`: the
     // namespace is stored on issued rows, and `PageIssueSchema` refuses an
     // empty one. The two were a single field before, so naming either side
     // after the other is the regression this covers.
-    const authority: PaginationHost = { ...host(), prefix: "workstream", wirePrefix: "" };
+    const authority: PaginationHost = { ...host(), prefix: "page", wirePrefix: "", retiredPrefixes: ["workstream"] };
     const [first, next] = withToolPagination(tool(), authority);
 
     expect(first!.definition.description).toContain("call list_resources_next with the returned nextPageId");
-    expect(first!.definition.description).not.toContain("workstream_list_resources");
+    expect(first!.definition.description).not.toContain("page_list_resources");
     expect(next!.definition.name).toBe("list_resources_next");
     expect(next!.definition.description).toContain("Read the next page of list_resources.");
-    expect(next!.definition.description).not.toContain("workstream_list_resources");
+    expect(next!.definition.description).not.toContain("page_list_resources");
 
     // The page ID keeps the namespace, and the guidance still teaches it.
-    expect(next!.validateInput!({ pageId: "workstream_quiet_amber_rapid_otter" })).toBeNull();
+    expect(next!.validateInput!({ pageId: "page_quiet_amber_rapid_otter" })).toBeNull();
     const rejected = next!.validateInput!({ pageId: "quiet_amber_rapid_otter" });
     expect(rejected).toBeTruthy();
     const message = formatToolArgumentValidationError(rejected!);
-    expect(message).toContain('pageId must start with "workstream_"');
-    expect(message).toContain("call list_resources to start a new read");
+    expect(message).toBe('Tool arguments were invalid. Fix these fields and retry: pageId: send only {"pageId":"<copied ID>"}. pageId must start with "page_", followed by exactly four lowercase words separated by underscores. Copy nextPageId exactly from a tool result; do not invent or repair an ID. If that field is null, stop: there is no page. If you have no ID, call list_resources to start a new read.');
+  });
+
+  it("redeems a page issued under a retired namespace, and no other", async () => {
+    // A page is redeemable in any later run of its conversation, so one issued
+    // as `workstream_…` before the namespace became `page_` still reaches
+    // storage. A namespace this plugin never used does not.
+    const authority: PaginationHost = { ...host(), prefix: "page", wirePrefix: "", retiredPrefixes: ["workstream"] };
+    const next = withToolPagination(tool(), authority)[1]!;
+    const retired = { pageId: "workstream_quiet_amber_rapid_otter" };
+    expect(next.validateInput!(retired)).toBeNull();
+    await next.execute(retired, context);
+    expect(authority.receipts.claimPage).toHaveBeenCalledWith(expect.objectContaining(retired));
+    expect(next.validateInput!({ pageId: "table_quiet_amber_rapid_otter" })).toBeTruthy();
   });
 
   it("keeps one prefix doing both jobs when a plugin has a wire prefix", () => {
