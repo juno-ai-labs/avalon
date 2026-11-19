@@ -6,8 +6,8 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  *
  * A Sidekick reaches its own shared conversation (substream `"0"` under the
  * Sidekick, `automation_directory`) and every Canvas attached to it in
- * `sidekick_conversation_attachments`: the Canvas each of its runs made, the
- * Canvas whose Chat made it, and any its wizard attached. A Canvas's Chat is the Canvas's
+ * `sidekick_conversation_attachments`: the Canvas whose Chat made it, any its
+ * wizard attached, and any its runs made before runs stopped making Canvases. A Canvas's Chat is the Canvas's
  * conversation `"0"`, and its conversation id is the Canvas's id.
  *
  * This is not `sidekick_attachments` (per conversation): that recorded that a

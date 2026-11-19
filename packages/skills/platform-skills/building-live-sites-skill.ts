@@ -151,10 +151,10 @@ its files, for changing a site's code, and for a refresh that also adds files
 
 A Sidekick run publishes into a Canvas attached to the Sidekick. Save the
 instruction to publish each refresh into the saved Canvas by naming it in
-\`publish_resource\`'s \`canvas\` argument; without it, a run's first publish
-makes a new Canvas. Only a Canvas attached to this Sidekick can be named (one
-an earlier run made, the Canvas whose Chat made the Sidekick, or one its
-configuration conversation attached), and importing files does not redirect
+\`publish_resource\`'s \`canvas\` argument; without it, a run publishes into
+the Canvas whose Chat made the Sidekick, or is refused \`canvas_required\` when
+there is none. A run never makes a Canvas. Only a Canvas attached to this
+Sidekick can be named (one listed in ATTACHED CANVASES), and importing files does not redirect
 publication. When the site is in a Canvas this Sidekick is not attached to,
 report that requirement instead of creating a replacement site.
 
