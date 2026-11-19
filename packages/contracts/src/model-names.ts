@@ -22,6 +22,18 @@ export const ORGANIZATION_MODEL_NAMES = { workspace: "organization" } as const;
 type Named<Stored extends string, Names extends ModelNames<string>> =
   Stored extends keyof Names ? (Names[Stored] extends string ? Names[Stored] : Stored) : Stored;
 
+/**
+ * A resource Rally itself holds is stored under a provider named for the
+ * product's code name (`avalon_upload`, `avalon_generated`, `avalon_note`).
+ * The column is in every resource row and in queries across the tree, so it
+ * stays; a model reads the product's name.
+ */
+export const RESOURCE_PROVIDER_MODEL_NAMES = {
+  avalon_upload: "rally_upload",
+  avalon_generated: "rally_generated",
+  avalon_note: "rally_note",
+} as const;
+
 /** What a model reads for one stored value. */
 export function modelName<Stored extends string, const Names extends ModelNames<string>>(
   names: Names,

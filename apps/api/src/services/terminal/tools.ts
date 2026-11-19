@@ -90,7 +90,8 @@ export interface TerminalPublishedResourceOutput {
    */
   publishKind: "file";
   resourceType: "generated_file";
-  provider: "avalon_generated";
+  /** `avalon_generated` in storage; the model reads the product's name. */
+  provider: "rally_generated";
   mimeType: string;
   sizeBytes: number;
   sourceSha256: string;
@@ -138,7 +139,8 @@ export interface TerminalPublishedSiteOutput {
   title: string;
   publishKind: "site";
   resourceType: "generated_site";
-  provider: "avalon_generated";
+  /** `avalon_generated` in storage; the model reads the product's name. */
+  provider: "rally_generated";
   attachmentKind: "site";
   slug: string | null;
   url: string;

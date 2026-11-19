@@ -1,3 +1,4 @@
+import { auditedExecutors } from "./helpers/audited-tools";
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { describe, expect, it, vi } from "vitest";
@@ -95,7 +96,7 @@ function runtime(initial: Record<string, string> = {}) {
         resourceId: "resource-published",
         title: "Chart",
         publishKind: "file", resourceType: "generated_file",
-        provider: "avalon_generated",
+        provider: "rally_generated",
         mimeType: "image/png",
         sizeBytes: 42,
         sourceSha256: "b".repeat(64),
@@ -151,7 +152,7 @@ describe("what the publish tool advertises to the model", () => {
 describe("Terminal file and command tools", () => {
   it("freezes exact success envelopes for all nine model-facing tools", async () => {
     const { value } = runtime({ "notes.txt": "old\n" });
-    const tools = createTerminalToolExecutors(value, {});
+    const tools = auditedExecutors(createTerminalToolExecutors(value, {}));
     const calls = [
       ["read_file", { filePath: "notes.txt" }, {
         output: { filePath: "notes.txt", content: "old", startLine: 1, endLine: 1, totalLines: 1, truncated: false },
@@ -194,7 +195,7 @@ describe("Terminal file and command tools", () => {
       ["publish_resource", { filePath: "chart.png" }, {
         output: {
           resourceId: "resource-published", title: "Chart", publishKind: "file", resourceType: "generated_file",
-          provider: "avalon_generated", mimeType: "image/png", sizeBytes: 42, sourceSha256: "b".repeat(64),
+          provider: "rally_generated", mimeType: "image/png", sizeBytes: 42, sourceSha256: "b".repeat(64),
           attachmentKind: "image", contentMode: "view", derivativeStatus: "ready",
           createdAt: "2026-08-13T00:00:00.000Z",
         },
@@ -224,7 +225,7 @@ describe("Terminal file and command tools", () => {
 
   it("reads exact raw pages and reports the next one without line-number pollution", async () => {
     const { value } = runtime({ "notes.txt": "one\ntwo\nthree\nfour" });
-    const tools = createTerminalToolExecutors(value, {});
+    const tools = auditedExecutors(createTerminalToolExecutors(value, {}));
 
     await expect(tools.read_file({ filePath: "notes.txt", offset: 2, limit: 2 }, context)).resolves.toEqual({
       output: {
@@ -242,7 +243,7 @@ describe("Terminal file and command tools", () => {
 
   it("self-heals exact edits and performs deliberate complete writes", async () => {
     const { value, files } = runtime({ "src/app.ts": "const old = 1;\nconst old = 1;\n" });
-    const tools = createTerminalToolExecutors(value, {});
+    const tools = auditedExecutors(createTerminalToolExecutors(value, {}));
 
     await expect(tools.edit_file({
       filePath: "src/app.ts",
@@ -270,7 +271,7 @@ describe("Terminal file and command tools", () => {
     const { value } = runtime();
     const readFile = vi.spyOn(value, "readFile");
 
-    await createTerminalToolExecutors(value, {}).write_file({
+    await auditedExecutors(createTerminalToolExecutors(value, {})).write_file({
       filePath: "report.md",
       content: "# Report\n",
     }, context);
@@ -282,7 +283,7 @@ describe("Terminal file and command tools", () => {
     const { value } = runtime({ "report.md": "before\n" });
     const writeFile = vi.spyOn(value, "writeFile");
 
-    await createTerminalToolExecutors(value, {}).edit_file({
+    await auditedExecutors(createTerminalToolExecutors(value, {})).edit_file({
       filePath: "report.md",
       oldString: "before",
       newString: "after",
@@ -302,7 +303,7 @@ describe("Terminal file and command tools", () => {
 
   it.each(["../escape", "/absolute", "dir\\windows", "./../escape"])("rejects a path outside the root: %s", async (filePath) => {
     const { value } = runtime();
-    await expect(createTerminalToolExecutors(value, {}).read_file({ filePath }, context)).rejects.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).read_file({ filePath }, context)).rejects.toMatchObject({
       code: "path_outside_root",
       // The refused value is echoed so the model can see what was wrong.
       message: expect.stringContaining(filePath),
@@ -315,7 +316,7 @@ describe("Terminal file and command tools", () => {
     // naming it, then guessed directory names until stderr leaked the real one.
     const { value } = runtime();
     const runCommand = vi.spyOn(value, "runCommand");
-    await expect(createTerminalToolExecutors(value, {}).run_command({ command: "pwd", cwd }, context)).resolves.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).run_command({ command: "pwd", cwd }, context)).resolves.toMatchObject({
       output: { state: "completed" },
     });
     expect(runCommand).toHaveBeenCalledOnce();
@@ -327,17 +328,17 @@ describe("Terminal file and command tools", () => {
     // command would silently run in the root and the root tests would stay green.
     const { value } = runtime();
     const runCommand = vi.spyOn(value, "runCommand");
-    await createTerminalToolExecutors(value, {}).run_command({ command: "pwd", cwd: "out/app" }, context);
+    await auditedExecutors(createTerminalToolExecutors(value, {})).run_command({ command: "pwd", cwd: "out/app" }, context);
     expect(runCommand.mock.calls[0]![1]).toMatchObject({ cwd: "out/app" });
   });
 
   it("refuses a working directory outside the root, echoes it, and says to omit cwd", async () => {
     const { value } = runtime();
-    await expect(createTerminalToolExecutors(value, {}).run_command({ command: "pwd", cwd: "../escape" }, context)).rejects.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).run_command({ command: "pwd", cwd: "../escape" }, context)).rejects.toMatchObject({
       code: "path_outside_root",
       message: expect.stringContaining("`cwd` must stay inside the workspace root"),
     });
-    await expect(createTerminalToolExecutors(value, {}).run_command({ command: "pwd", cwd: "../escape" }, context)).rejects.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).run_command({ command: "pwd", cwd: "../escape" }, context)).rejects.toMatchObject({
       message: expect.stringMatching(/`\.\.\/escape`.*Omit `cwd` to run in the workspace root/su),
     });
   });
@@ -346,11 +347,11 @@ describe("Terminal file and command tools", () => {
     // The echo reaches the transcript like every other Terminal string, so it
     // takes the same sanitizer; a path carrying an ANSI escape is model output.
     const { value } = runtime();
-    await expect(createTerminalToolExecutors(value, {}).read_file({ filePath: "../\u001b[31mx" }, context)).rejects.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).read_file({ filePath: "../\u001b[31mx" }, context)).rejects.toMatchObject({
       code: "path_outside_root",
       message: expect.stringMatching(/`\.\.\/x`/u),
     });
-    await expect(createTerminalToolExecutors(value, {}).read_file({ filePath: "../\u001b[31mx" }, context)).rejects.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).read_file({ filePath: "../\u001b[31mx" }, context)).rejects.toMatchObject({
       message: expect.not.stringContaining("\u001b"),
     });
   });
@@ -360,11 +361,11 @@ describe("Terminal file and command tools", () => {
     // refusal that pointed at the workspace root would steer the model into the
     // not_found it gets for a file written there.
     const { value } = runtime();
-    await expect(createTerminalToolExecutors(value, {}).publish_resource({ filePath: "/workspace/.rally-output/report.md" }, context)).rejects.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).publish_resource({ filePath: "/workspace/.rally-output/report.md" }, context)).rejects.toMatchObject({
       code: "path_outside_root",
       message: expect.stringContaining("the output directory, `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`)"),
     });
-    await expect(createTerminalToolExecutors(value, {}).publish_resource({ filePath: "/workspace/.rally-output/report.md" }, context)).rejects.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).publish_resource({ filePath: "/workspace/.rally-output/report.md" }, context)).rejects.toMatchObject({
       message: expect.not.stringContaining("workspace root ("),
     });
   });
@@ -376,20 +377,20 @@ describe("Terminal file and command tools", () => {
     const { value } = runtime();
     const applyPatch = vi.spyOn(value, "applyPatch");
     const patch = ["*** Begin Patch", "*** Update File: notes.sql", "@@", "--- /tmp/old", "+-- /tmp/new", "*** End Patch"].join("\n");
-    await expect(createTerminalToolExecutors(value, {}).apply_patch({ patch }, context)).resolves.toMatchObject({ summary: "Patched 0 files" });
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).apply_patch({ patch }, context)).resolves.toMatchObject({ summary: "Patched 0 files" });
     expect(applyPatch).toHaveBeenCalledWith(context, patch);
   });
 
   it("names the parameter a tool actually has when it refuses a path", async () => {
     const { value } = runtime();
-    await expect(createTerminalToolExecutors(value, {}).import_resource({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).import_resource({
       resourceId: "00000000-0000-4000-8000-000000000099",
       destinationPath: "/abs/out",
     }, context)).rejects.toMatchObject({
       code: "path_outside_root",
       message: expect.stringContaining("`destinationPath` must stay inside"),
     });
-    await expect(createTerminalToolExecutors(value, {}).apply_patch({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).apply_patch({
       patch: "--- /dev/null\n+++ /abs/new.txt\n@@ -0,0 +1 @@\n+hello\n",
     }, context)).rejects.toMatchObject({
       code: "path_outside_root",
@@ -399,7 +400,7 @@ describe("Terminal file and command tools", () => {
 
   it("refuses the workspace root as a file path with its own code", async () => {
     const { value } = runtime();
-    const refused = createTerminalToolExecutors(value, {}).read_file({ filePath: "." }, context);
+    const refused = auditedExecutors(createTerminalToolExecutors(value, {})).read_file({ filePath: "." }, context);
     await expect(refused).rejects.toBeInstanceOf(TerminalToolError);
     await expect(refused).rejects.toMatchObject({
       code: "invalid_path",
@@ -411,11 +412,11 @@ describe("Terminal file and command tools", () => {
     // Both accept directories, so the repair is "a path beneath the root", and
     // for publication the root is the output directory, not the workspace.
     const { value } = runtime();
-    await expect(createTerminalToolExecutors(value, {}).publish_resource({ filePath: "." }, context)).rejects.toMatchObject({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).publish_resource({ filePath: "." }, context)).rejects.toMatchObject({
       code: "invalid_path",
       message: expect.stringContaining("`filePath` names the output directory, `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`) itself. Pass a path beneath it, such as `report.md` or `site`."),
     });
-    await expect(createTerminalToolExecutors(value, {}).import_resource({
+    await expect(auditedExecutors(createTerminalToolExecutors(value, {})).import_resource({
       resourceId: "00000000-0000-4000-8000-000000000099",
       destinationPath: "./",
     }, context)).rejects.toMatchObject({
@@ -426,7 +427,7 @@ describe("Terminal file and command tools", () => {
 
   it("returns nonzero exits as final results and lets repository policy govern standard GitHub CLI writes", async () => {
     const { value } = runtime();
-    const tools = createTerminalToolExecutors(value, {});
+    const tools = auditedExecutors(createTerminalToolExecutors(value, {}));
     await expect(tools.run_command({ command: "false" }, context)).resolves.toMatchObject({
       output: { state: "failed", terminationReason: "exited", exitCode: 1, stderr: "failed\n" },
     });
@@ -453,7 +454,7 @@ describe("view_image", () => {
 
   function withFile(path: string, bytes: Uint8Array, images: Parameters<typeof createTerminalToolExecutors>[1] = {}) {
     const { value } = runtime();
-    return createTerminalToolExecutors({ ...value, readFile: async (_context, read) => read === path ? bytes : null }, images);
+    return auditedExecutors(createTerminalToolExecutors({ ...value, readFile: async (_context, read) => read === path ? bytes : null }, images));
   }
 
   it("hands the model the image itself, not its bytes as text", async () => {

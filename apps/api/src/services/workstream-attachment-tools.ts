@@ -1,3 +1,4 @@
+import { RESOURCE_PROVIDER_MODEL_NAMES, modelName } from "@rally/contracts/model-names";
 import type { HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
 import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
@@ -184,7 +185,8 @@ export function createWorkstreamAttachmentTools(
             items: page.map(resourceListItem),
             nextCursor,
           });
-          const { nextCursor: continuation, ...data } = output;
+          const { nextCursor: continuation, workstreamId, ...listed } = output;
+          const data = { ...resourceListOwner(input, workstreamId), ...listed };
           return { output: data, summary: `Listed ${page.length} of ${matching.length} matching work-stream resources`,
             pagination: { continuations: continuation ? [{ operation: "list_resources", slot: "nextPageId" as const, input: { cursor: continuation } }] : [] },
           };
@@ -236,7 +238,8 @@ export function createWorkstreamAttachmentTools(
           items: result.rows.map(resourceListItem),
           nextCursor,
         });
-        const { nextCursor: continuation, ...data } = output;
+        const { nextCursor: continuation, workstreamId, ...listed } = output;
+        const data = { ...resourceListOwner(input, workstreamId), ...listed };
         return {
           output: data,
           pagination: { continuations: continuation ? [{ operation: "list_resources", slot: "nextPageId" as const, input: { cursor: continuation } }] : [] },
@@ -876,6 +879,14 @@ function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): Author
   };
 }
 
+/**
+ * Whose resources a list names. The conversation's parent is stored as a
+ * `workstreamId` whichever it is; the model reads the Canvas or the Sidekick.
+ */
+function resourceListOwner(input: Pick<WorkstreamWorkflowInput, "parentKind">, id: string): { canvasId: string } | { sidekickId: string } {
+  return input.parentKind === "automation" ? { sidekickId: id } : { canvasId: id };
+}
+
 function resourceListItem(row: VisibleWorkstreamResourceRow) {
   const attachmentKind = rowKind(row);
   const relationshipType = ResourceRelationshipTypeSchema.parse(row.relationship_type);
@@ -884,7 +895,8 @@ function resourceListItem(row: VisibleWorkstreamResourceRow) {
     slug: row.slug,
     title: row.title,
     resourceType: row.resource_type,
-    provider: row.provider,
+    // A resource Rally holds is stored under `avalon_*`; the model reads `rally_*`.
+    provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, row.provider),
     mimeType: row.mime_type,
     sizeBytes: metadataSize(row.metadata_json),
     relationshipType,

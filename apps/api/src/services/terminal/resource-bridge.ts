@@ -1,3 +1,4 @@
+import { RESOURCE_PROVIDER_MODEL_NAMES, modelName } from "@rally/contracts/model-names";
 import { AuthorizationService } from "../authorization-service";
 import { asWorkspaceId, DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import { publishedFilePath } from "@rally/contracts/artifact-access";
@@ -161,7 +162,7 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
     title: row.title,
     publishKind: "file" as const,
     resourceType: "generated_file" as const,
-    provider: "avalon_generated" as const,
+    provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, "avalon_generated"),
     mimeType: row.mime_type ?? "application/octet-stream",
     sizeBytes,
     sourceSha256: row.content_sha256,
@@ -1064,7 +1065,7 @@ export function createTerminalResourceBridge(
         title,
         publishKind: "file",
         resourceType: "generated_file",
-        provider: "avalon_generated",
+        provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, "avalon_generated"),
         mimeType,
         sizeBytes: bytes.byteLength,
         sourceSha256: digest,
@@ -1384,7 +1385,7 @@ function siteOutput(
     title: row.title,
     publishKind: "site",
     resourceType: "generated_site",
-    provider: "avalon_generated",
+    provider: modelName(RESOURCE_PROVIDER_MODEL_NAMES, "avalon_generated"),
     attachmentKind: "site",
     slug: site.slug,
     // The model's next step is citing the artifact, so the URL is in the
