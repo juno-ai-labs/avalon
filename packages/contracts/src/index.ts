@@ -410,7 +410,7 @@ export const CreateWorkspaceInvitationResponseSchema = z.object({
  */
 export const AddWorkspaceMemberRequestSchema = CreateWorkspaceInvitationRequestSchema;
 export const AddWorkspaceMemberResponseSchema = z.object({
-  member: z.object({ userId: IdSchema, email: z.string().email(), role: WorkspaceInvitationRoleSchema }),
+  member: z.object({ userId: IdSchema, email: z.string().email(), role: MemberRoleSchema }),
   /** Whether the email telling them was sent; the membership stands either way. */
   emailDelivery: z.enum(["sent", "skipped", "failed"]),
 });

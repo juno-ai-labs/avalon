@@ -993,9 +993,16 @@ export class WorkspaceService {
    * Add someone by address as a member at once. An address with no account gets
    * one shaped as its first email sign-in would make it, so that sign-in lands
    * here. `docs/workspace-member-roles.md#how-it-works`.
+   *
+   * `owner` is accepted from an owner only, the rule `setMemberRole` holds for
+   * granting ownership, and refused before anything is written. The app's
+   * route offers only `admin` and `member`; the engineering tool passes owner.
    */
-  async addMember(email: string, role: WorkspaceInvitationRole): Promise<AddWorkspaceMemberResponse> {
+  async addMember(email: string, role: MemberRole): Promise<AddWorkspaceMemberResponse> {
     this.requireAdmin();
+    if (role === "owner" && this.auth.role !== "owner") {
+      throw new ApiError(403, "workspace_owner_required", "Only an owner can make somebody an owner or change an owner's role");
+    }
     const normalizedEmail = email.trim().toLowerCase();
     const workspace = await this.env.DB.prepare(
       `SELECT w.name, w.region, inviter.name AS inviter_name FROM workspaces w, users inviter WHERE w.id = ? AND inviter.id = ?`,

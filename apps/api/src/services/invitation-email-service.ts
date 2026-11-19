@@ -31,7 +31,7 @@ export interface WorkspaceMemberAddedEmail {
   recipientEmail: string;
   workspaceName: string;
   inviterName: string;
-  role: "admin" | "member";
+  role: "owner" | "admin" | "member";
   region: Region;
   openUrl: string;
 }
@@ -46,7 +46,7 @@ export async function sendWorkspaceMemberAddedEmail(
   added: WorkspaceMemberAddedEmail,
   send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>,
 ): Promise<InvitationEmailDelivery> {
-  const roleLabel = added.role === "admin" ? "an administrator" : "a member";
+  const roleLabel = added.role === "owner" ? "an owner" : added.role === "admin" ? "an administrator" : "a member";
   const subject = `${singleLine(added.inviterName)} added you to ${singleLine(added.workspaceName)} on Rally`;
   const text = [
     `${added.inviterName} added you to ${added.workspaceName} as ${roleLabel}.`,

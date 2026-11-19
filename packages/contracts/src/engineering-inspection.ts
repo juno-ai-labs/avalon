@@ -4,7 +4,7 @@ import { OrganizationUsageSchema, PlanIdSchema } from "./usage";
 import { z } from "zod";
 import { deferredZodSchema } from "./deferred-zod-schema";
 
-import { AddWorkspaceMemberRequestSchema, AddWorkspaceMemberResponseSchema, CreateMessageRequestSchema, RegionSchema, WorkspaceNameSchema, WorkstreamMessageAdmissionReceiptSchema } from "./index";
+import { AddWorkspaceMemberRequestSchema, AddWorkspaceMemberResponseSchema, CreateMessageRequestSchema, MemberRoleSchema, RegionSchema, WorkspaceNameSchema, WorkstreamMessageAdmissionReceiptSchema } from "./index";
 import { AutomationIdSchema } from "./automation-agent";
 import {
   ArtifactIdSchema,
@@ -105,7 +105,7 @@ export const AddEngineeringOrgMemberInputSchema = deferredZodSchema(() => z.stri
   orgId: WorkspaceIdSchema,
   adminUserId: UserIdSchema.describe("An active owner or admin of the Organization to act as (use search_users). The email names them as the one who added the person."),
   email: AddWorkspaceMemberRequestSchema.shape.email.describe("The address to add. A person with no account gets one their first email sign-in lands on."),
-  role: AddWorkspaceMemberRequestSchema.shape.role,
+  role: MemberRoleSchema.default("member").describe("owner needs adminUserId to be an owner."),
 }));
 export type AddEngineeringOrgMemberInput = z.infer<typeof AddEngineeringOrgMemberInputSchema>;
 export const AddEngineeringOrgMemberResultSchema = deferredZodSchema(() => AddWorkspaceMemberResponseSchema.extend({

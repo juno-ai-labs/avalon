@@ -774,6 +774,22 @@ describe("adding members, and the invitations still waiting from before", () => 
     } finally { database.close(); }
   });
 
+  it("adds an owner only for an owner, and tells them they are one", async () => {
+    const database = seeded();
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
+    emailSend = resend;
+    try {
+      await expect(addAs(database, "admin").addMember("nancy@example.com", "owner"))
+        .rejects.toMatchObject({ status: 403, code: "workspace_owner_required" });
+      expect(database.prepare(`SELECT COUNT(*) AS n FROM users WHERE email = ?`).get("nancy@example.com")).toEqual({ n: 0 });
+
+      const added = await addAs(database).addMember("nancy@example.com", "owner");
+      expect(added.member.role).toBe("owner");
+      expect(membership(database, added.member.userId)).toEqual({ role: "owner", access_class: "member", status: "active" });
+      expect(String(resend.mock.calls[0]![0].text)).toContain("Owner added you to Avalon Studio as an owner.");
+    } finally { database.close(); }
+  });
+
   it("refuses an ordinary member, and adds nobody", async () => {
     const database = seeded();
     try {

@@ -412,7 +412,8 @@ destructive.
 ### Adding a member
 
 `engineeringUserAuth` reads `adminUserId`'s real role, so `addMember`'s own
-admin check decides, refusing with `workspace_admin_required`. A repeat is
+checks decide: `workspace_admin_required` for a member, and
+`workspace_owner_required` when an admin asks for `role: owner`. A repeat is
 refused with `already_workspace_member`, so the tool takes no `operationId`;
 the bridge mints one per call to pair the audit rows. The tool does not
 suppress the "added you" email, the one product signal that someone was added.
