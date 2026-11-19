@@ -36,6 +36,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
     archiveSidekick: vi.fn<EngineeringInspectionRpcBinding["archiveSidekick"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
+    addOrgMember: vi.fn<EngineeringInspectionRpcBinding["addOrgMember"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
       async () => ({ region, items: [] }),
@@ -224,6 +225,25 @@ describe("Rally engineering MCP tools", () => {
     expect(global.archiveSidekick).not.toHaveBeenCalled();
   });
 
+  it("routes add_org_member to the Organization's region as the trusted operator, defaulting the role to member", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    const adminUserId = asUserId("00000000-0000-7000-8000-000000000ef2");
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.addOrgMember).mockResolvedValue({
+      region: "enterprise", orgId, emailDelivery: "sent",
+      member: { userId: "00000000-0000-7000-8000-000000000ef7", email: "nancy@example.com", role: "member" },
+    });
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", {
+      name: "add_org_member", arguments: { orgId, adminUserId, email: "nancy@example.com" },
+    });
+    expect(response.result).not.toHaveProperty("isError", true);
+    expect(response.result).toMatchObject({ content: [{ type: "text", text: expect.stringContaining('"emailDelivery": "sent"') }] });
+    expect(enterprise.addOrgMember).toHaveBeenCalledExactlyOnceWith({ orgId, adminUserId, email: "nancy@example.com", role: "member" }, principal);
+    expect(global.addOrgMember).not.toHaveBeenCalled();
+  });
+
   it("retires an Organization only in the region that owns it, as the trusted operator", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -294,6 +314,7 @@ describe("Rally engineering MCP tools", () => {
       "pause_sidekick",
       "resume_sidekick",
       "archive_sidekick",
+      "add_org_member",
       "retire_org",
       "read_canvas_chat",
       "read_sidekick_conversation",

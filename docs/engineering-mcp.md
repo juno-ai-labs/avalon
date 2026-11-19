@@ -24,6 +24,9 @@ available to Rally users by virtue of product membership.
 - `apps/api/src/services/engineering-creation.ts` adapts operator Organization
   creation to regional onboarding, and resolves the selected user's
   authority (`engineeringUserAuth`).
+- `apps/api/src/services/engineering-members.ts` adapts the app's Add member
+  action, `WorkspaceService.addMember`, to an operator acting as an owner or
+  admin.
 - `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer
   and transcript range reader; `conversation-text.ts` formats participant
   prose with shared display and plaintext helpers.
@@ -85,6 +88,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
+| `add_org_member` | Resolve the Organization in exactly one region | WorkspaceService.addMember as the named owner or admin: its account creation, membership write, relationship dispatch, directory push and email |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
@@ -299,7 +303,7 @@ together. It refuses with one of two codes, and the remedies differ:
   that ends every session into the Organization
   ([`workspace-retirement.md`](workspace-retirement.md)). No user passes, so
   trying another one cannot help. `send_message`, the two text reads,
-  `pause_sidekick` and `resume_sidekick` do not work in an abandoned
+  `pause_sidekick`, `resume_sidekick` and `add_org_member` do not work in an abandoned
   Organization.
 - `user_not_active_organization_user`: the named user has no active member or
   guest relationship in the Organization. Another user may pass.
@@ -405,6 +409,20 @@ to pair the attempt and result audit rows.
 `archive_sidekick` calls AutomationService `archive` the same way, in any
 lifecycle. It is the one of the three with no undo, so it is marked
 destructive.
+
+### Adding a member
+
+`add_org_member` calls `WorkspaceService.addMember`, the service behind the
+app's Add member action, as `adminUserId`, over a bridge method
+`addOrgMember`, audited as `add_org_member`. `engineeringUserAuth` reads that
+user's real role, so the service's own admin check decides, refusing with
+`workspace_admin_required`. The person becomes an active member at once, with
+no invitation to accept, and is emailed that `adminUserId` added them; the
+email is the one product signal that they were added, so the tool does not
+suppress it. Adding someone already a member is refused with
+`already_workspace_member`, so the tool takes no `operationId`; the bridge
+mints one per call only to pair the audit rows. The email address is kept out
+of the tool's log line, which names only the Organization and the acting user.
 
 ### Retiring an Organization
 
@@ -813,6 +831,27 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-19 — Add a member to an existing Organization
+
+**What changed:** `add_org_member` adds a person by email as a named owner or
+admin through `WorkspaceService.addMember`, over a new bridge method
+`addOrgMember`.
+
+**Why:** An operator asked to fold two one-person Organizations from the same
+firm into one and add a staff member. `create_org` seats members only at
+creation, and the only other route was inserting `workspace_members` rows,
+which the 2026-10-21 entry in [`multiple-workspaces.md`](multiple-workspaces.md)
+already rejected: it skips the relationship dispatch, directory push and
+seating the product's own add performs.
+
+**Considered and rejected:** Acting as the operator rather than a member of
+the Organization. Every write tool here acts as a selected user so the
+product's own permission check decides; adding by operator authority would be
+the first tool to bypass it.
+
+**Consequences:** The added person is always emailed, naming `adminUserId`.
+Anything that changes what `addMember` does reaches this tool unchanged.
 
 ### 2026-11-13 — Record every tool call in a lakehouse
 

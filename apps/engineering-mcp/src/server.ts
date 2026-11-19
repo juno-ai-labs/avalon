@@ -27,6 +27,8 @@ import {
   SetEngineeringSidekickPausedResultSchema,
   RetireEngineeringOrgInputSchema,
   RetireEngineeringOrgResultSchema,
+  AddEngineeringOrgMemberInputSchema,
+  AddEngineeringOrgMemberResultSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
   EngineeringSidekickListLookupSchema,
@@ -360,6 +362,15 @@ export function createEngineeringMcpServer(
     workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
   }, async () => ArchiveEngineeringSidekickResultSchema.parse(
     await (await organizationBinding(env, request.orgId)).archiveSidekick(request, principal))));
+
+  server.registerTool("add_org_member", {
+    description: "Add a person by email to an existing Organization as adminUserId, exactly as the app's Add member action does: they become an active member at once, with no invitation to accept, a guest becomes a member, a waiting invitation to the address is revoked, and they are emailed that adminUserId added them. An address with no account gets one that their first email sign-in lands on. adminUserId must be an active owner or admin there. Someone already a member is refused with already_workspace_member, so repeating is safe. Abandoned Organizations are refused.",
+    inputSchema: z.object(AddEngineeringOrgMemberInputSchema.unwrap().shape),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, (request) => tool(principal, "add_org_member", {
+    workspace_id: request.orgId, user_id: request.adminUserId,
+  }, async () => AddEngineeringOrgMemberResultSchema.parse(
+    await (await organizationBinding(env, request.orgId)).addOrgMember(request, principal))));
 
   server.registerTool("retire_org", {
     description: "Retire an Organization permanently through the regional retirement service: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Task-capable clients receive a durable handle to poll while failed passes are retried. Synchronous results report complete: false while parts are still open; call again with the same orgId to resume the walk.",

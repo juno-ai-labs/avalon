@@ -4,7 +4,7 @@ import { OrganizationUsageSchema, PlanIdSchema } from "./usage";
 import { z } from "zod";
 import { deferredZodSchema } from "./deferred-zod-schema";
 
-import { CreateMessageRequestSchema, RegionSchema, WorkspaceNameSchema, WorkstreamMessageAdmissionReceiptSchema } from "./index";
+import { AddWorkspaceMemberRequestSchema, AddWorkspaceMemberResponseSchema, CreateMessageRequestSchema, RegionSchema, WorkspaceNameSchema, WorkstreamMessageAdmissionReceiptSchema } from "./index";
 import { AutomationIdSchema } from "./automation-agent";
 import {
   ArtifactIdSchema,
@@ -100,6 +100,19 @@ export const ArchiveEngineeringSidekickResultSchema = deferredZodSchema(() => z.
   lifecycle: z.literal("deleted"),
 }));
 export type ArchiveEngineeringSidekickResult = z.infer<typeof ArchiveEngineeringSidekickResultSchema>;
+
+export const AddEngineeringOrgMemberInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema,
+  adminUserId: UserIdSchema.describe("An active owner or admin of the Organization to act as (use search_users). The email names them as the one who added the person."),
+  email: AddWorkspaceMemberRequestSchema.shape.email.describe("The address to add. A person with no account gets one their first email sign-in lands on."),
+  role: AddWorkspaceMemberRequestSchema.shape.role,
+}));
+export type AddEngineeringOrgMemberInput = z.infer<typeof AddEngineeringOrgMemberInputSchema>;
+export const AddEngineeringOrgMemberResultSchema = deferredZodSchema(() => AddWorkspaceMemberResponseSchema.extend({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+}));
+export type AddEngineeringOrgMemberResult = z.infer<typeof AddEngineeringOrgMemberResultSchema>;
 
 export const RetireEngineeringOrgInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema.describe("The Organization to close for good. Retiring it again resumes an unfinished walk."),
@@ -531,6 +544,7 @@ export interface EngineeringInspectionRpcBinding {
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
   archiveSidekick(input: ArchiveEngineeringSidekickInput, operator: EngineeringOperator): Promise<ArchiveEngineeringSidekickResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
+  addOrgMember(input: AddEngineeringOrgMemberInput, operator: EngineeringOperator): Promise<AddEngineeringOrgMemberResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
