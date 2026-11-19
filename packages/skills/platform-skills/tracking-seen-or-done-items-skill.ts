@@ -36,7 +36,9 @@ message id, a meeting id, an issue key — never a value the run makes up and ne
 expires, because a later run has to rebuild the same value from the outside
 world. Every key column has to be one of the table's declared \`columns\` as
 well. Rows deduplicate on those columns, which is what makes a second sighting
-cheap to ignore.
+cheap to ignore. A run started by an event finds the item's own id on its
+opening's \`About:\` line, as \`<type> <id>\`, and the resource it sits in on
+\`In:\`; key on the \`About:\` id.
 
 Include processing state and claim ownership as well as the source key. A row
 that says work was discovered or claimed is different from one that records

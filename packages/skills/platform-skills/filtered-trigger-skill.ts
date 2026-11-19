@@ -157,12 +157,14 @@ and an event that should not have been shared cannot be taken back.
 ## 5. Write the run instructions for what a run actually receives
 
 Each run starts with the event that was let in: its title, summary, snippet,
-and what it is about by the provider's own ids (for mail, \`About:
-gmail_message <id>\` and \`In: gmail_thread <id>\`; the message id is the
-stable key to record it under). New mail
+and what it is about, by stable ids. For mail that is
+\`About: gmail_message <id>\` and \`In: gmail_thread <id>\`; the message id is
+the key to record it under. When a later change to the same message must be
+acted on again, add the event type to the key. New mail
 (\`email.received\`) also comes with the full text of that one message. Every
 other mail change (\`email.updated\`: mail that was sent, relabelled, skipped
-the inbox or was removed) comes with those IDs and no full text. Write the
+the inbox or was removed, and new mail recovered after a gap in Rally's sync)
+comes with those ids and no full text. Write the
 Sidekick's instructions to work from that. A run
 cannot search or read a mailbox whose owner only shared a source, so do not
 write instructions that tell it to; if the work truly needs more than the one

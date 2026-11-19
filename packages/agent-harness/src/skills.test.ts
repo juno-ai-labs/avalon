@@ -1,4 +1,5 @@
-import { asUserId } from "@rally/contracts";
+import { TriggerDefinitionSchema, asUserId } from "@rally/contracts";
+import { externalEventOpening } from "@rally/prompts/api/external-event-opening";
 import { describe, expect, it, vi } from "vitest";
 import {
   BUILDING_LIVE_SITES_SKILL,
@@ -716,6 +717,17 @@ describe("built-in skills", () => {
     for (const tool of ["sidekick_test_source_condition", "sidekick_request_source", "sidekick_sources_list"]) {
       expect(body).toContain(`\`${tool}\``);
     }
+    // The ids it tells a drafter a run receives are spelled as the opening
+    // renders them: a renderer that changed its labels would leave the skill
+    // describing lines no run sees.
+    const opening = externalEventOpening({
+      id: "00000000-0000-7000-8000-0000000000e1", eventType: "email.received", title: "New email: Pilot",
+      summary: "From buyer@example.com", textSnippet: "", metadata: {}, occurredAt: 0,
+    }, { item: { type: "gmail_message", id: "<id>" }, resource: { type: "gmail_thread", id: "<id>" } }).textContent.split("\n");
+    expect(opening).toContain("About: gmail_message <id>");
+    expect(opening).toContain("In: gmail_thread <id>");
+    expect(body).toContain("`About: gmail_message <id>`");
+    expect(body).toContain("`In: gmail_thread <id>`");
   });
 
   it("states the polling floor the team set, and the rule that keeps a run honest", () => {
@@ -730,10 +742,13 @@ describe("built-in skills", () => {
     // The shared ledger procedure is loaded separately instead of copied here.
     expect(body).toContain("Load `tracking-seen-or-done-items`");
     expect(body).toContain("## Anti-patterns");
-    // The generic webhook connector and its `webhook` trigger were removed, and
-    // the draft tool this skill drives no longer accepts one: a body that still
-    // offered it would send a drafter to a trigger that is refused.
-    expect(body).not.toContain("`webhook`");
+    // Every trigger the body tells a drafter to use is one the draft accepts:
+    // the `webhook` trigger was removed, and a body still offering it, or the
+    // next removed type, would send the drafter to a trigger that is refused.
+    const accepted: ReadonlySet<string> = new Set(TriggerDefinitionSchema.unwrap().options.map((option) => option.shape.type.value));
+    const named = [...body.matchAll(/`([a-z][a-z_]*)` triggers?\b/gu)].map((match) => match[1]!);
+    expect(named).toEqual(["connector_activity", "calendar", "interval"]);
+    expect(named.filter((type) => !accepted.has(type))).toEqual([]);
     // Nothing starts a Sidekick from a `resource_watch` trigger — SidekickDO
     // builds it neither a schedule nor an evaluator — and it is exactly the kind
     // a model reaches for when told to watch one named document.

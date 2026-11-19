@@ -157,10 +157,10 @@ all of them is almost always what the person wanted, not one message each.
   thing being asked about. Read the event types first; keep the interval for
   what inspection rules out.
 - **An interval under ten minutes because the person said "right away".** Use
-  the floor and say so. What they actually want is an event: use the
-  connector's declared event when it has one, and otherwise say that the
-  connector cannot announce this change and the interval is the closest Rally
-  can come.
+  the floor and say so, in words. If step 1 found a declared event that fits,
+  that is what they want instead; otherwise name the gap step 1 established
+  (no such event, or a resource Rally could not resolve) and say the interval
+  is the closest Rally can come.
 - **Reaching for \`resource_watch\`.** Nothing starts a Sidekick from it. Use the
   source's declared events, or an interval.
 - **A run that posts to say it found nothing.** Post nothing; say so in one line in the run's own conversation instead.`;
