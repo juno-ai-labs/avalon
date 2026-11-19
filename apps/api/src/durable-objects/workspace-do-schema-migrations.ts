@@ -3479,14 +3479,24 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, CANVA_RETIREMENT_MIGRATION, {
   version: 153,
   description: "record the provider item a connector event is about, apart from its resource",
-  // See NormalizedActivity.item and docs/connectors.md. No backfill: a stored
-  // event without one reads as its resource being the item, which is what
-  // every adapter meant before Gmail and GitHub named a message or a comment.
+  // See NormalizedActivity.item and docs/connectors.md. A stored event
+  // without one reads as its resource being the item, which is what every
+  // adapter meant before Gmail and GitHub named a message or a comment. Gmail
+  // is backfilled because its subject already held the message id the item
+  // carries now, so a stored email event reads back as a new one would; a
+  // GitHub event's comment or review id is not in its stored subject, so it
+  // stays without one. The id is checked against the column's bounds so an
+  // odd stored subject is skipped rather than failing the migration.
   statements: [
     `ALTER TABLE workspace_connector_events ADD COLUMN item_type TEXT
        CHECK (item_type IS NULL OR length(item_type) BETWEEN 1 AND 200)`,
     `ALTER TABLE workspace_connector_events ADD COLUMN item_id TEXT
        CHECK (item_id IS NULL OR length(item_id) BETWEEN 1 AND 2000)
        CHECK ((item_id IS NULL) = (item_type IS NULL))`,
+    `UPDATE workspace_connector_events
+        SET item_type = 'gmail_message', item_id = json_extract(subject_json, '$.messageId')
+      WHERE provider = 'google' AND resource_type = 'gmail_thread' AND item_type IS NULL
+        AND json_valid(subject_json) AND json_type(subject_json, '$.messageId') = 'text'
+        AND length(json_extract(subject_json, '$.messageId')) BETWEEN 1 AND 2000`,
   ],
 }, GENERIC_WEBHOOK_RETIREMENT_MIGRATION];

@@ -1174,7 +1174,12 @@ function iso(value: number | null): string | null {
   return value === null ? null : new Date(value).toISOString();
 }
 
-function connectorEventFromRow(
+/**
+ * A stored connector event as `connectorEvent` answers it. Exported so a
+ * migration test can read a row an upgrade rewrote back through the same
+ * mapper, on an object that is not a WorkspaceDO.
+ */
+export function connectorEventFromRow(
   sql: SqlStorage,
   row: WorkspaceConnectorEventRow,
   workspaceId: string,
