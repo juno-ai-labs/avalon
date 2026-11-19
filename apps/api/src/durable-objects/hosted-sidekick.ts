@@ -549,6 +549,14 @@ export function skillSource(
   });
 }
 
+/** A stored event's `subject`, or null when the row is gone or it is not an object. */
+function parseEventSubject(json: string | undefined): Record<string, unknown> | null {
+  if (json === undefined) return null;
+  let subject: unknown;
+  try { subject = JSON.parse(json); } catch { return null; }
+  return typeof subject === "object" && subject !== null && !Array.isArray(subject) ? subject as Record<string, unknown> : null;
+}
+
 export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   constructor(host: HostedSidekickHost, sidekickId: string) {
     super(host, sidekickId, "automation");
@@ -2049,13 +2057,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
       }
     }
+    const subject = parseEventSubject(first(this.sql.exec<{ subject_json: string }>(
+      "SELECT subject_json FROM workspace_connector_events WHERE event_id = ?", request.event.id))?.subject_json);
     const admitted = this.admitOccurrence(row.accepted_definition_revision, externalEventOccurrenceKey(request.event), {
       kind: "external_event",
       workspaceEventId: request.event.id,
       eventType: request.event.eventType,
       occurredAt: request.event.occurredAt,
       payloadHash: request.payloadHash,
-    }, externalEventOpening(request.event, this.storedEventSubject(request.event.id)), coordinator);
+    }, externalEventOpening(request.event, subject), coordinator);
     return {
       admitted: true,
       outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",
@@ -3183,29 +3193,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * between admission and provisioning hands the run the event's summary and
    * nothing more. An Organization connection is the Sidekick's own.
    */
-  /**
-   * The stored event's `subject`: the connector's identity for what it is
-   * about. Read here rather than carried on the delivery, because the event
-   * row sits in this same storage and the Queue message has a size budget.
-   * An event the store no longer holds, or a subject that is not an object,
-   * gives the opening none.
-   */
-  private storedEventSubject(eventId: string): Record<string, unknown> | null {
-    const row = first(this.sql.exec<{ subject_json: string }>(
-      "SELECT subject_json FROM workspace_connector_events WHERE event_id = ?", eventId));
-    if (!row) return null;
-    let subject: unknown;
-    try { subject = JSON.parse(row.subject_json); } catch { return null; }
-    return typeof subject === "object" && subject !== null && !Array.isArray(subject) ? subject as Record<string, unknown> : null;
-  }
-
   private async runEventContent(trigger: AutomationRunTriggerV1): Promise<SidekickRunProvisioning["eventContent"]> {
     if (trigger.kind !== "external_event") return null;
     const event = first(this.sql.exec<{
-      connection_id: string; connector_type: string; event_type: string;
+      connection_id: string; connector_type: string; event_type: string; subject_json: string;
       connection_scope: string; connection_owner_user_id: string | null;
       target_user_ids_json: string; visibility_json: string;
-    }>(`SELECT connection_id, connector_type, event_type, connection_scope, connection_owner_user_id,
+    }>(`SELECT connection_id, connector_type, event_type, subject_json, connection_scope, connection_owner_user_id,
                target_user_ids_json, visibility_json
           FROM workspace_connector_events WHERE event_id = ?`, trigger.workspaceEventId));
     if (!event) return null;
@@ -3220,7 +3214,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       const eligible = await Promise.all(candidates.map((source) => this.sourceEligible(source)));
       if (!eligible.some(Boolean)) return null;
     }
-    const subject = this.storedEventSubject(trigger.workspaceEventId);
+    const subject = parseEventSubject(event.subject_json);
     if (!subject) return null;
     return { connectionId: event.connection_id, connectorType: event.connector_type, eventType: event.event_type, subject };
   }
