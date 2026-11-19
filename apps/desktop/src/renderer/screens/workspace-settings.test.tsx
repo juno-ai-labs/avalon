@@ -2622,6 +2622,18 @@ describe('Organization settings', () => {
       () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(secondOwner.id, 'admin'),
       { timeout: 10_000 },
     );
+
+    // Stepping down yourself is asked first: only another owner can undo it.
+    api.setWorkspaceMemberRole.mockClear();
+    await openMemberActions('Adam (adam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove owner' }));
+    const stepDown = await screen.findByRole('dialog', { name: 'Stop being an owner?' });
+    expect(api.setWorkspaceMemberRole).not.toHaveBeenCalled();
+    fireEvent.click(within(stepDown).getByRole('button', { name: 'Remove owner' }));
+    await waitFor(
+      () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(owner.id, 'admin'),
+      { timeout: 10_000 },
+    );
   });
 
   it('offers an ordinary member no member-role controls at all', async () => {

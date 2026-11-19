@@ -3553,7 +3553,6 @@ export type WorkspaceAttention = z.infer<typeof WorkspaceAttentionSchema>;
 export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSchema>;
 export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
 export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;
-export type AssignableMemberRole = z.infer<typeof AssignableMemberRoleSchema>;
 export type MemberRole = z.infer<typeof MemberRoleSchema>;
 export type UpdateWorkspaceMemberRoleRequest = z.infer<typeof UpdateWorkspaceMemberRoleRequestSchema>;
 export type ClientFeatureFlags = z.infer<typeof ClientFeatureFlagsSchema>;

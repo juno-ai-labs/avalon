@@ -206,10 +206,8 @@ asked for, and inventing a ceiling here would be
 
 - `apps/api/test/workspace-member-roles.test.ts` — the whole write against the
   checked-in migrations through `migratedSqliteDatabase()`, so the column's
-  `CHECK` and the conditional `WHERE` are the production ones. It covers
-  ownership too: an owner making a second owner, an admin refused it, a caller
-  whose ownership went away between the read and the write, and the last-owner
-  guard. The sync publish
+  `CHECK` and the conditional `WHERE` are the production ones. The owner guards are
+  covered there too. The sync publish
   is doubled, because it addresses a WorkspaceDO and the Node suite runs none —
   and it is *asserted on*, both for the two topics a committed change publishes
   and for the silence a no-op or a refusal owes. A double nobody asserts on lets
@@ -238,8 +236,9 @@ proved only that the owner was there.
 owner may make another member an owner and may change any owner's role,
 including their own. Admins still move people only between `admin` and
 `member`. Demoting the last active owner is refused as `last_workspace_owner`.
-The desktop offers "Make owner", behind a confirmation, and "Remove owner" to
-owners; the error code
+The desktop offers "Make owner" and "Remove owner" to owners, and asks first
+for the two changes an owner cannot undo alone: granting ownership, and
+stepping down from it. The error code
 `cannot_change_owner_role` is gone.
 
 **Why:** Ownership could not be shared or handed on. Whoever created the
@@ -348,5 +347,6 @@ rather than merely narrow. Anything new that gates on a role must accept
 `owner` or `admin`. The last-administrator guard is the only thing standing
 between a demotion and an unrecoverable workspace, and it lives in the `WHERE`
 of the write — a future refactor that moves the check ahead of the statement
-re-opens the race it was written to close. Ownership was still untransferable
-at this point; whoever created a workspace was its owner forever.
+re-opens the race it was written to close. Ownership is still untransferable;
+whoever creates a workspace is its owner forever, and a product that needs that
+to change needs a separate operation with its own guards.

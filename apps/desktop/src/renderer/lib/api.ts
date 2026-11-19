@@ -1,4 +1,4 @@
-import type { NotificationChannel } from '@rally/contracts';
+import type { MemberRole, NotificationChannel } from '@rally/contracts';
 import { SharedCanvasesSettingSchema, type SharedCanvasesSetting } from '@rally/contracts/canvas-share-federation';
 import { WorkstreamMessageAdmissionReceiptSchema, type CreateMessageRequestSchema, type WorkstreamMessageAdmissionReceipt } from '@rally/contracts';
 import { CrashIngestResponseSchema, type ProductAnalyticsPreference } from '@rally/contracts/telemetry';
@@ -1082,7 +1082,7 @@ export class RallyApi {
   }
 
   /** Set an existing member's role. Only an owner may grant or take away `owner`. */
-  async setWorkspaceMemberRole(userId: string, role: 'owner' | 'admin' | 'member'): Promise<void> {
+  async setWorkspaceMemberRole(userId: string, role: MemberRole): Promise<void> {
     await this.requestVoid(`/workspace/members/${encodeURIComponent(userId)}/role`, {
       method: 'PATCH',
       body: { role },

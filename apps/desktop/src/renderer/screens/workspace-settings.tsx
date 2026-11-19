@@ -56,7 +56,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, WorkspaceNameSchema, connectorApiKeyAcceptable } from '@rally/contracts';
-import type { AddWorkspaceMemberResponse } from '@rally/contracts';
+import type { AddWorkspaceMemberResponse, MemberRole } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -788,9 +788,12 @@ export function WorkspaceSettingsScreen({
     ];
   }, [members.data]);
   const [suspension, setSuspension] = useState<{ id: string; name: string; guest: boolean } | null>(null);
-  // Asked first because it cannot be taken back alone: a new owner can remove
-  // the owner who made them one.
-  const [ownerGrant, setOwnerGrant] = useState<{ id: string; name: string } | null>(null);
+  // The two ownership changes the viewer cannot undo alone are asked first:
+  // granting it, since a new owner can demote the owner who made them one, and
+  // stepping down from it, since only another owner can give it back. Removing
+  // another owner is not asked: the viewer stays an owner and can restore it.
+  const [ownerChange, setOwnerChange] = useState<{ id: string; name: string; role: 'owner' | 'admin' } | null>(null);
+  const closeOwnerChange = () => { setMemberRole.reset(); setOwnerChange(null); };
   // "Suspend" is the server's member removal: the row goes, access ends at
   // once, and an invitation brings them back. Their contributions stay.
   const suspendMember = useMutation({
@@ -1072,7 +1075,7 @@ export function WorkspaceSettingsScreen({
   // a `promote`/`demote` pair would be two pending states and two error slots
   // for one field with two values.
   const setMemberRole = useMutation({
-    mutationFn: (input: { userId: string; role: 'owner' | 'admin' | 'member' }) =>
+    mutationFn: (input: { userId: string; role: MemberRole }) =>
       api!.setWorkspaceMemberRole(input.userId, input.role),
     onSuccess: () => Promise.all([
       queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
@@ -1869,7 +1872,11 @@ export function WorkspaceSettingsScreen({
                                     // Taking ownership away leaves an administrator:
                                     // one step down, not two.
                                     <DropdownMenu.Item className="menu-item" disabled={setMemberRole.isPending}
-                                      onSelect={() => setMemberRole.mutate({ userId: member.id, role: 'admin' })}>
+                                      onSelect={() => {
+                                        if (!self) { setMemberRole.mutate({ userId: member.id, role: 'admin' }); return; }
+                                        setMemberRole.reset();
+                                        setOwnerChange({ id: member.id, name: member.name, role: 'admin' });
+                                      }}>
                                       Remove owner
                                     </DropdownMenu.Item>
                                   ) : (
@@ -1883,7 +1890,7 @@ export function WorkspaceSettingsScreen({
                                       </DropdownMenu.Item>
                                       {viewerIsOwner && (
                                         <DropdownMenu.Item className="menu-item" disabled={setMemberRole.isPending}
-                                          onSelect={() => { setMemberRole.reset(); setOwnerGrant({ id: member.id, name: member.name }); }}>
+                                          onSelect={() => { setMemberRole.reset(); setOwnerChange({ id: member.id, name: member.name, role: 'owner' }); }}>
                                           Make owner
                                         </DropdownMenu.Item>
                                       )}
@@ -1905,7 +1912,8 @@ export function WorkspaceSettingsScreen({
                     );
                   })}
                 </div>
-                {setMemberRole.error && <ErrorNotice occurrence={setMemberRole.error}>{setMemberRole.error.message}</ErrorNotice>}
+                {/* While the ownership dialog is open, its own notice carries the error. */}
+                {setMemberRole.error && ownerChange === null && <ErrorNotice occurrence={setMemberRole.error}>{setMemberRole.error.message}</ErrorNotice>}
 
                 <Modal open={suspension !== null} onOpenChange={(open) => { if (!open && !suspendMember.isPending) setSuspension(null); }}
                   title={`Suspend ${suspension?.name ?? 'this person'}?`}
@@ -1920,14 +1928,16 @@ export function WorkspaceSettingsScreen({
                   {suspendMember.error && <ErrorNotice occurrence={suspendMember.error}>{suspendMember.error.message}</ErrorNotice>}
                 </Modal>
 
-                <Modal open={ownerGrant !== null} onOpenChange={(open) => { if (!open && !setMemberRole.isPending) setOwnerGrant(null); }}
-                  title={`Make ${ownerGrant?.name ?? 'this person'} an owner?`}
-                  description="Owners have full control of this organization. They can make other owners, and remove or demote any owner, including you."
+                <Modal open={ownerChange !== null} onOpenChange={(open) => { if (!open && !setMemberRole.isPending) closeOwnerChange(); }}
+                  title={ownerChange?.role === 'admin' ? 'Stop being an owner?' : `Make ${ownerChange?.name ?? 'this person'} an owner?`}
+                  description={ownerChange?.role === 'admin'
+                    ? 'You become an administrator. Only another owner can make you an owner again.'
+                    : 'Owners have full control of this organization. They can make other owners, and remove or demote any owner, including you.'}
                   footer={<>
-                    <Button disabled={setMemberRole.isPending} onClick={() => setOwnerGrant(null)}>Cancel</Button>
+                    <Button disabled={setMemberRole.isPending} onClick={closeOwnerChange}>Cancel</Button>
                     <Button disabled={setMemberRole.isPending}
-                      onClick={() => { if (ownerGrant) setMemberRole.mutate({ userId: ownerGrant.id, role: 'owner' }, { onSuccess: () => setOwnerGrant(null) }); }}>
-                      Make owner
+                      onClick={() => { if (ownerChange) setMemberRole.mutate({ userId: ownerChange.id, role: ownerChange.role }, { onSuccess: () => setOwnerChange(null) }); }}>
+                      {ownerChange?.role === 'admin' ? 'Remove owner' : 'Make owner'}
                     </Button>
                   </>}>
                   {setMemberRole.error && <ErrorNotice occurrence={setMemberRole.error}>{setMemberRole.error.message}</ErrorNotice>}
