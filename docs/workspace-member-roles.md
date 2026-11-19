@@ -238,7 +238,8 @@ proved only that the owner was there.
 owner may make another member an owner and may change any owner's role,
 including their own. Admins still move people only between `admin` and
 `member`. Demoting the last active owner is refused as `last_workspace_owner`.
-The desktop offers "Make owner" and "Remove owner" to owners; the error code
+The desktop offers "Make owner", behind a confirmation, and "Remove owner" to
+owners; the error code
 `cannot_change_owner_role` is gone.
 
 **Why:** Ownership could not be shared or handed on. Whoever created the

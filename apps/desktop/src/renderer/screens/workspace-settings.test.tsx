@@ -2598,10 +2598,22 @@ describe('Organization settings', () => {
 
     await openMemberActions('Sam (sam@example.com) member actions');
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make owner' }));
+    // Nothing is granted until the owner confirms; cancelling grants nothing.
+    const confirm = await screen.findByRole('dialog', { name: 'Make Sam an owner?' });
+    expect(api.setWorkspaceMemberRole).not.toHaveBeenCalled();
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(api.setWorkspaceMemberRole).not.toHaveBeenCalled();
+
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make owner' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Make Sam an owner?' }))
+      .getByRole('button', { name: 'Make owner' }));
     await waitFor(
       () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(member.id, 'owner'),
       { timeout: 10_000 },
     );
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
     await openMemberActions('Riley (riley@example.com) member actions');
     expect(screen.getByRole('menuitem', { name: 'Suspend' })).toBeInTheDocument();

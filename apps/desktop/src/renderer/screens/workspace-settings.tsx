@@ -788,6 +788,9 @@ export function WorkspaceSettingsScreen({
     ];
   }, [members.data]);
   const [suspension, setSuspension] = useState<{ id: string; name: string; guest: boolean } | null>(null);
+  // Asked first because it cannot be taken back alone: a new owner can remove
+  // the owner who made them one.
+  const [ownerGrant, setOwnerGrant] = useState<{ id: string; name: string } | null>(null);
   // "Suspend" is the server's member removal: the row goes, access ends at
   // once, and an invitation brings them back. Their contributions stay.
   const suspendMember = useMutation({
@@ -1880,7 +1883,7 @@ export function WorkspaceSettingsScreen({
                                       </DropdownMenu.Item>
                                       {viewerIsOwner && (
                                         <DropdownMenu.Item className="menu-item" disabled={setMemberRole.isPending}
-                                          onSelect={() => setMemberRole.mutate({ userId: member.id, role: 'owner' })}>
+                                          onSelect={() => { setMemberRole.reset(); setOwnerGrant({ id: member.id, name: member.name }); }}>
                                           Make owner
                                         </DropdownMenu.Item>
                                       )}
@@ -1915,6 +1918,19 @@ export function WorkspaceSettingsScreen({
                     <Button className="button-danger" disabled={suspendMember.isPending} onClick={() => { if (suspension) suspendMember.mutate(suspension.id); }}>Suspend</Button>
                   </>}>
                   {suspendMember.error && <ErrorNotice occurrence={suspendMember.error}>{suspendMember.error.message}</ErrorNotice>}
+                </Modal>
+
+                <Modal open={ownerGrant !== null} onOpenChange={(open) => { if (!open && !setMemberRole.isPending) setOwnerGrant(null); }}
+                  title={`Make ${ownerGrant?.name ?? 'this person'} an owner?`}
+                  description="Owners have full control of this organization. They can make other owners, and remove or demote any owner, including you."
+                  footer={<>
+                    <Button disabled={setMemberRole.isPending} onClick={() => setOwnerGrant(null)}>Cancel</Button>
+                    <Button disabled={setMemberRole.isPending}
+                      onClick={() => { if (ownerGrant) setMemberRole.mutate({ userId: ownerGrant.id, role: 'owner' }, { onSuccess: () => setOwnerGrant(null) }); }}>
+                      Make owner
+                    </Button>
+                  </>}>
+                  {setMemberRole.error && <ErrorNotice occurrence={setMemberRole.error}>{setMemberRole.error.message}</ErrorNotice>}
                 </Modal>
 
                 <Modal open={promotion !== null} onOpenChange={(open) => { if (!open) setPromotion(null); }} title="Make guest a member"
