@@ -23,10 +23,14 @@ import {
   SendEngineeringMessageInputSchema,
   SendEngineeringMessageResultSchema,
   ArchiveEngineeringSidekickResultSchema,
+  ArchiveEngineeringCanvasInputSchema,
+  ArchiveEngineeringCanvasResultSchema,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   RetireEngineeringOrgInputSchema,
   RetireEngineeringOrgResultSchema,
+  AddEngineeringOrgMemberInputSchema,
+  AddEngineeringOrgMemberResultSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
   EngineeringSidekickListLookupSchema,
@@ -360,6 +364,24 @@ export function createEngineeringMcpServer(
     workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
   }, async () => ArchiveEngineeringSidekickResultSchema.parse(
     await (await organizationBinding(env, request.orgId)).archiveSidekick(request, principal))));
+
+  server.registerTool("add_org_member", {
+    description: "Add a person by email to an existing Organization as adminUserId, exactly as the app's Add member action does: they become an active member at once, with no invitation, and are emailed that adminUserId added them. adminUserId must be an active owner or admin there, and an owner to add an owner (workspace_owner_required). A refusal with already_workspace_member means they are already a member, so repeating is safe; it does not resend the email. Abandoned Organizations are refused.",
+    inputSchema: z.object(AddEngineeringOrgMemberInputSchema.unwrap().shape),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, (request) => tool(principal, "add_org_member", {
+    workspace_id: request.orgId, user_id: request.adminUserId,
+  }, async () => AddEngineeringOrgMemberResultSchema.parse(
+    await (await organizationBinding(env, request.orgId)).addOrgMember(request, principal))));
+
+  server.registerTool("archive_canvas", {
+    description: "Archive a Canvas as userId, exactly as the app's Archive action does: it leaves everyone's Canvas list, its conversations and artifacts are archived, open sessions into it lose access, and every Sidekick made in it is archived too. There is no undo. userId must be allowed to manage the Canvas in the app. Archiving an archived Canvas changes nothing. Refused in an abandoned Organization.",
+    inputSchema: z.object(ArchiveEngineeringCanvasInputSchema.unwrap().shape),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "archive_canvas", {
+    workspace_id: request.orgId, workstream_id: request.canvasId, user_id: request.userId,
+  }, async () => ArchiveEngineeringCanvasResultSchema.parse(
+    await (await organizationBinding(env, request.orgId)).archiveCanvas(request, principal))));
 
   server.registerTool("retire_org", {
     description: "Retire an Organization permanently through the regional retirement service: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Task-capable clients receive a durable handle to poll while failed passes are retried. Synchronous results report complete: false while parts are still open; call again with the same orgId to resume the walk.",

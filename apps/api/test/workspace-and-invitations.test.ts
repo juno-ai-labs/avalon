@@ -8,6 +8,8 @@ import type { AuthContext, Env, IdentityAuthContext } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
 import { AuthService, __authServiceTesting } from "../src/services/auth-service";
 import { resolveVerifiedEmailIdentity } from "../src/services/login-identity-service";
+import { addEngineeringOrgMember } from "../src/services/engineering-members";
+import { openWorkstreamAuthorityForTest } from "./helpers/durable-authority";
 import {
   acceptInvitationForUser,
   declineInvitationForUser,
@@ -741,6 +743,50 @@ describe("adding members, and the invitations still waiting from before", () => 
         DB: sqliteD1(database), APP_ENV: "production", AVALON_REGION: "enterprise" }), ownerAuth);
       const added = await service.addMember("nancy@example.com", "member");
       expect(database.prepare(`SELECT platform_user_id FROM users WHERE id = ?`).get(added.member.userId)).toEqual({ platform_user_id: null });
+    } finally { database.close(); }
+  });
+
+  it("adds through the engineering tool with the acting user's own role, refusing one who is not an admin there", async () => {
+    const database = seeded();
+    // The engineering entryway resolves the Organization's authority route before acting.
+    openWorkstreamAuthorityForTest(database);
+    const memberId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79e2";
+    database.prepare(`INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?,?,?,?,?)`)
+      .run(memberId, "member@example.com", "Member", "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z");
+    database.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,access_class,status,joined_at) VALUES (?,?,?,?,?,?)`)
+      .run(invitationRow.workspace_id, memberId, "member", "member", "active", "2026-08-01T00:00:00.000Z");
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
+    emailSend = resend;
+    const env = environment(new StubDatabase(() => undefined), { DB: sqliteD1(database), APP_ENV: "production" });
+    const orgId = asWorkspaceId(invitationRow.workspace_id);
+    try {
+      await expect(addEngineeringOrgMember(env, { orgId, adminUserId: asUserId(memberId), email: "nancy@example.com", role: "member" }, "op-refused"))
+        .rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });
+      expect(database.prepare(`SELECT COUNT(*) AS n FROM users WHERE email = ?`).get("nancy@example.com")).toEqual({ n: 0 });
+
+      const added = await addEngineeringOrgMember(env, { orgId, adminUserId: asUserId(ownerAuth.userId), email: "nancy@example.com", role: "admin" }, "op-added");
+      expect(added).toEqual({ region: "global", orgId: invitationRow.workspace_id, emailDelivery: "sent",
+        member: { userId: expect.any(String), email: "nancy@example.com", role: "admin" } });
+      expect(membership(database, added.member.userId)).toEqual({ role: "admin", access_class: "member", status: "active" });
+      expect(resend.mock.calls[0]![0].subject).toBe("Owner added you to Avalon Studio on Rally");
+      // Open Settings windows drop the invitation the add revoked, as after the app's own add.
+      expect(publishWorkspaceSync).toHaveBeenCalledWith(env, invitationRow.workspace_id, ["member_directory", "invitation_directory"]);
+    } finally { database.close(); }
+  });
+
+  it("adds an owner only for an owner, and tells them they are one", async () => {
+    const database = seeded();
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
+    emailSend = resend;
+    try {
+      await expect(addAs(database, "admin").addMember("nancy@example.com", "owner"))
+        .rejects.toMatchObject({ status: 403, code: "workspace_owner_required" });
+      expect(database.prepare(`SELECT COUNT(*) AS n FROM users WHERE email = ?`).get("nancy@example.com")).toEqual({ n: 0 });
+
+      const added = await addAs(database).addMember("nancy@example.com", "owner");
+      expect(added.member.role).toBe("owner");
+      expect(membership(database, added.member.userId)).toEqual({ role: "owner", access_class: "member", status: "active" });
+      expect(String(resend.mock.calls[0]![0].text)).toContain("Owner added you to Avalon Studio as an owner.");
     } finally { database.close(); }
   });
 

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
-import { engineeringUserAuth } from "../src/services/engineering-creation";
+import { engineeringUserAuth } from "../src/services/engineering-user-auth";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest } from "./helpers/durable-authority";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
