@@ -2,7 +2,7 @@ import type { ArchiveEngineeringCanvasInput, ArchiveEngineeringCanvasResult } fr
 
 import type { Env } from "../env";
 import { CanvasService } from "./canvas-service";
-import { engineeringUserAuth } from "./engineering-creation";
+import { engineeringUserAuth } from "./engineering-user-auth";
 
 /**
  * Archive a Canvas as a selected user, through the service the app's Archive

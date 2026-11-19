@@ -22,8 +22,9 @@ available to Rally users by virtue of product membership.
 - `apps/api/src/engineering-inspection-bridge.ts` is the private named
   `WorkerEntrypoint` exported by each regional API Worker.
 - `apps/api/src/services/engineering-creation.ts` adapts operator Organization
-  creation to regional onboarding, and resolves the selected user's
-  authority (`engineeringUserAuth`).
+  creation to regional onboarding.
+- `apps/api/src/services/engineering-user-auth.ts` resolves the selected
+  user's authority (`engineeringUserAuth`) for every tool that acts as one.
 - `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer
   and transcript range reader; `conversation-text.ts` formats participant
   prose with shared display and plaintext helpers.
