@@ -19,17 +19,16 @@ something later does not take it back. Write every one of them for that reader.
 
 Never put any of the following into a pull request or its commits:
 
-- **Personal information**: names, email addresses, phone numbers, or anything
-  else that identifies a real user, customer, or employee, and any content from
-  their Canvases, Sidekicks, connectors, or messages.
+- **Personal information**: anything that identifies a user or customer,
+  an employee's contact details, and any content from users' Canvases,
+  Sidekicks, connectors, or messages. Authors, reviewers, and `Co-Authored-By`
+  lines name employees by design and are fine.
 - **Device identifiers**: hardware or install IDs, serial numbers, UDIDs, push
-  tokens, Expo or EAS device and build IDs, hostnames, IP addresses, or MAC
-  addresses.
-- **Resource IDs**: real organization, workspace, user, Canvas (`workstream`),
-  Sidekick (`automation`), artifact, or session IDs; Cloudflare account, zone,
-  D1, KV, R2, or Durable Object IDs; provider IDs such as Slack team, channel, or
-  user IDs, Linear issue IDs, or Stripe customer and invoice IDs; and request or
-  trace IDs from production or staging.
+  tokens, Expo or EAS device and build IDs, machine or internal hostnames, IP
+  addresses, or MAC addresses. Public service hostnames are fine.
+- **Resource IDs**: any real ID from production or staging (Rally entities,
+  Cloudflare resources, provider objects such as Slack, Linear, or Stripe IDs),
+  and request or trace IDs.
 - **Secrets**, as [`security.md`](security.md) already forbids.
 
 This is stricter than the logging policy. [`runbook.md`](runbook.md) keeps
@@ -41,10 +40,11 @@ a paused Sidekick"). Crop or blur screenshots taken against real accounts, and
 cut identifiers out of pasted logs and error output before they go in
 **Validation** or **Reviewer notes**.
 
-If one slips in, edit it out at once and tell the team in private. The edit
-history still holds the old text until someone with write access deletes that
-revision, and a value in a pushed commit stays in the branch history until the
-commit is rewritten.
+If one slips in, edit it out and tell the team in private. A secret is
+compromised the moment it is pushed: rotate it. An edited comment keeps the old
+text in its edit history until someone with write access deletes that revision,
+and a pushed commit stays reachable through the pull request even after the
+branch is rewritten; only GitHub Support can purge it.
 
 ## Required sections
 
