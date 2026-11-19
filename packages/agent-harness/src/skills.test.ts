@@ -730,10 +730,10 @@ describe("built-in skills", () => {
     // The shared ledger procedure is loaded separately instead of copied here.
     expect(body).toContain("Load `tracking-seen-or-done-items`");
     expect(body).toContain("## Anti-patterns");
-    // `webhook` is a submittable trigger on the very draft tool this skill
-    // drives, so a body that names only the other two event kinds sends a
-    // drafter to the team for something it could have drafted.
-    expect(body).toContain("`webhook`");
+    // The generic webhook connector and its `webhook` trigger were removed, and
+    // the draft tool this skill drives no longer accepts one: a body that still
+    // offered it would send a drafter to a trigger that is refused.
+    expect(body).not.toContain("`webhook`");
     // Nothing starts a Sidekick from a `resource_watch` trigger — SidekickDO
     // builds it neither a schedule nor an evaluator — and it is exactly the kind
     // a model reaches for when told to watch one named document.
