@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { ORGANIZATION_MODEL_NAMES, modelEnum, modelFailureCode, modelFailureText, modelName, modelValues, storedName, withModelNames } from "./model-names";
+import { ORGANIZATION_MODEL_NAMES, modelEnum, modelFailure, modelFailureCode, modelFailureText, modelName, modelValues, storedName, withModelNames } from "./model-names";
 
 const SCOPES = ["personal", "workspace"] as const;
 
@@ -58,5 +58,10 @@ describe("model names", () => {
     expect(modelFailureText("Path /workspace/.rally-output/workstream_notes.md was not found"))
       .toBe("Path /workspace/.rally-output/workstream_notes.md was not found");
     expect(modelFailureText("workspace")).toBe("workspace");
+    expect(modelFailureCode("automation_not_found")).toBe("sidekick_not_found");
+    // The message and the code are translated together; the details are not touched.
+    expect(modelFailure({ error: "workstream_archived", data: { code: "workstream_archived", details: { field: "workspace_id" } } }))
+      .toEqual({ error: "canvas_archived", data: { code: "canvas_archived", details: { field: "workspace_id" } } });
+    expect(modelFailure({ error: "Read it again." })).toEqual({ error: "Read it again." });
   });
 });

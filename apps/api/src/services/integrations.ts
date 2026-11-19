@@ -1,5 +1,6 @@
 import { requireUsageAllowance, isUsageAllowanceExhausted } from "./usage-admission";
 import { agentModelTraceFeature } from "@rally/contracts/runtime-config";
+import { ORGANIZATION_MODEL_NAMES, modelFailure, modelName } from "@rally/contracts/model-names";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
 
@@ -1387,17 +1388,21 @@ async function projectModelProtocolTranscript(
       } else {
         const durableError = parseJson<{ code?: unknown; message?: unknown; data?: unknown }>(row.errorJson, {});
         const structured = readStructuredFailure(durableError.data);
+        // The receipt keeps the stored code; the model reads it as it did
+        // when the call failed, in product words.
         resultContent = {
           success: false,
           kind: row.status === "ambiguous" ? "ambiguous_external_write" : "external",
-          error: typeof durableError.message === "string"
-            ? durableError.message.slice(0, 500)
-            : typeof durableError.code === "string"
-              ? durableError.code.slice(0, 120)
-              : row.status === "ambiguous"
-                ? "ambiguous_external_write"
-                : "tool_failed",
-          ...(structured ? { data: structured } : {}),
+          ...modelFailure({
+            error: typeof durableError.message === "string"
+              ? durableError.message.slice(0, 500)
+              : typeof durableError.code === "string"
+                ? durableError.code.slice(0, 120)
+                : row.status === "ambiguous"
+                  ? "ambiguous_external_write"
+                  : "tool_failed",
+            data: structured ?? undefined,
+          }),
         };
       }
 
@@ -6992,7 +6997,7 @@ function servedThrough<Result extends { output: unknown; summary: string }>(
   return {
     ...result,
     output: output && typeof output === "object" && !Array.isArray(output)
-      ? { ...output, servedThrough: { plugin: served.modelPluginId, scope: served.scope, couldNotReach: refused.modelPluginId } }
+      ? { ...output, servedThrough: { plugin: served.modelPluginId, scope: modelName(ORGANIZATION_MODEL_NAMES, served.scope), couldNotReach: refused.modelPluginId } }
       : output,
     summary: `${result.summary} (through ${served.modelPluginId}; ${refused.modelPluginId} could not reach it)`,
   };
@@ -7162,10 +7167,10 @@ async function assertExecutionPrincipalAuthorized(
   principal: WorkstreamWorkflowInput["executionPrincipal"],
 ): Promise<boolean> {
   if (principal.type === "workspace") {
-    if (principal.workspaceId !== workspaceId) throw new ConnectorError("unauthorized", "Workspace principal mismatch");
+    if (principal.workspaceId !== workspaceId) throw new ConnectorError("unauthorized", "Organization principal mismatch");
     const workspace = await db.prepare("SELECT id FROM workspaces WHERE id = ?")
       .bind(workspaceId).first<{ id: string }>();
-    if (!workspace) throw new ConnectorError("unauthorized", "Workspace is unavailable");
+    if (!workspace) throw new ConnectorError("unauthorized", "Organization is unavailable");
     return false;
   }
   const member = await db.prepare(
@@ -7174,7 +7179,7 @@ async function assertExecutionPrincipalAuthorized(
        JOIN users u ON u.id = wm.user_id
       WHERE wm.workspace_id = ? AND wm.user_id = ?`,
   ).bind(workspaceId, principal.userId).first<{ status: string; access_class?: string }>();
-  if (member?.status !== "active") throw new ConnectorError("unauthorized", "User is not an active workspace member");
+  if (member?.status !== "active") throw new ConnectorError("unauthorized", "User is not an active member of this Organization");
   return member.access_class === "guest";
 }
 
@@ -7224,7 +7229,7 @@ async function readRunAuthority(
   ]);
   let startedAt: number;
   if (!workstream || workstream.archived_at != null) {
-    throw new ConnectorError("unauthorized", "Work stream is no longer active");
+    throw new ConnectorError("unauthorized", "This conversation is no longer active");
   }
 
   // Eligibility is selected at activation and reused during this attempt.
@@ -7261,13 +7266,13 @@ async function readRunAuthority(
     const access = await parent.authorizeViewer(viewer);
     recordOptionalTiming(onTiming, "conversation", startedAt);
     if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
-    if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
+    if (access.archived) throw new ConnectorError("unauthorized", "This conversation is no longer active");
   } else if (!input.automationRun && (input.parentKind === "canvas" || (input.substreamId && input.substreamId !== "0"))) {
     startedAt = Date.now();
     const parent = await conversationParentStub(env, input);
     const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
     recordOptionalTiming(onTiming, "conversation", startedAt);
-    if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
+    if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "This conversation is no longer active");
   }
 
   if (!input.automationRun) {
@@ -9152,7 +9157,7 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
       definition: {
         name: "search",
         description:
-          "Search the public web only when the request is about public information. Never use this instead of an available connector for private workspace data such as Drive, Gmail, GitHub, Linear, or Notion. Returns ranked links with titles and descriptions, not page content. Read selected results with web_fetch.",
+          "Search the public web only when the request is about public information. Never use this instead of an available connector for the Organization's private data such as Drive, Gmail, GitHub, Linear, or Notion. Returns ranked links with titles and descriptions, not page content. Read selected results with web_fetch.",
         capability: "web.search",
         mode: "read",
         idempotency: "safe",

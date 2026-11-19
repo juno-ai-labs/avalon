@@ -2005,7 +2005,7 @@ describe("connector tools selected for harness runs", () => {
         database.memberStatus = "removed";
         void row;
       },
-      message: "User is not an active workspace member",
+      message: "User is not an active member of this Organization",
     },
     {
       authority: "personal connection ownership",

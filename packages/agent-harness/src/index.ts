@@ -13,7 +13,7 @@ import type {
   StructuredFailureDetail,
   ToolDefinition
 } from "@rally/contracts";
-import { ORGANIZATION_MODEL_NAMES, modelName, withModelNames } from "@rally/contracts/model-names";
+import { ORGANIZATION_MODEL_NAMES, modelName } from "@rally/contracts/model-names";
 import { normalizedPluginSearchText } from "@rally/prompts/harness/plugin-catalog";
 import {
   AddressingClassificationSchema,

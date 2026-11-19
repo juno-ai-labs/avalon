@@ -39,6 +39,8 @@ import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./conne
 export interface AuthoredToolSchema {
   name: string;
   schema: Record<string, unknown>;
+  /** The tool's description, as the model reads it beside the schema. */
+  description: string;
 }
 
 const workflowInput = (): WorkstreamWorkflowInput => ({
@@ -91,7 +93,7 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
   // web plugins both export a tool called `search`, and `memory.write` covers
   // two. A failure has to name one tool unambiguously to be worth reading.
   const core = __integrationTesting.createAvalonTools(env, workflowInput())
-    .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
+    .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema, description: tool.definition.description }));
   // The Sidekick creator's four tools are added by hand because they are
   // built against run state rather than registered, so nothing that walks a
   // registry can see them.
@@ -99,9 +101,9 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
     ...AVALON_DISCOVERY_TOOL_DEFINITIONS,
     ...AVALON_SKILL_TOOL_DEFINITIONS,
     ...AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
-  ].map((definition) => ({ name: label(definition), schema: definition.inputSchema }));
+  ].map((definition) => ({ name: label(definition), schema: definition.inputSchema, description: definition.description }));
   const terminal = TERMINAL_TOOL_DEFINITIONS
-    .map((definition) => ({ name: `terminal.${definition.name}`, schema: definition.inputSchema }));
+    .map((definition) => ({ name: `terminal.${definition.name}`, schema: definition.inputSchema, description: definition.description }));
   // Built by hand and with its credentials supplied, because the factory
   // returns `null` without the Azure inference pair — so an environment that
   // does not carry one drops three served tools out of a walk claiming to cover
@@ -113,7 +115,7 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
     AZURE_INFERENCE_API_KEY: "test-azure-key",
   });
   const multimodal = (createAvalonMultimodalGenerationPlugin(multimodalEnv, workflowInput())?.tools ?? [])
-    .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
+    .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema, description: tool.definition.description }));
   // Built for a manager's wizard turn in a Sidekick's configuration
   // conversation, the one scope offering all four tools (attach and post are
   // given only to a turn the claim marked `sidekickWizard`); pre-pagination, so
@@ -123,7 +125,7 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
     { ...workflowInput(), parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a", sidekickWizard: true },
     conversationToolPorts(env, workflowInput()),
     (tool) => [tool],
-  )?.tools ?? []).map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
+  )?.tools ?? []).map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema, description: tool.definition.description }));
   const registry = createTestConnectorRegistry();
   const taskOutcome = (createSidekickTaskOutcomePlugin(WorkstreamWorkflowInputSchema.parse({
     ...workflowInput(), parentKind: "automation", parentId: "00000000-0000-4000-8000-00000000000a",
@@ -132,14 +134,15 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
     automationRun: { schemaVersion: 1, automationId: "00000000-0000-4000-8000-00000000000a",
       runId: "00000000-0000-4000-8000-000000000003", definitionRevision: 1,
       trigger: { kind: "manual", requestedByUserId: "00000000-0000-4000-8000-000000000000" } },
-  }))?.tools ?? []).map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
+  }))?.tools ?? []).map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema, description: tool.definition.description }));
   const connectors = registry.list().flatMap((manifest) =>
     registry.get(manifest.type).agentPlugin.tools.map((definition) => ({
       name: `${manifest.type}.${definition.name}`,
       schema: definition.inputSchema,
+      description: definition.description,
     })));
   const walked = [...core, ...discovery, ...terminal, ...multimodal, ...conversations, ...taskOutcome, ...connectors]
-    .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown> }));
+    .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown>, description: entry.description }));
 
   // Thrown here rather than asserted in one `it`, so no check can run against a
   // set that quietly shrank. A conditional surface that stops being built fails

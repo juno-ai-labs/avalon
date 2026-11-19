@@ -31,19 +31,19 @@ export function modelName<Stored extends string, const Names extends ModelNames<
 }
 
 /** The values a model is offered for a stored enum, in the stored order. */
-export function modelValues<const Stored extends readonly [string, ...string[]], const Names extends ModelNames<string>>(
-  stored: Stored,
+export function modelValues<const Stored extends string, const Names extends ModelNames<string>>(
+  stored: readonly Stored[],
   names: Names,
-): [Named<Stored[number], Names>, ...Named<Stored[number], Names>[]] {
-  return stored.map((value) => modelName(names, value)) as [Named<Stored[number], Names>, ...Named<Stored[number], Names>[]];
+): Named<Stored, Names>[] {
+  return stored.map((value) => modelName(names, value));
 }
 
 /** The stored value for what a model sent: its model name, or the stored name itself. */
-export function storedName<const Stored extends readonly [string, ...string[]]>(
-  stored: Stored,
+export function storedName<const Stored extends string>(
+  stored: readonly Stored[],
   names: ModelNames<string>,
   sent: string,
-): Stored[number] | undefined {
+): Stored | undefined {
   return stored.find((value) => modelName(names, value) === sent) ?? stored.find((value) => value === sent);
 }
 
@@ -53,14 +53,19 @@ export function storedName<const Stored extends readonly [string, ...string[]]>(
  * accepted, because instructions a Sidekick saved before the rename may spell
  * it, and never advertised: the JSON Schema lists the model names alone.
  */
-export function modelEnum<const Stored extends readonly [string, ...string[]]>(
-  stored: Stored,
+export function modelEnum<const Stored extends string>(
+  stored: readonly Stored[],
   names: ModelNames<string>,
-): z.ZodType<Stored[number], string> {
-  const offered = modelValues(stored, names);
-  const accepted = [...new Set<string>([...offered, ...stored])] as [string, ...string[]];
-  return z.enum(accepted).meta({ enum: offered })
-    .transform((sent) => storedName(stored, names, sent)!) as unknown as z.ZodType<Stored[number], string>;
+): z.ZodType<Stored, string> {
+  const offered: string[] = modelValues(stored, names);
+  const accepted = [...new Set([...offered, ...stored])];
+  return z.enum(accepted).meta({ enum: offered }).transform((sent, context): Stored => {
+    const value = storedName(stored, names, sent);
+    if (value !== undefined) return value;
+    // Unreachable: the enum above admits only a model name or a stored one.
+    context.addIssue({ code: "custom", message: "Not one of the offered values." });
+    return z.NEVER;
+  });
 }
 
 /**
@@ -86,7 +91,7 @@ export function withModelNames<T>(value: T, names: ModelNames<string>, keys: rea
  * it was told about. Logs, receipts and events keep the stored code.
  */
 const FAILURE_CODE_WORDS = { workstream: "canvas", workstreams: "canvases", substream: "conversation", substreams: "conversations",
-  workspace: "organization", workspaces: "organizations" } as const;
+  workspace: "organization", workspaces: "organizations", automation: "sidekick", automations: "sidekicks" } as const;
 
 /**
  * Codes whose `workspace` is not the Organization: a sandbox's file workspace,
@@ -114,4 +119,18 @@ export function modelFailureText(text: string): string {
   const separator = text.indexOf(": ");
   const code = separator < 0 ? text : text.slice(0, separator);
   return `${modelFailureCode(code)}${separator < 0 ? "" : text.slice(separator)}`;
+}
+
+/**
+ * A typed failure as a model reads it: the message and the code translated
+ * together, the details untouched. The one place a failure crosses to a model
+ * calls this, so a live result and one rebuilt from its receipt read the same.
+ */
+export function modelFailure<Data extends { code: string } | null | undefined>(
+  failure: { error: string; data?: Data },
+): { error: string; data?: Data } {
+  return {
+    error: modelFailureText(failure.error),
+    ...(failure.data ? { data: { ...failure.data, code: modelFailureCode(failure.data.code) } } : {}),
+  };
 }

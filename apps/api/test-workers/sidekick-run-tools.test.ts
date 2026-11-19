@@ -113,12 +113,14 @@ describe("Sidekick wizard run inspection", () => {
     await seedRuns(SIDEKICK, 55);
     await seedRuns(OTHER, 1, 100);
     const first = await tool("runs_list").execute({}, context);
-    const runs = z.object({ runs: z.array(AutomationRunSchema.extend({ definitionRevision: z.number() })) }).parse(first.output).runs;
+    const runs = z.object({ runs: z.array(AutomationRunSchema.omit({ automationId: true })
+      // A run names its Sidekick as the model does, never by the stored `automationId`.
+      .extend({ sidekickId: z.string(), definitionRevision: z.number() }).strict()) }).parse(first.output).runs;
     expect(runs).toHaveLength(50);
-    expect(runs[0]).toMatchObject({ id: runId(1), automationId: SIDEKICK, status: "failed", definitionRevision: 1,
+    expect(runs[0]).toMatchObject({ id: runId(1), sidekickId: SIDEKICK, status: "failed", definitionRevision: 1,
       triggerType: "manual", resultSummary: "Report delivery failed" });
     const second = await tool("runs_list").execute(first.pagination!.continuations[0]!.input, context);
-    expect(second.output).toMatchObject({ runs: Array.from({ length: 5 }, (_, index) => ({ id: runId(index + 51), automationId: SIDEKICK })) });
+    expect(second.output).toMatchObject({ runs: Array.from({ length: 5 }, (_, index) => ({ id: runId(index + 51), sidekickId: SIDEKICK })) });
     expect(second.pagination?.continuations).toEqual([]);
   });
 

@@ -101,7 +101,7 @@ export const AVALON_SKILL_TOOL_DEFINITIONS = [
         path: {
           type: "string",
           minLength: 1,
-          description: "The file's path within that skill, exactly as the skill's own instructions name it, for example `references/palette.md`. It is relative to the skill, not to any workspace, and only files the skill bundles can be read.",
+          description: "The file's path within that skill, exactly as the skill's own instructions name it, for example `references/palette.md`. It is relative to the skill, not to the sandbox's files, and only files the skill bundles can be read.",
         },
       },
       required: ["name", "path"],

@@ -1,4 +1,5 @@
 import { MODEL_IDS, AZURE_MODEL_DEPLOYMENTS, AZURE_ONLY_MODEL_IDS, agentModelTraceFeature } from "@rally/contracts/runtime-config";
+import { modelFailure } from "@rally/contracts/model-names";
 import { createLoopCheckpoint, parseLoopCheckpoint, advanceLoopCheckpoint } from "@juno-ai/bind/session";
 import { INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import {
@@ -1784,7 +1785,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             // that event would rewrite its immutable historical receipt.
             await input.onToolCallRejected?.({ toolCallId: receiptId, code: completed.refusal.code });
             return { toolMessage: toolResultMessage(toolCall.id, {
-              success: false, kind: "authz", error: completed.refusal.message, data: { code: completed.refusal.code },
+              success: false, kind: "authz", ...modelFailure({ error: completed.refusal.message, data: { code: completed.refusal.code } }),
             }) };
           }
           return harnessResultOutcome(toolCall.id, completed, currentTurnContent, () => { completedByTool = true; });
@@ -1966,11 +1967,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           // for "structured recovery context safe to expose to the model".
           // Excess keys on the result object are silently discarded by
           // `toolResultMessage`, which a spread would not have revealed.
+          // The event above keeps the stored code for logs and the receipt.
+          // The model reads the same failure in product words
+          // (`canvas_archived`, not `workstream_archived`).
           return { toolMessage: toolResultMessage(toolCall.id, {
               success: false,
               kind: argumentValidationError ? "validation" : "external",
-              error: message,
-              ...(!argumentValidationError && structured ? { data: structured } : {}),
+              ...modelFailure({ error: message, data: !argumentValidationError && structured ? structured : undefined }),
             }) };
         } finally {
           // After the catch body, so every `toolSignal.aborted` read above still

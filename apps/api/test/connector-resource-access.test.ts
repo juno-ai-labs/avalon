@@ -272,7 +272,7 @@ describe("reaching one resource through whichever connection can", () => {
 
     expect(writes).toEqual(["workspace-token"]);
     expect(result.output).toMatchObject({
-      servedThrough: { plugin: "plugin_google_2", scope: "workspace", couldNotReach: "plugin_google" },
+      servedThrough: { plugin: "plugin_google_2", scope: "organization", couldNotReach: "plugin_google" },
     });
     expect(result.summary).toBe("Updated 1 row in Google Sheets (through plugin_google_2; plugin_google could not reach it)");
   });
@@ -362,7 +362,7 @@ describe("reaching one resource through whichever connection can", () => {
         name: "Creator Content Intake",
         connections: [
           { plugin: "plugin_google", scope: "personal", access: "none", resourceId: FILE_ID, reason: "not_found_or_not_shared" },
-          { plugin: "plugin_google_2", scope: "workspace", access: "edit", resourceId: FILE_ID, name: "Creator Content Intake" },
+          { plugin: "plugin_google_2", scope: "organization", access: "edit", resourceId: FILE_ID, name: "Creator Content Intake" },
         ],
         canEdit: "plugin_google_2",
         canRead: "plugin_google_2",

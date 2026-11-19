@@ -1,6 +1,7 @@
 import { RpcTarget } from "cloudflare:workers";
 import { z } from "zod";
 import { MAXIMUM_FAILURE_AVAILABLE_VALUES, readStructuredFailure, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { modelFailureCode, modelFailureText } from "@rally/contracts/model-names";
 import { describeZodIssues, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   canonicalToolInputHash,
@@ -311,7 +312,8 @@ export class GatewaySession {
         }
         const code = error instanceof CodeModeToolError ? error.code : "code_call_failed";
         const message = error instanceof Error ? error.message : String(error);
-        return { ok: false, code, error: bounded(message), index };
+        // A program reads a failure as the model would have read it directly.
+        return { ok: false, code: modelFailureCode(code), error: bounded(modelFailureText(message)), index };
       } finally {
         record.ms = Date.now() - started;
       }

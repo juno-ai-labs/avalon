@@ -159,7 +159,9 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
       const actor = await new AutomationService(env, await auth()).actorRequest(sidekickId);
       const page = await (await workspace()).sidekickListRunsPage({ ...actor,
         ...(cursor?.before ? { before: cursor.before } : {}), ...(limit === undefined ? {} : { limit }) });
-      return { output: { runs: page.items }, summary: `Listed ${page.items.length} Sidekick runs`,
+      // A run row stores its Sidekick's id as `automationId`; the model reads `sidekickId`.
+      return { output: { runs: page.items.map(({ id, automationId, ...run }) => ({ id, sidekickId: automationId, ...run })) },
+        summary: `Listed ${page.items.length} Sidekick runs`,
         pagination: { continuations: page.nextCursor === null ? [] : [{ operation: "runs_list", slot: "nextPageId",
           input: { cursor: JSON.stringify({ before: page.nextCursor, limit }) } }] } };
     },
