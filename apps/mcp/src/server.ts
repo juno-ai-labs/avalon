@@ -177,6 +177,23 @@ async function readChatPage(api: RallyApi, canvasId: string, page: { afterSequen
   return `Canvas: ${result.title}\n\n${result.text || "No messages yet."}${more}`;
 }
 
+/**
+ * An invitation as a client's model reads it. What it opens is stored as a
+ * `workstream` in a `workspace`; the client is told the Canvas, and the one
+ * conversation in it when the invitation is narrower than the Canvas.
+ */
+function invitationsForClient(result: z.infer<typeof ScopeInvitationResultSchema>) {
+  const invitation = ({ targets, ...rest }: Extract<typeof result, { status: "revoked" }>["invitation"]) => ({
+    ...rest,
+    opens: targets.map((target) => target.kind === "workstream"
+      ? { kind: "canvas" as const, canvasId: target.parentId }
+      : { kind: "conversation" as const, canvasId: target.parentId, conversationId: target.substreamId }),
+  });
+  return result.status === "created" ? { status: result.status, invitations: result.invitations.map(invitation) }
+    : result.status === "revoked" ? { status: result.status, invitation: invitation(result.invitation) }
+      : result;
+}
+
 const read = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const write = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
@@ -363,10 +380,10 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
     annotations: { ...write, openWorldHint: true },
   }, ({ canvasId, operationId, emails }) => tool("invite_canvas_guests", async () => {
     const workspace = await api.json(WorkspaceSchema, "GET", "/workspace");
-    return api.json(ScopeInvitationResultSchema, "POST", "/sharing", {
+    return invitationsForClient(await api.json(ScopeInvitationResultSchema, "POST", "/sharing", {
       operationId, parentId: canvasId, emails, expiresAt: null,
       targets: [{ kind: "workstream", workspaceId: workspace.id, parentId: canvasId }],
-    });
+    }));
   }));
 
   server.registerTool("decide_canvas_access_request", {

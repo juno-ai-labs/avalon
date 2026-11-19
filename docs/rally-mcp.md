@@ -138,7 +138,7 @@ API verifies the signature and the session on every call.
 | `update_canvas` | `PATCH /canvases/:id` |
 | `set_canvas_audience` | `POST /canvases/:id/audience`: required editor visibility/userIds, optional artifactVisibility/artifactUserIds and expectedRevision. Even artifact-only changes send the complete current editor list; omission is rejected before calling the API. With `workspace` editors the Canvas stores at least `workspace` artifact access, raising `editors` or `participants` and keeping `artifactUserIds`. Moving editors off `workspace` does not narrow it, so a caller making a Canvas private sends `artifactVisibility`. A client's model reads and writes `organization` for the stored `workspace`: every tool result's `visibility` and `artifactVisibility` are translated in `tool()`, and this tool's two enums are `modelEnum`s that still accept the stored name. |
 | `get_artifact_link` | `GET /resources/:id/artifact/link`: stable URL without minting a viewer session |
-| `invite_canvas_guests` | `GET /workspace`, then `POST /sharing` |
+| `invite_canvas_guests` | `GET /workspace`, then `POST /sharing`. Each invitation answers what it `opens` (`{ kind: "canvas", canvasId }`), in place of the stored target, which names a `workstream` in a `workspace` |
 | `decide_canvas_access_request` | `POST /canvases/:id/access-requests/:userId/decision` |
 | `pin_canvas` | `POST /canvases/:id/pin` |
 | `rename_artifact` | `PATCH /conversations/:id/resources/:resourceId` |

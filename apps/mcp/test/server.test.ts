@@ -1,3 +1,4 @@
+import { describeStorageName, storageNamesIn } from "@rally/contracts/model-names-audit";
 import { describe, expect, it, vi } from "vitest";
 
 import worker from "../src/index";
@@ -46,8 +47,31 @@ async function rpc(binding: Fetcher, body: unknown, bearer = live()) {
   }) as Request<unknown, IncomingRequestCfProperties>, env(binding));
   const text = await response.text();
   const data = text.startsWith("{") ? text : text.split("\n").find((line) => line.startsWith("data: "))!.slice(6);
-  return { status: response.status, body: JSON.parse(data) as { result?: { content: Array<{ text: string }>; isError?: boolean } } };
+  const parsed = { status: response.status, body: JSON.parse(data) as { result?: { content: Array<{ text: string }>; isError?: boolean } } };
+  // Every tool result these tests produce is walked: what a client's model
+  // reads names no storage (docs/agent-tools.md, rule 10).
+  if ((body as { method?: string }).method === "tools/call") {
+    const leaks = (parsed.body.result?.content ?? []).flatMap((part) => storageNamesIn(asRead(part.text), MCP_AUDIT));
+    if (leaks.length > 0) throw new Error(`a Rally MCP tool result names storage:\n${leaks.map(describeStorageName).join("\n")}`);
+  }
+  return parsed;
 }
+
+/** A result's text as its reader takes it: the JSON it holds, or the sentence. */
+function asRead(text: string | undefined): unknown {
+  try {
+    return JSON.parse(text ?? "null");
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * Fixture titles and messages are a person's data. Two words stay, each in a
+ * meaning that was never a product name: the `channels` a person is notified
+ * by (push, email), and a site built from a source `project`.
+ */
+const MCP_AUDIT = { dataProse: true, allowWords: ["channel", "project"] };
 
 const call = (name: string, args: Record<string, unknown>) =>
   ({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
@@ -204,6 +228,26 @@ describe("the Canvas tools", () => {
       canvasId: CANVAS, operationId: SIDEKICK, instructions: "  On every new email, add a row to Inbox. " }));
     expect(JSON.parse(body.result!.content[0]!.text)).toEqual({ sidekickId: SIDEKICK, turnId: "turn-9",
       next: "The Sidekick is made and Rally's setup agent has the instructions. It is a draft until that agent saves it: check its status with get_canvas, and tell the person it may ask them a question in Rally." });
+  });
+
+  it("tells a client which Canvas an invitation opens, never the stored target", async () => {
+    const WORKSPACE = "0190a000-0000-7000-8000-0000000000dd";
+    const INVITATION = "0190a000-0000-7000-8000-0000000000ee";
+    const upstream = api(async (request) => {
+      if (new URL(request.url).pathname === "/workspace") {
+        return Response.json({ id: WORKSPACE, name: "Acme", slug: "acme", region: "global", role: "admin", timezone: "UTC", createdAt: "2026-11-01T00:00:00.000Z" });
+      }
+      expect(await request.json()).toEqual({ operationId: INVITATION, parentId: CANVAS, emails: ["guest@example.test"], expiresAt: null,
+        targets: [{ kind: "workstream", workspaceId: WORKSPACE, parentId: CANVAS }] });
+      return Response.json({ status: "created", invitations: [{ id: INVITATION, email: "guest@example.test",
+        targets: [{ kind: "workstream", workspaceId: WORKSPACE, parentId: CANVAS }],
+        expiresAt: null, status: "pending", revision: 1, acceptedByUserId: null }] });
+    });
+    const { body } = await rpc(upstream.binding, call("invite_canvas_guests", {
+      canvasId: CANVAS, operationId: INVITATION, emails: ["guest@example.test"] }));
+    expect(JSON.parse(body.result!.content[0]!.text)).toEqual({ status: "created", invitations: [{ id: INVITATION,
+      email: "guest@example.test", expiresAt: null, status: "pending", revision: 1, acceptedByUserId: null,
+      opens: [{ kind: "canvas", canvasId: CANVAS }] }] });
   });
 
   it("makes a Sidekick with a new Canvas in the one create request, under its own id", async () => {
