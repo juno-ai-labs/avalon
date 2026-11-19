@@ -220,7 +220,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
 | `pause_sidekick`, `resume_sidekick` | `orgId`, `userId`, `sidekickId` | Pauses or resumes the Sidekick as that user, through the app's own Pause and Resume path. The user must be allowed to manage it; its author always is. Returns the resulting lifecycle. |
 | `archive_sidekick` | `orgId`, `userId`, `sidekickId` | Archives the Sidekick as that user, through the app's own Archive path, in any lifecycle. There is no undo. The user must be allowed to manage it; its author always is. |
-| `archive_canvas` | `orgId`, `userId`, `canvasId` | Archives the Canvas as that user, through the app's own Archive path, with the Sidekicks made in it. There is no undo. The user must be allowed to manage it: its creator, or an Organization owner or admin. Refused in an abandoned Organization. |
+| `archive_canvas` | `orgId`, `userId`, `canvasId` | Archives the Canvas as that user, through the app's own Archive path, with the Sidekicks made in it. There is no undo. The user must be allowed to manage it in the app; its creator always is. Refused in an abandoned Organization. |
 | `retire_org` | `orgId` | Retires the Organization permanently through Ace's retirement door. There is no undo. If the receipt says `complete: false`, call again to resume. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO reactive web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Canvas's parent state in `canvas_directory` and its shares in the `parent_*` tables. |

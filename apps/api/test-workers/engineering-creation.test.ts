@@ -319,14 +319,14 @@ describe("engineering Canvas archive", () => {
     expect(await bridge.archiveCanvas(request, OPERATOR)).toEqual({ region: "global", orgId: ORG, canvasId: CANVAS, archived: true });
     const first = await archivedAt();
     expect(first).toEqual(expect.any(Number));
-    // A second archive changes nothing.
+    // A retry is admitted.
     await bridge.archiveCanvas(request, OPERATOR);
     expect(await archivedAt()).toBe(first);
     const result = await env.AUDIT_DB.prepare(
       "SELECT workstream_id, metadata_json FROM audit_events WHERE workspace_id = ? AND action = 'engineering.archive_canvas.result' AND target_id = ? ORDER BY created_at DESC LIMIT 1",
     ).bind(ORG, CREATOR).first<{ workstream_id: string; metadata_json: string }>();
     expect(result!.workstream_id).toBe(CANVAS);
-    expect(JSON.parse(result!.metadata_json)).toMatchObject({ operator: OPERATOR, conversationId: CANVAS, outcome: "admitted", archived: true });
+    expect(JSON.parse(result!.metadata_json)).toMatchObject({ operator: OPERATOR, conversationId: CANVAS, outcome: "admitted" });
   });
 
   it("refuses an archive in an abandoned Organization by naming the abandonment", async () => {

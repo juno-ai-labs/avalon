@@ -78,7 +78,7 @@ export type SendEngineeringMessageResult = z.infer<typeof SendEngineeringMessage
 
 export const SetEngineeringSidekickPausedInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema,
-  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Sidekick in the app: its author, its run-as user, a manager of its owning Thread, or an owner or admin for an Organization-wide one."),
+  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Sidekick in the app; its author always is."),
   sidekickId: AutomationIdSchema,
   paused: z.boolean(),
 }));
@@ -103,7 +103,7 @@ export type ArchiveEngineeringSidekickResult = z.infer<typeof ArchiveEngineering
 
 export const ArchiveEngineeringCanvasInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema,
-  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Canvas in the app: its creator, a manager of the Sidekick that writes it, or an Organization owner or admin."),
+  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Canvas in the app; its creator always is."),
   canvasId: IdSchema.describe("The Canvas ID."),
 }));
 export type ArchiveEngineeringCanvasInput = z.infer<typeof ArchiveEngineeringCanvasInputSchema>;

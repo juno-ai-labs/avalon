@@ -405,21 +405,11 @@ to pair the attempt and result audit rows.
 
 `archive_sidekick` calls AutomationService `archive` the same way, in any
 lifecycle. It is the one of the three with no undo, so it is marked
-destructive.
-
-### Archiving a Canvas
-
-`archive_canvas` calls CanvasService `archive` as the selected user, the same
-call the app's Archive action makes, so HostedCanvas decides who may manage the
-Canvas and refuses with `canvas_archive_forbidden`, or as not found to a user
-the Canvas does not admit. Its archive takes the Sidekicks made in the Canvas
-with it and schedules the archive of its conversations and artifacts, so the
-tool owes nothing after it. Archiving an archived Canvas changes nothing, so
-like the Sidekick tools it takes no `operationId`; the bridge mints one to pair
-the audit rows, and the Canvas id fills the audit row's `workstream_id`.
-
-It refuses an abandoned Organization. Retirement already stops every Canvas
-there, so there is nothing left for it to clean up.
+destructive. `archive_canvas` calls CanvasService `archive` the same way, and
+HostedCanvas's archive takes the Sidekicks made in the Canvas with it. It
+refuses an abandoned Organization because the retirement gate does not permit
+`canvasArchive`, whose alarms reach the Canvas's conversations and artifact
+hosts; admitting it would need that permit first.
 
 ### Retiring an Organization
 
@@ -690,16 +680,13 @@ region refused, and the rejected field kept across the RPC boundary; then, in a
 Canvas's Chat, member and guest sends with normal execution, retry dedupe and
 author snapshots, a send and a read refused to somebody the Canvas does not
 admit, a record-only message that starts no run, and default and fenced history
-paging, and a Canvas read as a Sidekick's conversation refused by name.
+paging, a Canvas read as a Sidekick's conversation refused by name, and a
+Canvas archived through the bridge.
 `engineering-sidekick-inspection.test.ts` posts a record-only message to a
 Sidekick's shared conversation and reads it back, refuses it read as a Canvas,
 and reaches a run conversation through `run_canvas_sql`'s registry check.
 Audit coverage reads operator and receipt attribution from the real audit
 database and refuses product writes when the attempt cannot be persisted.
-The same file archives a Canvas through the bridge as its creator, reading
-`canvas_directory` and the audit row, and proves a member who cannot manage it
-is refused with `canvas_archive_forbidden` and that an abandoned Organization is
-refused by name.
 `apps/api/test/engineering-user-auth.test.ts` covers whom a tool may act as,
 over the checked-in migrations, and `engineering-sidekick-inspection.test.ts`
 covers the archive in a retired Organization.
@@ -832,23 +819,6 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
-
-### 2026-11-19 — Archive a Canvas as a user
-
-**What changed:** `archive_canvas` archives a Canvas as a selected user through
-CanvasService `archive`, over a new bridge method `archiveCanvas`, audited as
-`archive_canvas`.
-
-**Why:** The server could archive a Sidekick but not a Canvas, so the only
-route was a SQL update of `canvas_directory.archived_at`, which skips the
-manager check, the archive of the Sidekicks made in it, the conversation and
-artifact archive alarms, the access revocations and the directory refresh. A
-change here must keep the tool on the product's own path for that reason.
-
-**Considered and rejected:** Admitting an abandoned Organization, as
-`archive_sidekick` does. Retirement already closes every Canvas there, and
-nobody asked for it.
-
 
 ### 2026-11-13 — Record every tool call in a lakehouse
 

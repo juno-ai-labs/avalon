@@ -330,12 +330,11 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
   async archiveCanvas(input: unknown, operator: unknown): Promise<ArchiveEngineeringCanvasResult> {
     return this.productOperation("archiveCanvas", async () => {
       const request = ArchiveEngineeringCanvasInputSchema.parse(input);
-      // Archiving an archived Canvas changes nothing, so as with a Sidekick there is no caller recovery key.
       return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
         action: "archive_canvas", orgId: request.orgId,
         representedUserId: request.userId, operationId: crypto.randomUUID(), conversationId: request.canvasId,
       }, async () => ArchiveEngineeringCanvasResultSchema.parse(await archiveEngineeringCanvas(this.env, request)),
-      (result) => ({ archived: result.archived }));
+      () => ({}));
     });
   }
 
