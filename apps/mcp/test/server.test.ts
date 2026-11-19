@@ -113,7 +113,7 @@ describe("the Canvas tools", () => {
     expect(JSON.parse(body.result!.content[0]!.text).artifactVisibility).toBe('public');
   });
 
-  it.each(['workspace', 'participants'])('refuses an artifact-only update that omits the %s editor list before calling the API', async (visibility) => {
+  it.each(['organization', 'participants'])('refuses an artifact-only update that omits the %s editor list before calling the API', async (visibility) => {
     const upstream = api(() => Response.json(canvasDetail([])));
     const { body } = await rpc(upstream.binding, call('set_canvas_audience', {
       canvasId: CANVAS, visibility, artifactVisibility: 'public', expectedRevision: 8,
@@ -128,11 +128,17 @@ describe("the Canvas tools", () => {
       expect(await request.json()).toEqual({ visibility: 'workspace', userIds: [USER], artifactVisibility: 'public', expectedRevision: 8 });
       return Response.json({ ...canvasDetail([]), visibility: 'workspace', participantUserIds: [USER], artifactVisibility: 'public', sharingRevision: 9 });
     });
+    // The client's model names the Organization audience organization; Rally's API stores workspace.
     const { body } = await rpc(upstream.binding, call('set_canvas_audience', {
-      canvasId: CANVAS, visibility: 'workspace', userIds: [USER], artifactVisibility: 'public', expectedRevision: 8,
+      canvasId: CANVAS, visibility: 'organization', userIds: [USER], artifactVisibility: 'public', expectedRevision: 8,
     }));
     expect(body.result?.isError).not.toBe(true);
-    expect(JSON.parse(body.result!.content[0]!.text)).toMatchObject({ participantUserIds: [USER], artifactVisibility: 'public' });
+    expect(JSON.parse(body.result!.content[0]!.text)).toMatchObject({ visibility: 'organization', participantUserIds: [USER], artifactVisibility: 'public' });
+    // A client that still sends the stored name reaches the same audience.
+    const stored = await rpc(upstream.binding, call('set_canvas_audience', {
+      canvasId: CANVAS, visibility: 'workspace', userIds: [USER], artifactVisibility: 'public', expectedRevision: 8,
+    }));
+    expect(JSON.parse(stored.body.result!.content[0]!.text)).toMatchObject({ visibility: 'organization' });
   });
 
   it('gets an artifact-only share link without requesting its Canvas or minting a viewer session',async()=>{
@@ -159,7 +165,7 @@ describe("the Canvas tools", () => {
     });
     const { body } = await rpc(upstream.binding, call("list_canvases", { query: "launch" }), bearer);
     expect(JSON.parse(body.result!.content[0]!.text)).toEqual([{
-      id: CANVAS, title: "Launch plan", visibility: "workspace", updatedAt: "2026-11-09T00:00:00.000Z",
+      id: CANVAS, title: "Launch plan", visibility: "organization", updatedAt: "2026-11-09T00:00:00.000Z",
       createdByUserId: USER, newestArtifactKind: "file", unread: false, pinned: true, sharedWithMe: false, writtenBySidekickId: null,
     }]);
   });
