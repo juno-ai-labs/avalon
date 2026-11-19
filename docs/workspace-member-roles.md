@@ -40,7 +40,10 @@ A membership acquires its role in one of three ways:
 - **Creation.** Whoever creates a workspace is inserted as `owner`
   (`auth-service.ts`, `platform-onboarding-service.ts`).
 - **Adding.** `addMember` (`POST /workspace/members`) makes the address an
-  active member with an `AssignableMemberRole` at once. Someone who has never
+  active member with a role at once. The route offers `admin` and `member`;
+  `owner` is accepted from an owner only, the rule `setMemberRole` keeps for
+  granting ownership, and the engineering MCP's `add_org_member` is what passes
+  it. Someone who has never
   signed in gets an account then, shaped as their first email sign-in would
   make it: the address bound as verified and as their email login, so signing
   in with it by email, Google or Apple reaches that account. Only a verified
@@ -180,7 +183,7 @@ Durable Object path: roles live in regional D1 and only the Worker writes them.
 | --- | --- | --- |
 | `workspace_admin_required` | 403 | The caller is an ordinary member. |
 | `member_not_found` | 404 | Nobody by that id belongs to this workspace. |
-| `workspace_owner_required` | 403 | An admin tried to grant `owner` or change an owner's role. |
+| `workspace_owner_required` | 403 | An admin tried to grant `owner` or change an owner's role, or to add someone as an owner. |
 | `last_workspace_owner` | 409 | The change would leave the workspace with no active owner. |
 | `member_not_active` | 409 | The target is not active: suspended, or holding an invitation from before adding that is still waiting. |
 | `already_workspace_member` | 409 | `addMember`: the address already names an active member here. |
@@ -229,6 +232,21 @@ enforces. A test that seeds an owner can never reach the guard, and would have
 proved only that the owner was there.
 
 ## Changelog
+
+### 2026-11-19 — An owner can add someone as an owner
+
+**What changed:** `addMember` accepts `owner` when the caller is an owner,
+refusing an admin with `workspace_owner_required` before anything is written.
+The "added you" email says "as an owner". The app's route still offers only
+`admin` and `member`.
+
+**Why:** The engineering MCP's `add_org_member` needed to add an owner. Adding
+as admin and then calling `setMemberRole` would take two writes, leave an
+admin behind if the second were refused, and send an email naming the wrong
+role. One write through the same ownership rule avoids all three.
+
+**Consequences:** A change to who may grant ownership has two places to hold
+it: `setMemberRole` and this check in `addMember`.
 
 ### 2026-11-19 — An Organization can have more than one owner
 

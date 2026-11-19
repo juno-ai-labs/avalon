@@ -25,6 +25,8 @@ available to Rally users by virtue of product membership.
   creation to regional onboarding.
 - `apps/api/src/services/engineering-user-auth.ts` resolves the selected
   user's authority (`engineeringUserAuth`) for every tool that acts as one.
+- `apps/api/src/services/engineering-members.ts` adapts
+  `WorkspaceService.addMember` to an operator acting as an owner or admin.
 - `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer
   and transcript range reader; `conversation-text.ts` formats participant
   prose with shared display and plaintext helpers.
@@ -86,6 +88,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
+| `add_org_member` | Resolve the Organization in exactly one region | WorkspaceService.addMember as the named owner or admin |
 | `archive_canvas` | Resolve the Organization in exactly one region | CanvasService.archive, which calls HostedCanvas in WorkspaceDO |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
@@ -301,8 +304,8 @@ together. It refuses with one of two codes, and the remedies differ:
   that ends every session into the Organization
   ([`workspace-retirement.md`](workspace-retirement.md)). No user passes, so
   trying another one cannot help. `send_message`, the two text reads,
-  `pause_sidekick`, `resume_sidekick` and `archive_canvas` do not work in an
-  abandoned Organization.
+  `pause_sidekick`, `resume_sidekick`, `archive_canvas` and `add_org_member` do
+  not work in an abandoned Organization.
 - `user_not_active_organization_user`: the named user has no active member or
   guest relationship in the Organization. Another user may pass.
 
@@ -411,6 +414,15 @@ HostedCanvas's archive takes the Sidekicks made in the Canvas with it. It
 refuses an abandoned Organization because the retirement gate does not permit
 `canvasArchive`, whose alarms reach the Canvas's conversations and artifact
 hosts; admitting it would need that permit first.
+
+### Adding a member
+
+`engineeringUserAuth` reads `adminUserId`'s real role, so `addMember`'s own
+checks decide: `workspace_admin_required` for a member, and
+`workspace_owner_required` when an admin asks for `role: owner`. A repeat is
+refused with `already_workspace_member`, so the tool takes no `operationId`;
+the bridge mints one per call to pair the audit rows. The tool does not
+suppress the "added you" email, the one product signal that someone was added.
 
 ### Retiring an Organization
 
@@ -820,6 +832,27 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-19 — Add a member to an existing Organization
+
+**What changed:** `add_org_member` adds a person by email as a named owner or
+admin through `WorkspaceService.addMember`, over a new bridge method
+`addOrgMember`.
+
+**Why:** An operator asked to fold two one-person Organizations from the same
+firm into one and add a staff member. `create_org` seats members only at
+creation, and the only other route was inserting `workspace_members` rows,
+which the 2026-10-21 entry in [`multiple-workspaces.md`](multiple-workspaces.md)
+already rejected: it skips the relationship dispatch, directory push and
+seating the product's own add performs.
+
+**Considered and rejected:** Acting as the operator rather than a member of
+the Organization. Every write tool here acts as a selected user so the
+product's own permission check decides; adding by operator authority would be
+the first tool to bypass it.
+
+**Consequences:** The added person is always emailed, naming `adminUserId`.
+Anything that changes what `addMember` does reaches this tool unchanged.
 
 ### 2026-11-13 — Record every tool call in a lakehouse
 
