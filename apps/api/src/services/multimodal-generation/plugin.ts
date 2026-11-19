@@ -337,7 +337,12 @@ async function bestEffortAudioPricing(
   try {
     return await loadPricing();
   } catch (error) {
-    logStructuredEvent(env, "error", "multimodal_generation_pricing_unavailable", {
+    // `info`, not `error`: nothing writes this KV key (the speech model is not
+    // in OPENROUTER_PRICING_MODEL_IDS, since OpenRouter has no endpoint record
+    // for it), so every speech call lands here and no one can act on it.
+    // Logged at `error`, it was the most frequent application error in the
+    // logs, which buries the image-pricing misses that do need repair.
+    logStructuredEvent(env, "info", "multimodal_generation_pricing_unavailable", {
       workspace_id: context.workspaceId,
       workstream_id: context.workstreamId,
       harness_run_id: context.harnessRunId,

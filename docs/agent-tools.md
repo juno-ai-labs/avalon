@@ -1063,7 +1063,10 @@ audio charge and logs that usage is unavailable. It probes the shared KV key
 `openai/gpt-4o-mini-tts` for an advisory OpenRouter token-price fingerprint;
 OpenRouter did not expose an endpoint record for that model when this tool was
 added, so the normal state is an unavailable-price log rather than an invented
-price or denied speech request.
+price or denied speech request. That log is `info`, not `error`: the model is
+not in the pricing refresh list, so the miss fires on every speech call and
+names nothing to repair. A missing image price stays an `error`, because that
+key is refreshed and its absence is a fault.
 
 ## Model-authored input schemas
 

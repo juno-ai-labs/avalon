@@ -279,6 +279,7 @@ describe("Azure GPT Image client", () => {
 describe("multimodal generation runtime", () => {
   it("creates one AI audio resource with the default voice and does not charge without pricing", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const infoLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const publish = vi.fn<MultimodalAudioResourceStore["publish"]>(async (_context, input) => ({
       ...publishedAudio(),
       metadata: { voice: input.voice, billing: input.billing },
@@ -322,11 +323,14 @@ describe("multimodal generation runtime", () => {
       billing: { costUsd: null },
     });
     expect(result).not.toHaveProperty("contentParts");
-    expect(errorLog).toHaveBeenCalledWith(expect.objectContaining({
+    // The speech price is never cached, so its absence is expected, not an error.
+    expect(infoLog).toHaveBeenCalledWith(expect.objectContaining({
+      level: "info",
       event: "multimodal_generation_pricing_unavailable",
       model: "gpt-4o-mini-tts",
       pricing_model_id: "openai/gpt-4o-mini-tts",
     }));
+    expect(errorLog).not.toHaveBeenCalled();
   });
 
   it("joins pieces by their audio frames whatever framing each carries", () => {
