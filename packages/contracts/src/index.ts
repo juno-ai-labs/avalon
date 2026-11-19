@@ -2823,9 +2823,10 @@ export const NormalizedActivitySchema = z.object({
    * item. Ids only, never content: it is what a run is told the event is
    * about, and a run keys its records on it. Adapter code derives it from the
    * same payload the activity already carries, so it is not part of the
-   * event's payload hash.
+   * event's payload hash. Its length is bounded where it is stored (the
+   * WorkspaceDO columns' CHECKs), as `occurrenceKey`'s is, not here.
    */
-  item: z.strictObject({ type: z.string().min(1).max(200), id: z.string().min(1).max(2000) }).optional(),
+  item: z.strictObject({ type: z.string().min(1), id: z.string().min(1) }).optional(),
   actor: z.record(z.string(), z.unknown()),
   subject: z.record(z.string(), z.unknown()),
   occurredAt: TimestampSchema,
