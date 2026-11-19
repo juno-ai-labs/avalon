@@ -28,7 +28,7 @@ import {
   type WorkspaceMemoryTableRow,
   type WorkspaceMemoryTableRowRecord,
 } from "../durable-objects/workspace-memory-protocol";
-import { MODEL_MEMORY_SCOPE_KINDS, memoryTableSchemaRecovery, modelMemoryScopeKind, publicMemoryTable, storedMemoryScopeKind } from "../durable-objects/memory-table-definition";
+import { MODEL_MEMORY_SCOPE_KINDS, ModelMemoryScopeKindSchema, memoryTableSchemaRecovery, modelMemoryScopeKind, publicMemoryTable } from "../durable-objects/memory-table-definition";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   ensureScope,
@@ -70,7 +70,7 @@ const ColumnSchema = z.strictObject({
 });
 
 const CreateSchema = z.strictObject({
-  scopeKind: z.enum(MODEL_MEMORY_SCOPE_KINDS).transform(storedMemoryScopeKind),
+  scopeKind: ModelMemoryScopeKindSchema,
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(1_200),
   usageInstructions: z.string().trim().min(1).max(4_000),
@@ -1182,7 +1182,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
             scopeKind: {
               type: "string",
               enum: MODEL_MEMORY_SCOPE_KINDS,
-              description: "How long the table should outlive this run, narrowest first: `canvas` for this Canvas's Chat alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `workspace` for everyone in the organization. Not every run authorizes every kind; a refusal names the ones this run does have.",
+              description: "How long the table should outlive this run, narrowest first: `canvas` for this Canvas's Chat alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `organization` for everyone in the Organization. Not every run authorizes every kind; a refusal names the ones this run does have.",
             },
             name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already under this name in the chosen scope is reopened when its schema matches: column names, types, required/searchable flags, and ordered key columns. Reopening overwrites description, usage instructions, and column descriptions for every run sharing that table, without changing rows or IDs. On a schema conflict, call table_describe with the returned memoryTableId and reuse that schema, or choose a new name and explicitly migrate rows. Do not retry unchanged." },
             description: { type: "string", description: "What the table holds and why it exists, in a sentence or two. This is what table_search matches, so write the words someone would look for." },

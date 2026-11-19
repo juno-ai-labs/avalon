@@ -19,6 +19,13 @@ import { z } from "zod";
 
 export const MEMORY_SUBJECT_KINDS = ["organization", "channel", "thread", "breakout", "person", "sidekick"] as const;
 export const MemorySubjectKindSchema = z.enum(MEMORY_SUBJECT_KINDS);
+/**
+ * What a model reads for a stored subject kind. A Canvas's facts are filed
+ * under `thread`, the kind its Chat had before Canvases; `channel` and
+ * `breakout` are rooms that no longer exist, whose facts outlive them. The
+ * `memory_facts` CHECK constraint keeps the stored kinds.
+ */
+export const MEMORY_SUBJECT_MODEL_NAMES = { thread: "canvas", channel: "earlier_space", breakout: "earlier_space" } as const;
 export type MemorySubjectKind = z.infer<typeof MemorySubjectKindSchema>;
 
 export const MemoryFactKindSchema = z.enum(["standing", "situational"]);

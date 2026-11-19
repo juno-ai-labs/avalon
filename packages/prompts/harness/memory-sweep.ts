@@ -11,17 +11,20 @@ import type { PromptMessage } from "./types";
  * rarely tries. `docs/agent-memory.md` owns the lane.
  */
 
+/**
+ * The subjects a swept fact may be filed under, as the model names them. A
+ * Canvas's facts are stored under `thread` and a retired room's under
+ * `channel` or `breakout`; the host translates, and offers no retired kind.
+ */
+export const MEMORY_SWEEP_SUBJECT_KINDS = ["organization", "canvas", "person", "sidekick"] as const;
+
 export interface MemorySweepPlacementInput {
   /**
-   * The conversation's own subject. `thread` is a Canvas's Chat, the stored
-   * kind a Canvas's facts keep until the subject kinds are rebuilt; the other
-   * room kinds are retired and no longer produced.
+   * The conversation's own subject: a Canvas (its Chat) or a Sidekick.
+   * `earlier_space` is a room that no longer exists, which no new fact is
+   * filed under.
    */
-  subject: { kind: "thread" | "breakout" | "sidekick" | "channel"; title: string };
-  /** A retired room's parent; null for a Canvas or a Sidekick. */
-  thread: { title: string } | null;
-  /** A retired room's containers; empty for a Canvas or a Sidekick. */
-  channels: Array<{ id: string; title: string }>;
+  subject: { kind: "canvas" | "sidekick" | "earlier_space"; title: string };
   /** Whether every member of the Organization may read this conversation. */
   organizationWide: boolean;
   /** The people a `person` fact may be about, with the ids it names. */
@@ -66,7 +69,7 @@ A fact is one or two plain sentences a colleague who never opened this conversat
 
 Return a list of operations, possibly empty.
 
-add — the window establishes something no candidate already says. Give the subject it is about and no wider: the placement's own subject kind for this conversation's own work (thread when this conversation is a Canvas's Chat, sidekick for a Sidekick's own working knowledge), organization only when the conversation is open to every member and the fact holds for the whole Organization, person only for a person listed in the placement and only about that person. When two people disagree and the window does not settle it, add one fact at the narrowest subject both positions concern that states both positions and who holds each, with conflict set to true; do not choose a side.
+add — the window establishes something no candidate already says. Give the subject it is about and no wider: the placement's own subject kind for this conversation's own work (canvas when this conversation is a Canvas's Chat, sidekick for a Sidekick's own working knowledge), organization only when the conversation is open to every member and the fact holds for the whole Organization, person only for a person listed in the placement and only about that person. When two people disagree and the window does not settle it, add one fact at the narrowest subject both positions concern that states both positions and who holds each, with conflict set to true; do not choose a side.
 update — a candidate's wording is now wrong or incomplete and the window shows the correction. Rewrite the whole fact in one sentence that stands alone.
 confirm — the window restates or relies on a candidate as still true. Use it instead of adding the same fact twice.
 retract — the window shows a candidate has stopped being true or was wrong, and nothing replaces it.
@@ -153,7 +156,7 @@ export const memorySweepJsonSchema: Record<string, unknown> = {
           op: { type: "string", enum: ["add", "update", "confirm", "retract"] },
           subjectKind: {
             type: ["string", "null"],
-            enum: ["organization", "channel", "thread", "breakout", "person", "sidekick", null],
+            enum: [...MEMORY_SWEEP_SUBJECT_KINDS, null],
           },
           subjectId: { type: ["string", "null"] },
           kind: { type: ["string", "null"], enum: ["standing", "situational", null] },

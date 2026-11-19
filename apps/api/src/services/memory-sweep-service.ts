@@ -1,5 +1,6 @@
 import { IdSchema, WorkspaceIdSchema, asWorkspaceId } from "@rally/contracts";
 import { RegionSchema } from "@rally/contracts/regions";
+import { modelName } from "@rally/contracts/model-names";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { newId } from "@rally/db";
 import { z } from "zod";
@@ -7,11 +8,13 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import {
+  MEMORY_SUBJECT_MODEL_NAMES,
   WorkspaceMemoryApplySweepResultSchema,
   WorkspaceMemorySweepCandidatesResultSchema,
   memorySourceOf,
   type MemoryConversation,
   type MemoryDerivedFrom,
+  type MemorySubjectKind,
   type MemorySweepOperation,
 } from "../durable-objects/workspace-memory-facts-protocol";
 import type { MessageRow } from "../durable-objects/workstream-message-storage";
@@ -23,7 +26,7 @@ import { createMessageObjectPort } from "../runtime/message-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { refreshMemoryDigestCopies } from "./memory-digest-service";
 import { runStructuredInference } from "./structured-inference";
-import { MAXIMUM_MEMORY_SWEEP_EVIDENCE, MAXIMUM_MEMORY_SWEEP_OPERATIONS, memorySweepJsonSchema, renderMemorySweepMessages, type MemorySweepCandidateInput, type MemorySweepMessageInput } from "@rally/prompts/harness/memory-sweep";
+import { MAXIMUM_MEMORY_SWEEP_EVIDENCE, MAXIMUM_MEMORY_SWEEP_OPERATIONS, MEMORY_SWEEP_SUBJECT_KINDS, memorySweepJsonSchema, renderMemorySweepMessages, type MemorySweepCandidateInput, type MemorySweepMessageInput } from "@rally/prompts/harness/memory-sweep";
 
 /**
  * The memory sweep lane: after a run settles, a conversation that has rested
@@ -294,7 +297,7 @@ const Rfc3339 = z.string().datetime({ offset: true });
 /** What the model returns, in the flat shape the strict schema carries. */
 const ModelOperationSchema = z.strictObject({
   op: z.enum(["add", "update", "confirm", "retract"]),
-  subjectKind: z.enum(["organization", "channel", "thread", "breakout", "person", "sidekick"]).nullable(),
+  subjectKind: z.enum(MEMORY_SWEEP_SUBJECT_KINDS).nullable(),
   subjectId: z.string().nullable(),
   kind: z.enum(["standing", "situational"]).nullable(),
   text: z.string().nullable(),
@@ -358,7 +361,8 @@ function narrowOperation(
       if (!operation.subjectKind || !operation.kind || text.length === 0 || text.length > 600) return null;
       return {
         op: "add",
-        subjectKind: operation.subjectKind,
+        // The model files a Canvas's fact under `canvas`; the store keeps `thread`.
+        subjectKind: operation.subjectKind === "canvas" ? "thread" : operation.subjectKind,
         subjectId: operation.subjectId,
         kind: operation.kind,
         text,
@@ -392,6 +396,15 @@ function narrowOperation(
         evidence: operation.evidence,
       };
   }
+}
+
+/**
+ * The placement's own subject as the model names it. A sweep runs in a
+ * Canvas's Chat or a Sidekick's conversation; any other stored kind is a room
+ * that no longer exists, which the model is offered no kind to file under.
+ */
+function sweepSubjectKind(kind: MemorySubjectKind): "canvas" | "sidekick" | "earlier_space" {
+  return kind === "thread" ? "canvas" : kind === "sidekick" ? "sidekick" : "earlier_space";
 }
 
 /** Distinct words worth matching remembered facts on; the store builds the FTS expression. */
@@ -537,9 +550,7 @@ export async function runMemorySweep(env: Env, message: MemorySweepMessage): Pro
       messages: renderMemorySweepMessages({
         now: new Date(now).toISOString(),
         placement: {
-          subject: { kind: placement.subject.kind as "thread" | "breakout" | "sidekick" | "channel", title: placement.subject.title },
-          thread: placement.thread ? { title: placement.thread.title } : null,
-          channels: placement.channels,
+          subject: { kind: sweepSubjectKind(placement.subject.kind), title: placement.subject.title },
           organizationWide: placement.organizationWide,
           people: placement.people.map((person) => ({
             id: person.id,
@@ -548,7 +559,7 @@ export async function runMemorySweep(env: Env, message: MemorySweepMessage): Pro
         },
         candidates: candidates.candidates.map((fact): MemorySweepCandidateInput => ({
           factId: fact.factId,
-          subjectKind: fact.subjectKind,
+          subjectKind: modelName(MEMORY_SUBJECT_MODEL_NAMES, fact.subjectKind),
           kind: fact.kind,
           text: fact.text,
           validFrom: fact.validFrom === null ? null : new Date(fact.validFrom).toISOString(),

@@ -259,7 +259,7 @@ describe("the rally:memory tools", () => {
     const elsewhere = await tool(env, "owner-open", "recall").execute({ query: "ship Friday" }, "receipt-recall-3");
     expect((elsewhere.output as Recalled).facts).toEqual([]);
     const here = await tool(env, "owner-private", "recall").execute({ query: "ship Friday" }, "receipt-recall-4");
-    expect((here.output as Recalled).facts).toEqual([expect.objectContaining({ subject: { kind: "thread", label: "Side room" } })]);
+    expect((here.output as Recalled).facts).toEqual([expect.objectContaining({ subject: { kind: "canvas", label: "Side room" } })]);
   });
 
   it("lets a member forget their own facts and the conversation's, and only an administrator forget the Organization's", async () => {

@@ -366,7 +366,7 @@ describe("memory scopes and durable tables", () => {
     // cannot reach is the resolver's refusal, naming what it can write.
     await expect(writableScope(routedEnv(env, runInput), runInput, "user")).rejects.toMatchObject({
       code: "memory_scope_not_available",
-      message: expect.stringContaining("Its scopes are: sidekick, workspace"),
+      message: "This run cannot reach user memory. Its scopes are: sidekick, organization.",
     });
   });
 
@@ -483,9 +483,38 @@ describe("memory scopes and durable tables", () => {
       WHERE tables.memory_table_id = ?`).get(memoryTableId)).toEqual({ kind: "workstream" });
     const described = await tableTool(env, run, "describe").execute({ memoryTableId }, toolContext(run, "canvas-describe"));
     expect(described.output).toMatchObject({ scopeKind: "canvas" });
-    // The storage name is not a value the model may send.
-    await expect(tableTool(env, run, "create").execute({ ...declaration, scopeKind: "workstream" }, toolContext(run, "canvas-stored-name")))
-      .rejects.toThrow();
+    // The storage name is never offered. A Sidekick whose saved instructions
+    // still spell it reaches the same scope, and reads the model's name back.
+    const reopened = await tableTool(env, run, "create").execute({ ...declaration, scopeKind: "workstream" }, toolContext(run, "canvas-stored-name"));
+    expect(reopened.output).toMatchObject({ memoryTableId, scopeKind: "canvas" });
+    expect((tableTool(env, run, "create").definition.inputSchema as { properties: { scopeKind: { enum: string[] } } }).properties.scopeKind.enum)
+      .toEqual(["canvas", "sidekick", "user", "organization"]);
+  });
+
+  it("names the Organization's table scope organization to the model and stores it as the workspace scope", async () => {
+    const { env, objectDatabase } = fixture();
+    const run = input("owner");
+    const declaration = {
+      scopeKind: "organization", name: "Vendors", description: "Vendors the Organization uses",
+      usageInstructions: "Insert one row per vendor", rationale: "Track vendors",
+      columns: [{ name: "vendor", description: "Vendor name", type: "string", required: true, searchable: true }],
+      keyColumns: ["vendor"],
+    };
+    const created = await tableTool(env, run, "create").execute(declaration, toolContext(run, "organization-create"));
+    expect(created.output).toMatchObject({ scopeKind: "organization" });
+    const memoryTableId = (created.output as { memoryTableId: string }).memoryTableId;
+    expect(objectDatabase.prepare(`SELECT scope.kind FROM memory_tables tables
+      JOIN memory_scopes scope ON scope.memory_scope_id = tables.memory_scope_id
+      WHERE tables.memory_table_id = ?`).get(memoryTableId)).toEqual({ kind: "workspace" });
+    const found = await tableTool(env, run, "search").execute({ query: "vendors" }, toolContext(run, "organization-search"));
+    expect(found.output).toMatchObject({ tables: [expect.objectContaining({ memoryTableId, scopeKind: "organization" })] });
+    // A member may read the Organization's scope and not write it, and the refusal names it as the model does.
+    const member = input("member");
+    await expect(tableTool(env, member, "create").execute({ ...declaration, name: "Others" }, toolContext(member, "organization-refused")))
+      .rejects.toThrow("This run may read organization memory but not write it. It may write: canvas, user.");
+    // The stored name still reaches the same scope for instructions saved before the rename.
+    const reopened = await tableTool(env, run, "create").execute({ ...declaration, scopeKind: "workspace" }, toolContext(run, "organization-stored-name"));
+    expect(reopened.output).toMatchObject({ memoryTableId, scopeKind: "organization" });
   });
 
   it("shares workspace tables across runs and queries only matching projected rows", async () => {
@@ -497,7 +526,7 @@ describe("memory scopes and durable tables", () => {
     const firstRun = input("owner");
     const secondRun = input("member");
     const created = await tableTool(env, firstRun, "create").execute({
-      scopeKind: "workspace",
+      scopeKind: "organization",
       name: "Seen blog entries",
       description: "One row per blog entry discovered by this workspace.",
       usageInstructions: "Insert by canonical URL before reporting. Query only candidate URLs or pending rows.",
@@ -551,7 +580,7 @@ describe("memory scopes and durable tables", () => {
       toolContext(secondRun, "search-table"),
     );
     expect(discovered.output).toMatchObject({
-      tables: [expect.objectContaining({ memoryTableId, scopeKind: "workspace" })],
+      tables: [expect.objectContaining({ memoryTableId, scopeKind: "organization" })],
     });
 
     const queried = await tableTool(env, secondRun, "query").execute({

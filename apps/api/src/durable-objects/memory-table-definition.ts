@@ -1,3 +1,4 @@
+import { modelEnum, modelName, modelValues } from "@rally/contracts/model-names";
 import type { WorkspaceMemoryTableColumn, WorkspaceMemoryTableCreateRequest, WorkspaceMemoryTableRow } from "./workspace-memory-protocol";
 
 /** Metadata and declaration order do not change a table's stored row schema. */
@@ -29,17 +30,20 @@ export function memoryTableSchemaConflicts(
 
 /**
  * The scope kind a model reads and writes. A Canvas's scope is stored as
- * `workstream`, the conversation's storage name, and named `canvas` to the
- * model, which knows no work streams. The other kinds are their own names.
+ * `workstream`, the conversation's storage name, and the Organization's as
+ * `workspace`; a model is told about neither word, so it reads and writes
+ * `canvas` and `organization`. A stored name is still accepted on the way in,
+ * for a Sidekick whose saved instructions spell it, and never offered.
  */
-export const MODEL_MEMORY_SCOPE_KINDS = ["canvas", "sidekick", "user", "workspace"] as const;
+export const STORED_MEMORY_SCOPE_KINDS = ["workstream", "sidekick", "user", "workspace"] as const satisfies readonly WorkspaceMemoryTableRow["scopeKind"][];
+export const MEMORY_SCOPE_MODEL_NAMES = { workstream: "canvas", workspace: "organization" } as const;
+export const MODEL_MEMORY_SCOPE_KINDS = modelValues(STORED_MEMORY_SCOPE_KINDS, MEMORY_SCOPE_MODEL_NAMES);
 export type ModelMemoryScopeKind = typeof MODEL_MEMORY_SCOPE_KINDS[number];
 export function modelMemoryScopeKind(kind: WorkspaceMemoryTableRow["scopeKind"]): ModelMemoryScopeKind {
-  return kind === "workstream" ? "canvas" : kind;
+  return modelName(MEMORY_SCOPE_MODEL_NAMES, kind);
 }
-export function storedMemoryScopeKind(kind: ModelMemoryScopeKind): WorkspaceMemoryTableRow["scopeKind"] {
-  return kind === "canvas" ? "workstream" : kind;
-}
+/** The `scopeKind` parameter: offered under the model names, parsed to the stored kind. */
+export const ModelMemoryScopeKindSchema = modelEnum(STORED_MEMORY_SCOPE_KINDS, MEMORY_SCOPE_MODEL_NAMES);
 
 /** One public projection for create, reopen, describe and persisted receipts. */
 export function publicMemoryTable(table: WorkspaceMemoryTableRow, columns: readonly WorkspaceMemoryTableColumn[]) {
