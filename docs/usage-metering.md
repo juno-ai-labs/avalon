@@ -278,7 +278,8 @@ desktop meter is owned by the settings screens and
 - **Queue send fails:** the event is lost and `usage_emit_failed` is logged with
   its cost. The PRD accepts this best-effort loss for this phase.
 - **Consumer fails:** the batch retries with backoff, up to the platform's
-  default retry count, and then lands in `avalon-<region>-usage-dead-letter`. A non-empty dead-letter queue
+  default of 3 retries (about 35 s in all: 5, 10 and 20 s), and then lands in
+  `avalon-<region>-usage-dead-letter`. A longer outage still dead-letters it. A non-empty dead-letter queue
   is the alarm; its messages replay safely.
 - **Lakehouse send fails:** the meter stays current, since D1 is written first.
   The batch retries, and after the retries it lands in the dead-letter queue:
@@ -393,8 +394,9 @@ config: a fixed delay does not grow with the attempt, and the other consumers
 already back off per message in code.
 
 **What a future change has to respect:** Do not let a transient failure throw
-out of this consumer. Retry with the shared backoff so the retries span the
-outage.
+out of this consumer. Retry with the shared backoff. With the default 3 retries
+that covers an outage of about 35 s; covering a longer one means raising
+`max_retries`, which is the team's number to set.
 
 ### 2026-11-12 — An exhausted allowance is named, shown and emailed
 
