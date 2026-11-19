@@ -364,7 +364,7 @@ export function createEngineeringMcpServer(
     await (await organizationBinding(env, request.orgId)).archiveSidekick(request, principal))));
 
   server.registerTool("add_org_member", {
-    description: "Add a person by email to an existing Organization as adminUserId, exactly as the app's Add member action does: they become an active member at once, with no invitation to accept, a guest becomes a member, a waiting invitation to the address is revoked, and they are emailed that adminUserId added them. An address with no account gets one that their first email sign-in lands on. adminUserId must be an active owner or admin there. Someone already a member is refused with already_workspace_member, so repeating is safe. Abandoned Organizations are refused.",
+    description: "Add a person by email to an existing Organization as adminUserId, exactly as the app's Add member action does: they become an active member at once, with no invitation, and are emailed that adminUserId added them. adminUserId must be an active owner or admin there. A refusal with already_workspace_member means they are already a member, so repeating is safe; it does not resend the email. Abandoned Organizations are refused.",
     inputSchema: z.object(AddEngineeringOrgMemberInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "add_org_member", {

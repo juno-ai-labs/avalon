@@ -332,10 +332,10 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       const request = AddEngineeringOrgMemberInputSchema.parse(input);
       // Adding someone already a member is refused rather than repeated, so
       // there is no caller recovery key; a fresh ID pairs the audit rows.
+      const operationId = crypto.randomUUID();
       return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
-        action: "add_org_member", orgId: request.orgId, representedUserId: request.adminUserId,
-        operationId: crypto.randomUUID(),
-      }, async () => AddEngineeringOrgMemberResultSchema.parse(await addEngineeringOrgMember(this.env, request)),
+        action: "add_org_member", orgId: request.orgId, representedUserId: request.adminUserId, operationId,
+      }, async () => AddEngineeringOrgMemberResultSchema.parse(await addEngineeringOrgMember(this.env, request, operationId)),
       (result) => ({ memberUserId: result.member.userId, role: result.member.role, emailDelivery: result.emailDelivery }));
     });
   }

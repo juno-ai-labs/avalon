@@ -24,9 +24,8 @@ available to Rally users by virtue of product membership.
 - `apps/api/src/services/engineering-creation.ts` adapts operator Organization
   creation to regional onboarding, and resolves the selected user's
   authority (`engineeringUserAuth`).
-- `apps/api/src/services/engineering-members.ts` adapts the app's Add member
-  action, `WorkspaceService.addMember`, to an operator acting as an owner or
-  admin.
+- `apps/api/src/services/engineering-members.ts` adapts
+  `WorkspaceService.addMember` to an operator acting as an owner or admin.
 - `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer
   and transcript range reader; `conversation-text.ts` formats participant
   prose with shared display and plaintext helpers.
@@ -88,7 +87,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
-| `add_org_member` | Resolve the Organization in exactly one region | WorkspaceService.addMember as the named owner or admin: its account creation, membership write, relationship dispatch, directory push and email |
+| `add_org_member` | Resolve the Organization in exactly one region | WorkspaceService.addMember as the named owner or admin |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
@@ -412,17 +411,11 @@ destructive.
 
 ### Adding a member
 
-`add_org_member` calls `WorkspaceService.addMember`, the service behind the
-app's Add member action, as `adminUserId`, over a bridge method
-`addOrgMember`, audited as `add_org_member`. `engineeringUserAuth` reads that
-user's real role, so the service's own admin check decides, refusing with
-`workspace_admin_required`. The person becomes an active member at once, with
-no invitation to accept, and is emailed that `adminUserId` added them; the
-email is the one product signal that they were added, so the tool does not
-suppress it. Adding someone already a member is refused with
-`already_workspace_member`, so the tool takes no `operationId`; the bridge
-mints one per call only to pair the audit rows. The email address is kept out
-of the tool's log line, which names only the Organization and the acting user.
+`engineeringUserAuth` reads `adminUserId`'s real role, so `addMember`'s own
+admin check decides, refusing with `workspace_admin_required`. A repeat is
+refused with `already_workspace_member`, so the tool takes no `operationId`;
+the bridge mints one per call to pair the audit rows. The tool does not
+suppress the "added you" email, the one product signal that someone was added.
 
 ### Retiring an Organization
 
