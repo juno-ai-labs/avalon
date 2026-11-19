@@ -37,6 +37,9 @@ import {
   ArchiveEngineeringSidekickInputSchema,
   ArchiveEngineeringSidekickResultSchema,
   type ArchiveEngineeringSidekickResult,
+  ArchiveEngineeringCanvasInputSchema,
+  ArchiveEngineeringCanvasResultSchema,
+  type ArchiveEngineeringCanvasResult,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
@@ -111,6 +114,7 @@ import { createEngineeringOrg } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringConversation } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { archiveEngineeringSidekick, setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
+import { archiveEngineeringCanvas } from "./services/engineering-canvases";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
@@ -320,6 +324,17 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
       }, async () => ArchiveEngineeringSidekickResultSchema.parse(await archiveEngineeringSidekick(this.env, request)),
       (result) => ({ lifecycle: result.lifecycle }));
+    });
+  }
+
+  async archiveCanvas(input: unknown, operator: unknown): Promise<ArchiveEngineeringCanvasResult> {
+    return this.productOperation("archiveCanvas", async () => {
+      const request = ArchiveEngineeringCanvasInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "archive_canvas", orgId: request.orgId,
+        representedUserId: request.userId, operationId: crypto.randomUUID(), conversationId: request.canvasId,
+      }, async () => ArchiveEngineeringCanvasResultSchema.parse(await archiveEngineeringCanvas(this.env, request)),
+      () => ({}));
     });
   }
 

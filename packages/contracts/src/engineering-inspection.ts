@@ -78,7 +78,7 @@ export type SendEngineeringMessageResult = z.infer<typeof SendEngineeringMessage
 
 export const SetEngineeringSidekickPausedInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema,
-  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Sidekick in the app: its author, its run-as user, a manager of its owning Thread, or an owner or admin for an Organization-wide one."),
+  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Sidekick in the app; its author always is."),
   sidekickId: AutomationIdSchema,
   paused: z.boolean(),
 }));
@@ -100,6 +100,20 @@ export const ArchiveEngineeringSidekickResultSchema = deferredZodSchema(() => z.
   lifecycle: z.literal("deleted"),
 }));
 export type ArchiveEngineeringSidekickResult = z.infer<typeof ArchiveEngineeringSidekickResultSchema>;
+
+export const ArchiveEngineeringCanvasInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema,
+  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Canvas in the app; its creator always is."),
+  canvasId: IdSchema.describe("The Canvas ID."),
+}));
+export type ArchiveEngineeringCanvasInput = z.infer<typeof ArchiveEngineeringCanvasInputSchema>;
+export const ArchiveEngineeringCanvasResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  canvasId: IdSchema,
+  archived: z.literal(true),
+}));
+export type ArchiveEngineeringCanvasResult = z.infer<typeof ArchiveEngineeringCanvasResultSchema>;
 
 export const RetireEngineeringOrgInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema.describe("The Organization to close for good. Retiring it again resumes an unfinished walk."),
@@ -530,6 +544,7 @@ export interface EngineeringInspectionRpcBinding {
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
   archiveSidekick(input: ArchiveEngineeringSidekickInput, operator: EngineeringOperator): Promise<ArchiveEngineeringSidekickResult>;
+  archiveCanvas(input: ArchiveEngineeringCanvasInput, operator: EngineeringOperator): Promise<ArchiveEngineeringCanvasResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;

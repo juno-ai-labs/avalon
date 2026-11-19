@@ -22,8 +22,9 @@ available to Rally users by virtue of product membership.
 - `apps/api/src/engineering-inspection-bridge.ts` is the private named
   `WorkerEntrypoint` exported by each regional API Worker.
 - `apps/api/src/services/engineering-creation.ts` adapts operator Organization
-  creation to regional onboarding, and resolves the selected user's
-  authority (`engineeringUserAuth`).
+  creation to regional onboarding.
+- `apps/api/src/services/engineering-user-auth.ts` resolves the selected
+  user's authority (`engineeringUserAuth`) for every tool that acts as one.
 - `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer
   and transcript range reader; `conversation-text.ts` formats participant
   prose with shared display and plaintext helpers.
@@ -85,6 +86,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
+| `archive_canvas` | Resolve the Organization in exactly one region | CanvasService.archive, which calls HostedCanvas in WorkspaceDO |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
@@ -299,8 +301,8 @@ together. It refuses with one of two codes, and the remedies differ:
   that ends every session into the Organization
   ([`workspace-retirement.md`](workspace-retirement.md)). No user passes, so
   trying another one cannot help. `send_message`, the two text reads,
-  `pause_sidekick` and `resume_sidekick` do not work in an abandoned
-  Organization.
+  `pause_sidekick`, `resume_sidekick` and `archive_canvas` do not work in an
+  abandoned Organization.
 - `user_not_active_organization_user`: the named user has no active member or
   guest relationship in the Organization. Another user may pass.
 
@@ -404,7 +406,11 @@ to pair the attempt and result audit rows.
 
 `archive_sidekick` calls AutomationService `archive` the same way, in any
 lifecycle. It is the one of the three with no undo, so it is marked
-destructive.
+destructive. `archive_canvas` calls CanvasService `archive` the same way, and
+HostedCanvas's archive takes the Sidekicks made in the Canvas with it. It
+refuses an abandoned Organization because the retirement gate does not permit
+`canvasArchive`, whose alarms reach the Canvas's conversations and artifact
+hosts; admitting it would need that permit first.
 
 ### Retiring an Organization
 
@@ -675,7 +681,8 @@ region refused, and the rejected field kept across the RPC boundary; then, in a
 Canvas's Chat, member and guest sends with normal execution, retry dedupe and
 author snapshots, a send and a read refused to somebody the Canvas does not
 admit, a record-only message that starts no run, and default and fenced history
-paging, and a Canvas read as a Sidekick's conversation refused by name.
+paging, a Canvas read as a Sidekick's conversation refused by name, and a
+Canvas archived through the bridge.
 `engineering-sidekick-inspection.test.ts` posts a record-only message to a
 Sidekick's shared conversation and reads it back, refuses it read as a Canvas,
 and reaches a run conversation through `run_canvas_sql`'s registry check.
