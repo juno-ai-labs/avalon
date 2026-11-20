@@ -735,7 +735,9 @@ literal local/private hosts, including mapped and site-local IPv6, but is not a 
 or redirect firewall. Browser Run executes remotely rather than on a user's or
 Worker's private network. Captures are snapshots and are not refreshed just because
 the same URL is mentioned again. Missing extraction/capture work remains observable
-through Queue failure rather than silent truncation. Document-size and capture
+through Queue failure rather than silent truncation, except a page Browser Run
+answers with 422: it is indexed without a body, and its only signal is a
+`search_link_capture_failed` log with `retryable: false`. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Fleet migration
@@ -765,6 +767,14 @@ nothing replays it, and the uncaptured row is already the record. Settling every
 4xx except 408/429: a 400 or 401/403 is our request, binding or entitlement
 breaking, and would then index every link body-less without a dead letter to
 notice. Add another status only when the `retryable` log shows it deterministic.
+Every 422 settles, whatever its provider code; the 2026-09 probe below saw 422 /
+5006 (connection closed) on one page while a control page succeeded, so that
+code is accepted as page-specific too. The same entry's "swallowing capture
+failures would falsely imply page content had migrated" still holds: the row
+stays `captured = 0` and carries no body.
+
+**Consequences:** A settled page stays uncaptured permanently unless the turn
+is revised or a fleet re-projection runs.
 
 ### 2026-11-19 — Settle a display job for an erased Chat instead of dead-lettering it
 
