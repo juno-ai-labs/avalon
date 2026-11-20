@@ -17,9 +17,7 @@ import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import {
   calculateAzureImageCostUsd,
   loadAzureImageModelPricing,
-  loadAzureTokenModelPricing,
   type AzureImageModelPricing,
-  type AzureTokenModelPricingRecord,
 } from "../openrouter-pricing-cache";
 import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-client";
 import {
@@ -37,7 +35,6 @@ import {
   createMultimodalGenerationPlugin,
   MULTIMODAL_AUDIO_DEFAULT_VOICE,
   MULTIMODAL_AUDIO_MODEL,
-  MULTIMODAL_AUDIO_PRICING_MODEL_ID,
   MULTIMODAL_GENERATION_MODEL,
   MULTIMODAL_GENERATION_PRICING_MODEL_ID,
   MultimodalGenerationError,
@@ -64,7 +61,6 @@ interface MultimodalGenerationPluginOptions {
   loadPricing?: () => Promise<AzureImageModelPricing>;
   audioClient?: AzureAudioClient;
   audioResources?: MultimodalAudioResourceStore;
-  loadAudioPricing?: () => Promise<AzureTokenModelPricingRecord>;
 }
 
 export function createAvalonMultimodalGenerationPlugin(
@@ -93,8 +89,6 @@ export function createAvalonMultimodalGenerationPlugin(
   });
   const audioResources = options.audioResources
     ?? createMultimodalAudioResourceStore(env, inObjectResourceAttacher);
-  const loadAudioPricing = options.loadAudioPricing
-    ?? (() => loadAzureTokenModelPricing(env, MULTIMODAL_AUDIO_PRICING_MODEL_ID));
 
   const execute = async (
     operation: "generate" | "edit",
@@ -200,7 +194,6 @@ export function createAvalonMultimodalGenerationPlugin(
       if (replay) return audioToolResult(replay);
 
       await requireUsageAllowance(env, input.workspaceId);
-      const pricing = await bestEffortAudioPricing(env, context, loadAudioPricing);
       const voice = arguments_.voice ?? MULTIMODAL_AUDIO_DEFAULT_VOICE;
       // One request per piece, in order, with the same voice and instructions,
       // stopping at the piece that takes it past the attachment limit.
@@ -229,7 +222,7 @@ export function createAvalonMultimodalGenerationPlugin(
         }
       }
       const providerResult = { bytes: joinMp3Pieces(recorded), ...(providerOperationId ? { providerOperationId } : {}) };
-      const billing = calculateAudioBilling(env, context, pricing);
+      const billing = UNPRICED_AUDIO_BILLING;
       const published = await audioResources.publish(resourceContext, {
         bytes: providerResult.bytes,
         ...(arguments_.title ? { title: arguments_.title } : {}),
@@ -330,55 +323,16 @@ function meterGeneration(
   });
 }
 
-async function bestEffortAudioPricing(
-  env: Env,
-  context: HarnessToolContext,
-  loadPricing: () => Promise<AzureTokenModelPricingRecord>,
-): Promise<AzureTokenModelPricingRecord | null> {
-  try {
-    return await loadPricing();
-  } catch (error) {
-    logStructuredEvent(env, "error", "multimodal_generation_pricing_unavailable", {
-      workspace_id: context.workspaceId,
-      workstream_id: context.workstreamId,
-      harness_run_id: context.harnessRunId,
-      tool_invocation_id: context.effectIntentId ?? null,
-      tool_call_id: context.toolCallId,
-      operation: "audio",
-      model: MULTIMODAL_AUDIO_MODEL,
-      pricing_model_id: MULTIMODAL_AUDIO_PRICING_MODEL_ID,
-      reason: error instanceof Error ? error.message : "unknown",
-    });
-    return null;
-  }
-}
-
-function calculateAudioBilling(
-  env: Env,
-  context: HarnessToolContext,
-  pricing: AzureTokenModelPricingRecord | null,
-): {
-  costUsd: null;
-  pricingSourceFingerprint: string;
-  usage: null;
-} {
-  if (pricing) {
-    logStructuredEvent(env, "error", "multimodal_generation_usage_unavailable", {
-      workspace_id: context.workspaceId,
-      workstream_id: context.workstreamId,
-      harness_run_id: context.harnessRunId,
-      tool_invocation_id: context.effectIntentId ?? null,
-      tool_call_id: context.toolCallId,
-      operation: "audio",
-      model: MULTIMODAL_AUDIO_MODEL,
-    });
-  }
-  return {
-    costUsd: null,
-    pricingSourceFingerprint: pricing?.sourceFingerprint ?? "unavailable",
-    usage: null,
-  };
-}
+/**
+ * Speech is unpriced: the Azure speech response carries no token usage, and
+ * the speech model is not in OPENROUTER_PRICING_MODEL_IDS, so no price exists
+ * to look up. `meterGeneration` logs each call as `usage_unpriced`.
+ */
+const UNPRICED_AUDIO_BILLING = {
+  costUsd: null,
+  pricingSourceFingerprint: "unavailable",
+  usage: null,
+} as const;
 
 async function bestEffortPricing(
   env: Env,

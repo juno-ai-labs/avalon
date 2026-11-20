@@ -298,7 +298,6 @@ describe("multimodal generation runtime", () => {
     const plugin = createAvalonMultimodalGenerationPlugin(runtimeEnv(), workflowInput, undefined, {
       audioResources,
       audioClient,
-      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
     });
     const tool = plugin?.tools.find((candidate) => candidate.definition.name === "generate_audio");
 
@@ -326,11 +325,7 @@ describe("multimodal generation runtime", () => {
       billing: { costUsd: null },
     });
     expect(result).not.toHaveProperty("contentParts");
-    expect(errorLog).toHaveBeenCalledWith(expect.objectContaining({
-      event: "multimodal_generation_pricing_unavailable",
-      model: "gpt-4o-mini-tts",
-      pricing_model_id: "openai/gpt-4o-mini-tts",
-    }));
+    expect(errorLog).not.toHaveBeenCalled();
   });
 
   it("joins pieces by their audio frames whatever framing each carries", () => {
@@ -366,7 +361,6 @@ describe("multimodal generation runtime", () => {
     const plugin = createAvalonMultimodalGenerationPlugin({ ...runtimeEnv(), MAX_ATTACHMENT_BYTES: "60" }, workflowInput, undefined, {
       audioResources: { findPublished: vi.fn(async () => null), publish: vi.fn() },
       audioClient: { generate, streamPcm: vi.fn() },
-      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -396,7 +390,6 @@ describe("multimodal generation runtime", () => {
     const plugin = createAvalonMultimodalGenerationPlugin(runtimeEnv(), workflowInput, undefined, {
       audioResources: { findPublished: vi.fn(async () => null), publish },
       audioClient: { generate, streamPcm: vi.fn() },
-      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const tool = plugin!.tools.find((candidate) => candidate.definition.name === "generate_audio")!;
