@@ -51,7 +51,8 @@ validation renews.
 ## Invariants
 
 - **A footer link goes in `renderSiteFooter`, a header link in
-  `renderSiteNav`, never in a page.** The Trust Center pages use the same
+  `renderSiteNav` or, for the pencil pages, `renderHomeHeader`, never in a
+  page.** The Trust Center pages use the same
   footer marker.
 - **The footer's help@ link keeps `data-site-action="support-contact-footer"`.**
   The tracking test renders the landing page through `renderSiteChrome` before

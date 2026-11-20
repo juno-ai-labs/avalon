@@ -142,6 +142,8 @@ function run(story: HTMLElement): void {
     if (!bar) return;
     bar.style.transitionDuration = `${seconds}s`;
     bar.style.transform = `scaleX(${fraction})`;
+    // A reset has to land before the next fill starts, or the bar sweeps back from full.
+    if (seconds === 0) void bar.offsetWidth;
   };
 
   /** Starts, stops or carries on the step's clock, to match whether the story should be playing now. */
@@ -198,7 +200,7 @@ function run(story: HTMLElement): void {
     });
     const slide = slides[current]!;
     // Anything on the page that follows the story, such as a headline's word (word-swap.ts), hears which slide is up.
-    story.dispatchEvent(new CustomEvent('story:slide', { bubbles: true, detail: { slide, index: current } }));
+    story.dispatchEvent(new CustomEvent('story:slide', { bubbles: true, detail: { slide } }));
     if (chosen) {
       tabs[current]?.focus({ preventScroll: true });
       // Only a person's choice scrolls the tab row: autoplay scrolling it would read as page input to traffic-signals.ts.
@@ -245,7 +247,6 @@ function run(story: HTMLElement): void {
     pause.hidden = false;
     pause.addEventListener('click', () => {
       held = !held;
-      pause.setAttribute('aria-label', held ? 'Play the example' : 'Pause the example');
       pause.setAttribute('aria-pressed', String(held));
       schedule();
     });

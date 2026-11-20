@@ -119,7 +119,7 @@ describe("an empty Canvas's templates", () => {
       'Legal docketTrack every legal request by whose turn it is, and for how many days.For legal teams',
       'Client document checklistTick off the documents each client owes you as they arrive by email.For accountants',
       'Recruiting deskSee every intro between a candidate and a client, and whose reply it is waiting on.For recruiters',
-      'Today’s follow-upsA list of who is waiting on you today, longest wait first.For brokers',
+      'Today’s follow-upsA list of who is waiting on you today, new leads first.For brokers',
       'Event countdownOne page for an event: every vendor’s state and what is due before the date.For event planners',
       'PR dashboardSee open pull requests and highlight the ones that have gone stale.For developers',
       'Granola feature requestsCollect requests from customer interviews and let your team vote.For product managers',

@@ -268,17 +268,21 @@ and nothing reveals or drifts.
   person's colour.
 - **Both themes, from tokens.** A colour written into a rule instead of a
   token breaks one of the two themes; check both before shipping.
-- **Live first, then multiplayer.** Every page that sells Rally leads with
+- **Live first, then multiplayer.** Every page that sells Rally in its own
+  words (the `landing.css` pages and `/developer-mode/`) leads with
   artifacts that update from activity in connected tools, and follows with
   the team working from them, from one person to the whole organization.
   Copy that leads with chat, or with collaboration alone, breaks the
   positioning.
-- **Every live claim names its mechanism.** A Canvas changes because a
-  Sidekick, triggered by a schedule or an event in a connected tool,
-  publishes a new version. Do not show a Canvas changing by itself, or a
-  connector the product does not have.
+- **Every live claim names its mechanism.** On those same pages, a Canvas
+  changes because a Sidekick, triggered by a schedule or an event in a
+  connected tool, publishes a new version. Do not show a Canvas changing by
+  itself, or a connector the product does not have. The homepage and the
+  audience pages say the same thing without the product's nouns
+  ([`site-audience-pages.md`](site-audience-pages.md)): an email arrives and
+  the page changes.
 - **Product truth.** Every claim on these pages must be something the
-  product does, in the product's words. The demo shows people present, a
+  product does, in the product's words where the page uses them. The demo shows people present, a
   comment on a line and a published version, all of which ship; it does not
   show live co-editing or a cursor for Rally, which do not. A badge such as
   "Most teams" needs a source before it ships.

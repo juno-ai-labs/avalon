@@ -62,7 +62,7 @@ function change(holder: HTMLElement, next: string, delay: number): void {
 }
 
 /** Shows `words` in `heading`'s holders, keyed by each holder's data attribute name. */
-export function swapWords(heading: HTMLElement, holders: readonly { holder: HTMLElement; key: string }[], words: DOMStringMap): void {
+function swapWords(heading: HTMLElement, holders: readonly { holder: HTMLElement; key: string }[], words: DOMStringMap): void {
   const parts = Array.from(heading.querySelectorAll<HTMLElement>('.swap-part, .swap'));
   const before = parts.map((part) => part.getBoundingClientRect());
   holders.forEach(({ holder, key }, index) => {

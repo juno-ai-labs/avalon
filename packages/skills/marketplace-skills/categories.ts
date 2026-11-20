@@ -3,8 +3,8 @@
  * first is the one the Marketplace opens on.
  *
  * The audiences the public site has a page for come first, in the site's own
- * order (`apps/site/src/audiences.ts`): they are who Rally is sold to, and each
- * of those pages starts its category's first template.
+ * order (`apps/site/src/audiences.ts`): they are who Rally is sold to. Each of
+ * those pages starts the template its row there names.
  */
 export const CANVAS_TEMPLATE_CATEGORIES = [
   { tag: 'wholesalers', label: 'Wholesalers' },

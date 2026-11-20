@@ -173,9 +173,10 @@ title) with `kit-live` (the mark that it updates itself, and from one inbox or
 several), `kit-face`,
 `kit-pill` (`new`, `wait`, `late`, `good`), `kit-board`, `kit-rows`,
 `kit-table`, `kit-stats`, `kit-matrix` and `kit-tick`, `kit-steps`,
-`kit-timeline`, `kit-meter`. A page
-uses them where they fit and draws its own artifact where they do not. The
-homepage story uses only the kit.
+`kit-timeline`, and `kit-sr` (words for a screen reader where the page shows
+only a mark). The homepage story uses only the kit. An audience page draws
+its own artifact under its own prefix and takes from the kit only the small
+shared pieces, mostly `kit-head`, `kit-live`, `kit-face` and `kit-pill`.
 
 ## Invariants
 
@@ -185,10 +186,18 @@ homepage story uses only the kit.
   good ([`google-workflows.md`](google-workflows.md#inbox-management)). So a
   page may say "a page like this only needs to read" and "Rally cannot
   permanently delete mail", and must not say Rally cannot change a mailbox.
-  A page updates when an email arrives or on a schedule. Several people's
-  inboxes feed one page when each of them connects their own Gmail and allows
-  it. Pages can be shared with teammates, with a guest by email, or with
-  everyone, and can send email and push notifications. Rally does not connect
+  A page updates when an email arrives or on a schedule; mail the person
+  sends does not arrive as new mail, so a page that follows their replies
+  needs the schedule too. Several people's inboxes feed one page when each of
+  them connects their own Gmail and allows it. Sharing is set for everything
+  one Canvas publishes, not per page
+  ([`canvas-artifact-access.md`](canvas-artifact-access.md)): its pages can be
+  opened to chosen teammates, the whole Organization or anyone with the link,
+  and whoever can open them does not see the Chat or the mailbox. So a page
+  must not say "each page has its own access"; a page meant for a different
+  audience is asked for in a new chat, and copy says so. A guest invited by
+  email becomes an editor and can read the Chat, so copy does not offer that
+  as a way to share one page. Pages can send email and push notifications. Rally does not connect
   to Outlook, and a story must not show Rally reading inside an attachment or
   a tool it has no connector for. A false claim on a page aimed at one trade
   is the first thing that trade notices. Verified by review, no automated
@@ -235,8 +244,7 @@ homepage story uses only the kit.
 - **No inline style or script.** The site's Content-Security-Policy is
   `style-src 'self'; script-src 'self'`. A `style=""` attribute works in the
   dev server and is blocked in production. Sizes that vary go through classes
-  or attributes (`kit-meter[data-fill]`), and motion through the stylesheet or
-  the Web Animations API.
+  or attributes, and motion through the stylesheet or the Web Animations API.
 - **Sign-up links start the audience's template, and are tracked.** A page
   does not spell its template's link out: it writes
   `href="<!-- rally:audience-start <slug> -->"` and the registry row fills it

@@ -519,9 +519,10 @@ with nothing for the people the site is bringing in.
 
 **Consequences:** Ten categories: the category row wraps to two lines on a wide
 window and three on a phone, and Popular, one template per category, is ten
-cards and scrolls. A further category makes both longer. An audience's first
-template is what its site page starts and what Popular shows, so reorder a
-category's files with that in mind.
+cards and scrolls. A further category makes both longer. Popular shows each
+category's first template, so reorder a category's files with that in mind.
+An audience's site page starts the template its row in
+`apps/site/src/audiences.ts` names, whatever the order.
 
 ### 2026-11-12 — The Marketplace is a page, opened from the header
 
