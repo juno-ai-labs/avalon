@@ -1402,7 +1402,7 @@ misrouted product statement now fails because the table or column is absent.
 - **One unexpired attempt lease owns a child run.** Two owners can duplicate an external tool effect or terminal assistant message.
 - **A terminal run retains no participant-visible active execution state.** Terminalization closes response, assistant-turn, plugin, tool-call, thinking, and compaction activities and removes that run's streaming, compaction, and inference-delay checkpoints in the same transaction. A delayed compaction-start event must prove the exact running attempt and its live lease before it can recreate a checkpoint.
 - **A persistent loop goes back to `idle` only with its provider protocol settled.** An accepted assistant tool batch whose results are still missing is settled by `recoverInterruptedToolBatch`, which reads the durable receipts and can only run under a live execution lease — so a failing run settles the batch before it releases, and a loop released while one is open can never be repaired, and every queued message behind it is refused by `applyBindLoopTransition` for ever. Both release paths ask `unsettledToolBatchBlockingRelease`, and a third one has to as well. The single exception is a batch whose every withheld call is an unanswered question: its answer is a pending input, so the room releases itself.
-- **`inputsBindCanAccept` offers only what Bind will accept.** `nextLoopWorkAt` reads a non-empty answer as work that is due now and arms the object's alarm at `now`, so an input offered here and then refused is not one wasted pass — it is a wake per pass, indefinitely. A loop that can offer nothing derives no alarm of its own, and reports `substream_loop_parked_with_queued_input` unless what holds it is an open question waiting for its answer (`awaitingQuestionAnswer`), which is the room working as designed.
+- **`inputsBindCanAccept` offers only what Bind will accept.** `nextLoopWorkAt` reads a non-empty answer as work that is due now and arms the object's alarm at `now`, so an input offered here and then refused is not one wasted pass — it is a wake per pass, indefinitely. A loop that can offer nothing derives no alarm of its own, and reports `substream_loop_parked_with_queued_input` unless what holds it is an open question waiting for its answer (`awaitingQuestionAnswer`).
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** Queue ordering and delivery uniqueness are not trusted; the parent numbers its own projections so the workspace compares one clock per key.
@@ -1890,30 +1890,28 @@ of the creator-only rule went with the import suite and was never replaced.
 ### 2026-11-20 — A queue held by an open question is not reported as parked
 
 **What changed:** `nextLoopWorkAt` no longer logs
-`substream_loop_parked_with_queued_input` when the loop's last assistant step is
-a batch of questions only with one still unanswered.
-`WorkstreamTranscriptStorage.awaitingQuestionAnswer` answers that, from the
-same `openQuestionToolCallIds` the release guard and `inputsBindCanAccept`
-already use, plus a check that one of those questions is still `pending`.
-Every other held queue still reports.
+`substream_loop_parked_with_queued_input` while every withheld call is a
+question and at least one is still `pending` (`awaitingQuestionAnswer`).
 
-**Why:** One Canvas asked a question at 2026-11-18 22:49 UTC. A sub-agent's
-message landed 0.8 seconds before it, so the message queued behind the question
-rather than cancelling it, and nobody answered. The question wait is the
-designed park: the answer, or a newer message, arms its own wake. But
-`nextLoopWorkAt` runs from several call sites on every alarm the object's other
-work brings, so "reported once per wake" came out at about four lines every two
-minutes. That made the warning the largest in production, about 5,800 a day,
-all from a room working correctly. The 2026-09-19 entry wants this line read as
-evidence of a wedge, never as a heartbeat. This change makes that true again.
+**Why:** That wait is cleared by a person: their answer, or a newer message,
+arms its own wake. But `nextLoopWorkAt` runs from several call sites on every
+alarm, so one Canvas with an unanswered question logged about four lines every
+two minutes, about 5,800 a day: the largest warning in production. That buried
+the wedge the 2026-09-19 entry wants this line kept for. In that Canvas, a
+sub-agent's message admitted 0.8 seconds before the question was queued behind
+it instead of cancelling it, because only input admitted after a question
+supersedes it. Whether agent or automation input should wait on a person's
+answer like that is an open product question; this change does not settle it.
 
-**Considered and rejected:** A once-per-isolate guard. The object is evicted
-between these alarms, so the guard would still log on every wake.
+**Considered and rejected:** A once-per-isolate guard, since the object is
+evicted between these alarms. Logging once per alarm from `runDueAlarmWork`
+would cut the volume for every cause. It was left for a follow-up, because
+moving the log means first proving that a parked loop reaches that path on each
+wake, and the wedge must not go quiet.
 
-**Consequences:** The exemption is for a batch made up of questions only, at
-least one still `pending`. A withheld batch with any non-question call, or one
-whose questions are all closed with no answer queued, is the unrecoverable
-wedge this warning exists for, and must keep reporting.
+**Consequences:** A withheld batch with any non-question call, or whose
+questions are all closed with no answer queued, is the unrecoverable wedge and
+must keep reporting.
 
 PR: [#1685](https://github.com/juno-ai-labs/avalon/pull/1685).
 
