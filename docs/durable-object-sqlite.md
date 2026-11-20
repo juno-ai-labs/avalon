@@ -98,7 +98,11 @@ invalid statement cannot leave a half-applied migration with a successful
 receipt. New table rebuilds remain valid with foreign-key enforcement enabled:
 they create replacements, copy children and parents, remove the old graph
 child-first, and then rename the replacements parent-first. The runner executes
-`foreign_key_check` before commit. The released v32 transcript migration retains
+`foreign_key_check` before commit only after a group in the legacy
+`disabled_during_rebuild` mode or a group whose own statements set `PRAGMA
+foreign_keys` or `PRAGMA defer_foreign_keys`, and refuses a migration that
+declares a foreign key `DEFERRABLE INITIALLY DEFERRED`. Any other group relies
+on enforcement refusing an orphaning write immediately. The released v32 transcript migration retains
 its explicit legacy execution marker solely to preserve its shipped fingerprint;
 new migrations may not copy that mode. Earlier complete groups remain
 receipted if a later group fails, and the next construction resumes at the
@@ -376,6 +380,44 @@ or `localWorkspaceEnv`, because `withWorkspaceRuntimeDatabase` without the local
 executor calls the object back.
 
 ## Changelog
+
+### 2026-11-20 — Check foreign keys only where enforcement was off
+
+**What changed:** The shared migration runner skips `PRAGMA foreign_key_check`
+after a group that ran with foreign-key enforcement on, and keeps it for the
+legacy `disabled_during_rebuild` mode and for any group whose statements set a
+foreign-key pragma (`foreign_keys` or `defer_foreign_keys`). A migration that
+declares a foreign key `DEFERRABLE INITIALLY DEFERRED` is refused, and a
+violation now names its table and parent.
+
+**Why:** On 2026-11-19 the largest WorkspaceDO took a deploy carrying the
+`workspace_connector_events` item backfill. The group read 276,802 rows for
+the backfill and then 737,342 for `foreign_key_check`, exceeded the 30-second
+CPU limit, and was reset; the `memoryDigest` calls waiting on it failed with
+`exceededCpu` until the retry committed about two minutes later. With
+enforcement on and no deferral toggled, the check cannot find a violation —
+SQLite refuses an orphaning write when it happens — so it was the full cost of
+the object's size for no information, on every deploy that shipped a migration.
+Deferral is the exception kept: `PRAGMA defer_foreign_keys = OFF` resets
+SQLite's count of pending deferred violations, so an orphan written between
+`ON` and `OFF` commits unless the check runs, and three shipped migrations
+toggle it.
+
+**Considered and rejected:** Bounding or splitting the backfill. It has shipped
+and is hashed into every object's receipt, and the next backfill would meet the
+same scan. Dropping the check entirely: by the 2026-09-03 finding the legacy
+mode's groups ran with enforcement on too, so the check is kept for them as a
+cheap guard over released history, and for deferral because it is the only
+guard there. Reading `PRAGMA foreign_keys` as a further trigger: after the
+group's own SQL it always reads on, so it was dead code. A foreign key deferred
+to commit is refused rather than checked, because its violation surfaces only at
+the object event's own commit, after the receipt, as an unnamed reset on every
+wake.
+
+**Consequences:** A migration that needs orphans checked must run with
+enforcement on, which is what new migrations already must do. A backfill large
+enough to approach the CPU limit on its own still needs splitting across object
+events; this change removes the scan that doubled it, not the limit.
 
 ### 2026-09-21 — A migration fingerprint cannot take an object offline
 
