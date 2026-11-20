@@ -8,7 +8,7 @@ the device remembers only the view the person chose.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/ui-store.ts` | The sidebar's width and open section, and the right slot's state (`railOpen`, `railExpanded`, `railVariant`, `railWidth`, `inspector`). |
+| `apps/desktop/src/renderer/lib/ui-store.ts` | The sidebar's width and open section, and the slot's state (`railOpen`, `railExpanded`, `railVariant`, `railWidth`, `inspector`). |
 | `apps/desktop/src/renderer/lib/rail-split.ts` | The even split an attachment or artifact panel opens or restores at. |
 | `apps/desktop/src/renderer/lib/desktop-layout.ts` | Scoped local keys and artifact panel selection. `useSemanticScroll` is still exported and tested, but nothing calls it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/landing.tsx`, `lib/landing.ts` | Last route save and startup restoration. |
@@ -38,7 +38,10 @@ the split is half of it, in the desktop app and a browser tab alike.
 
 **The panel never floats over the conversation.** At any width above the phone
 layout (641px and up) the main pane gives up the panel's width and the panel
-sits beside it; there is no dimming layer to click away. The panel's width is
+sits beside it; there is no dimming layer to click away. Which side it sits on
+is the panel's own to say (`PanelHost`): beside the sidebar for a Canvas, after the conversation
+for a Sidekick ([`desktop-shell.md`](desktop-shell.md#one-slot)). The width
+below is the panel's on either side, so in a Canvas it is the artifact's. The panel's width is
 capped by `--rail-max-slot`, which keeps `--conversation-min-width` for the
 conversation where the window allows. A panel opens at half the pane, so where
 the pane is narrower than two conversation minimums, 2 × 424 = 848px
@@ -51,7 +54,7 @@ so at the default 416px sidebar (the 76px rail and the design's 340px list)
 this is any window or tab narrower than 1264px, and at the 476px maximum
 narrower than 1324px, the desktop app's 860px minimum included.
 A Canvas's "⋯" and pill menus offer **Open artifact** while it has one: it
-navigates onto the newest artifact as arriving does, beside the Chat, so a
+navigates onto the newest artifact, beside the Chat, so a
 panel closed by the person comes back without leaving the Canvas.
 At phone width the panel is a full-width sheet.
 
@@ -74,14 +77,18 @@ with no stored width restores at the even split, the same width a click gives. D
 edge resets it to the even split it opened at; unlike the opening, the reset is
 the person's own act, so it is saved as the conversation's width like a drag.
 
-Every draggable edge, the sidebar's and the right panel's, takes the same hit
+Every draggable edge, the sidebar's and the panel's, takes the same hit
 width, `--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's
-is centred on its line. The panel's sits inside the panel and reaches only 2px
-over the conversation, so the transcript's
+is centred on its line. A trailing panel's sits inside the panel and reaches
+only 2px over the conversation, so the transcript's
 scrollbar beside them stays draggable. A panel holding a reactive site or a
 browser page is the exception: its native view covers the panel's body and
 takes the pointer from anything under it, so there the target reaches over
-the conversation instead and covers the scrollbar's last few pixels.
+the conversation instead and covers the scrollbar's last few pixels. A
+leading panel's edge faces the conversation's left side, which has no
+scrollbar, so its target always reaches over the conversation with the line
+on the panel's edge. A drag toward the conversation widens the panel on
+either side, and so does the arrow key that points into it.
 
 The shell records the Canvas and Sidekick routes (`/canvases`, `/canvases/:id`,
 `/sidekicks`, `/sidekicks/:id`) as `last-route`, without a query. The root
@@ -140,7 +147,9 @@ the windows the person left open.
 `desktop-layout.test.tsx` checks the unused semantic row hook;
 `artifact-window-state.test.ts` checks the local registry and monitor clamp;
 `rail-split.test.ts` checks the width a panel opens and restores at, including
-a width saved in a narrow window restored in a wide one.
+a width saved in a narrow window restored in a wide one;
+`components/inspector-rail.test.tsx` checks the handle's drag and keys on
+either side.
 The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 

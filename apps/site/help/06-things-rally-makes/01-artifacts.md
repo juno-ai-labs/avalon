@@ -7,7 +7,7 @@ An artifact is a file Rally made for you in a Canvas. Most of the time it is a d
 
 ## When Rally writes a document instead of a reply
 
-Some requests are requests for a document: a product brief, a contract, a memo, a report, a plan, a spec, a blog post, a press release. For those, Rally does not paste a wall of text into the conversation. It writes the document as a file, publishes it to the Canvas, opens it in the panel on the right, and posts a small card in the chat with the title and a line inviting you to ask for changes. It does not repeat the whole document in the chat as well, so the conversation stays readable.
+Some requests are requests for a document: a product brief, a contract, a memo, a report, a plan, a spec, a blog post, a press release. For those, Rally does not paste a wall of text into the conversation. It writes the document as a file, publishes it to the Canvas, opens it in the panel on the left, and posts a small card in the chat with the title and a line inviting you to ask for changes. It does not repeat the whole document in the chat as well, so the conversation stays readable.
 
 Try something like:
 
@@ -44,7 +44,7 @@ A request for something new makes a new artifact. "Write a second brief for the 
 
 ## Everything in a Canvas
 
-Everything Rally has made in a Canvas shows as cards in the panel on the right. Click a card to open that artifact. A Canvas with one artifact opens straight on it; a brand-new Canvas has no panel at all until Rally makes something. Rally does not label an empty shelf.
+Everything Rally has made in a Canvas shows as cards in the panel on the left. Click a card to open that artifact. A Canvas with one artifact opens straight on it; a brand-new Canvas has no panel at all until Rally makes something. Rally does not label an empty shelf.
 
 Things brought into the Canvas from outside are the subject of [Resources: things you bring in](04-resources.md).
 

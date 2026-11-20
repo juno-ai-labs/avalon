@@ -10,7 +10,7 @@ Rally has a sidebar on the left and your work on the right. The sidebar is how y
 | The rail | **Canvases**, **Sidekicks** and **Activity** at the top, your avatar (**Settings**) at the bottom |
 | The sidebar | The list for the section you picked: a **Pinned** group and everything else, newest activity first, or your Activity |
 | A home page | The whole section on one page, with **New**, search and filter chips |
-| An open Canvas | The conversation in the middle, and what Rally made in a panel on the right |
+| An open Canvas | What Rally made on the left, and the conversation on the right |
 | An open Sidekick | Its shared conversation, with its details beside it |
 
 This page walks through each part. Each one has a chapter of its own later; here you only need to know what is where.
@@ -72,11 +72,11 @@ The **Sidekicks** home page has **New Sidekick**, a search box and the filter ch
 
 Open a Canvas and it fills the page.
 
-- At the top center floats the Canvas's header pill, with its mark and name. Click it for four shortcuts: **Share**, **Open artifact**, **Copy link**, and **Pin** (or **Unpin**). **Open artifact** becomes available once Rally has made something and the artifact panel is closed. **Rename…** and **Change appearance** sit below the shortcuts.
+- Over the conversation floats the Canvas's header pill, with its mark and name. Click it for four shortcuts: **Share**, **Open artifact**, **Copy link**, and **Pin** (or **Unpin**). **Open artifact** becomes available once Rally has made something and the artifact panel is closed. **Rename…** and **Change appearance** sit below the shortcuts.
 - At the top right are the faces of the people who have the Canvas open right now, then **Share**.
 - If you manage the Canvas, **Archive canvas** appears in red at the bottom of its menu. It asks you to confirm, then removes the Canvas for everyone. The conversation and artifacts remain stored but are no longer viewable in Rally; there is no unarchive option yet.
-- The conversation fills the middle: your messages, your teammates' messages and Rally's, with the message box at the bottom. It says **Ask Rally or the people here…**.
-- Once Rally has made something, it opens in a panel on the right, with its version. Drag the panel's edge to make it wider or narrower.
+- A new Canvas is its conversation: your messages, your teammates' messages and Rally's, with the message box at the bottom. It says **Ask Rally or the people here…**.
+- Once Rally has made something, it slides in on the left, beside the sidebar, with its version, and the conversation moves to the right. Drag the line between them to give either more room.
 
 The whole of [chapter 2](../02-canvases/index.md) is about this screen.
 

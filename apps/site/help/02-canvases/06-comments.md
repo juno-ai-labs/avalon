@@ -11,7 +11,7 @@ what you meant.
 
 ## Leave a comment
 
-1. Open what Rally made in the panel on the right.
+1. Open what Rally made in the panel on the left.
 2. Click **Comment mode** in the panel's header (the pointer with a speech
    bubble, just before **Expand**). The button turns blue and the pointer
    changes.

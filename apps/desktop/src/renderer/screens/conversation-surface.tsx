@@ -109,7 +109,7 @@ import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentPanel } from '../components/attachment-panel';
-import { RailSurface } from '../components/rail-surface';
+import { PanelHost, RailSurface, type PanelSide } from '../components/rail-surface';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import type { AttachmentPreview } from '../components/attachments';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -1064,6 +1064,8 @@ export interface ConversationSurfaceProps {
   artifactSharing?: { publishedIds: readonly string[]; audience?: ArtifactAudienceControl | undefined } | undefined;
   /** The Canvas's own published artifacts. null while its detail is loading. */
   canvasArtifacts?: readonly CanvasArtifact[] | null | undefined;
+  /** The side this conversation's panels take (`PanelHost`); trailing, after the conversation, when left out. */
+  panelSide?: PanelSide;
   /**
    * Ways to start the conversation, drawn under the composer while it has no
    * messages: a Canvas's templates. Present, the empty conversation lifts its
@@ -1112,6 +1114,7 @@ function ConversationSurfaceContent({
   embedded = false,
   artifactSharing,
   canvasArtifacts,
+  panelSide,
   renderStarters,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
@@ -2561,6 +2564,8 @@ function ConversationSurfaceContent({
     <MessageIssueProvider api={api} target={issueSubstreamId ? { kind: 'conversation', parentId: id, substreamId: issueSubstreamId } : null}>
     <EmailMentionContext.Provider value={emailMentions}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
+    {/* An embedded conversation passes its host's through: its panels cover the slot it sits in. */}
+    <PanelHost side={embedded ? undefined : panelSide ?? 'trailing'}>
     <div className="conversation-layout" ref={layoutRef}>
     <div className={clsx(
       'workstream-screen has-message-capsule',
@@ -2905,6 +2910,7 @@ function ConversationSurfaceContent({
       />
     </div>
     </div>
+    </PanelHost>
     </ConnectorConnectionsProvider>
     </EmailMentionContext.Provider>
     </MessageIssueProvider>

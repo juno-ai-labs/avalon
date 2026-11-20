@@ -11,12 +11,12 @@ it. This page covers each of those, and the list of Canvases in the sidebar.
 
 | Part | What it is |
 | --- | --- |
-| The conversation | Your messages, your teammates' and Rally's, in the middle of the page |
-| What Rally made | A document, spreadsheet, image, PDF, archive or website, in the panel on the right |
+| The conversation | Your messages, your teammates' and Rally's, on the right once Rally has made something |
+| What Rally made | A document, spreadsheet, image, PDF, archive or website, in the panel on the left |
 | Versions | Every earlier state of what Rally made, kept and readable |
 | People | Who can open the Canvas, and who has it open right now |
 
-A brand-new Canvas has only the conversation. The panel on the right stays
+A brand-new Canvas has only the conversation. The panel on the left stays
 closed until Rally makes something, and the Canvas is perfectly happy as a
 conversation until then. Plenty of good work starts with "before you write
 anything, what questions do you have?".
@@ -26,7 +26,7 @@ anything, what questions do you have?".
 Most Canvases hold one thing, and that one thing gets better version by
 version. If you ask for something separate in the same Canvas ("now a short
 email announcing it"), Rally can make a second file alongside the first. Both
-show as cards in the panel on the right, and you click one to open it. When the
+show as cards in the panel on the left, and you click one to open it. When the
 second thing is really a separate piece of work, start a new Canvas for it, so
 each one keeps its own conversation and its own audience.
 

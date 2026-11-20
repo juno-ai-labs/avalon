@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { useUiStore } from '../lib/ui-store';
 import { ApiError } from '../lib/api';
 import { InspectorRail } from './inspector-rail';
+import { PanelHost } from './rail-surface';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 
 const copyText = vi.hoisted(() => vi.fn());
@@ -177,6 +178,24 @@ describe('InspectorRail details', () => {
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 480 });
     expect(useUiStore.getState().railWidth).toBe(544);
     fireEvent.pointerUp(handle, { pointerId: 1 });
+  });
+
+  it('widens a leading panel when it is dragged or stepped toward the conversation on its right', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return DOMRect.fromRect({ width: this.classList.contains('rail-resizer-limit') ? 560 : 0 });
+    });
+    useUiStore.setState({ railWidth: 400 });
+    render(<Tooltip.Provider><PanelHost side="leading"><InspectorRail workstream={workstream} /></PanelHost></Tooltip.Provider>);
+    const handle = screen.getByRole('separator', { name: 'Resize inspector' });
+    // The pointer takes the panel's edge 40px to the right.
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 600 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 640 });
+    expect(useUiStore.getState().railWidth).toBe(440);
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(useUiStore.getState().railWidth).toBe(456);
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(useUiStore.getState().railWidth).toBe(440);
   });
 
   it('opens one resource in the right panel without opening the shell rail', () => {

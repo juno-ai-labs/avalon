@@ -310,7 +310,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     'workspace-shell',
     'app-shell',
     windowControlsShellClass(runtime?.platform),
-    showShellRail ? 'rail-open' : '',
     railFillsPane ? 'rail-fills-pane' : '',
     // A panel expanded over its conversation covers the pane as a narrow
     // window's does, by choice rather than for want of room.

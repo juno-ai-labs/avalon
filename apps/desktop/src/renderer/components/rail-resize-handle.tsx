@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { evenSplitWidth } from '../lib/rail-split';
 import { DEFAULT_RAIL_WIDTH, MIN_RAIL_WIDTH } from '../lib/ui-store';
+import type { PanelSide } from './rail-surface';
 import { DragHint } from './primitives';
 
 // The Grok-style retained frame is flush with the window's right edge.
@@ -16,8 +17,13 @@ const KEYBOARD_STEP = 16;
  */
 export type RailResize = (width: number, options?: { remember?: boolean }) => void;
 
-function widthUnderPointer(clientX: number): number {
-  return window.innerWidth - clientX - RAIL_EDGE_GAP;
+/**
+ * A width that grows as the pointer moves into the conversation. Only its
+ * change over a drag is used (the grab offset takes out the constant), so a
+ * leading panel, whose edge moves with the pointer, needs no pane edge.
+ */
+function widthUnderPointer(clientX: number, side: PanelSide): number {
+  return side === 'trailing' ? window.innerWidth - clientX - RAIL_EDGE_GAP : clientX;
 }
 
 /**
@@ -32,13 +38,18 @@ export function RailResizeHandle({
   label,
   width,
   onResize,
+  side = 'trailing',
 }: {
   label: string;
+  /** The side of the pane its panel is on, which sets the direction that widens it. */
+  side?: PanelSide;
   /** The sidebar's current width — what the keyboard steps from. */
   width: number;
   onResize: RailResize;
 }): React.JSX.Element {
   const [resizing, setResizing] = useState(false);
+  // The arrow that points away from the panel, into the conversation, widens it.
+  const widenKey = side === 'leading' ? 'ArrowRight' : 'ArrowLeft';
   const limitRef = useRef<HTMLSpanElement>(null);
   const [maxWidth, setMaxWidth] = useState(MIN_RAIL_WIDTH);
   // CSS owns responsive/overlay sizing. Measure the same maximum instead of
@@ -84,14 +95,14 @@ export function RailResizeHandle({
     // The other two handles collapse the panel they hold; this one has a close
     // control of its own, so its double-click puts the panel back at the even
     // split it opened at (`rail-split.ts`) instead.
-    <DragHint action="Drag to resize" shortcut="Double-click or Enter to reset width" side="left" suppressed={resizing}>
+    <DragHint action="Drag to resize" shortcut="Double-click or Enter to reset width" side={side === 'leading' ? 'right' : 'left'} suppressed={resizing}>
       <div
         aria-label={label}
         aria-orientation="vertical"
         aria-valuemax={maxWidth}
         aria-valuemin={MIN_RAIL_WIDTH}
         aria-valuenow={Math.min(maxWidth, width)}
-        className={clsx('rail-resizer', resizing && 'is-resizing')}
+        className={clsx('rail-resizer', side === 'leading' && 'is-leading', resizing && 'is-resizing')}
         onDoubleClick={reset}
         onKeyDown={(event) => {
           // Enter is the splitter's own action in the ARIA authoring practices,
@@ -105,7 +116,7 @@ export function RailResizeHandle({
           }
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
-          onResize(clamp(Math.min(width, maxWidth) + (event.key === 'ArrowLeft' ? KEYBOARD_STEP : -KEYBOARD_STEP)));
+          onResize(clamp(Math.min(width, maxWidth) + (event.key === widenKey ? KEYBOARD_STEP : -KEYBOARD_STEP)));
         }}
         onLostPointerCapture={(event) => finishDrag(event.currentTarget)}
         onPointerCancel={(event) => finishDrag(event.currentTarget)}
@@ -113,14 +124,14 @@ export function RailResizeHandle({
           event.preventDefault();
           finishDrag(event.currentTarget);
           pointerRef.current = event.pointerId;
-          grabOffsetRef.current = widthUnderPointer(event.clientX) - Math.min(width, maxWidth);
+          grabOffsetRef.current = widthUnderPointer(event.clientX, side) - Math.min(width, maxWidth);
           event.currentTarget.setPointerCapture?.(event.pointerId);
           setResizing(true);
           document.body.classList.add('is-resizing-rail');
         }}
         onPointerMove={(event) => {
           if (event.pointerId !== pointerRef.current) return;
-          const next = clamp(widthUnderPointer(event.clientX) - grabOffsetRef.current);
+          const next = clamp(widthUnderPointer(event.clientX, side) - grabOffsetRef.current);
           draggedWidthRef.current = next;
           onResize(next, { remember: false });
         }}

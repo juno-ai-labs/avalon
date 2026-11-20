@@ -29,7 +29,7 @@ holds. Archiving is not deleting. See
 
 **Artifact.** A file Rally made for you in a Canvas: a document, a
 spreadsheet, a picture, a PDF, a voice recording, a zip archive or a reactive site.
-It shows in the panel on the right of the Canvas and keeps every version. See
+It shows in the panel on the left of the Canvas and keeps every version. See
 [Artifacts](../06-things-rally-makes/01-artifacts.md).
 
 **Attachment.** A file you add to a message you send. See

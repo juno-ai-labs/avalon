@@ -1,7 +1,7 @@
 import { asUserId, type CanvasDetail, type WorkstreamAppearancePatch } from '@rally/contracts';
 import { AppearancePicker } from '@rally/ui/components/appearance-picker';
 import { ActionTile, ActionTiles, TitleMenuItem, TitleMenuSeparator, TitlePillHeader, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconArchive, IconLayoutSidebarRight, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
+import { IconArchive, IconLayoutSidebar, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -34,12 +34,12 @@ import { SidekickPanel } from './automation';
 import { ConversationOpeningSkeleton, ConversationSurface, type ConversationHeaderContext } from './conversation-surface';
 
 /**
- * `/canvases/:id`: a Canvas open. Its Chat, the `canvas`-kind conversation
- * whose parent id is the Canvas id, fills the main pane as a Thread's does,
- * and its artifacts open in the same right rail, with the same per-conversation
- * restore (`artifact-panel:<canvas>:0`). Arriving with nothing saved there, the
- * newest artifact opens; a Canvas with none opens with the rail closed.
- * `docs/canvases.md` owns the model.
+ * `/canvases/:id`: a Canvas open. Its artifact leads, in a panel beside the
+ * sidebar, and its Chat, the `canvas`-kind conversation whose parent id is the
+ * Canvas id, takes the room after it; a Canvas with no artifact is its Chat
+ * alone. The panel keeps the per-conversation restore
+ * (`artifact-panel:<canvas>:0`). Arriving with nothing saved there, the newest
+ * artifact opens. `docs/canvases.md` owns the model.
  */
 export function CanvasScreen(): React.JSX.Element {
   const { id } = useParams();
@@ -380,7 +380,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const menuItems = (panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => <>
     <ActionTiles>
       <ActionTile disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={20} stroke={1.6} />} label="Share" onSelect={() => setSharing(true)} />
-      <ActionTile disabled={!newestArtifact || panelOpen} disabledReason={!newestArtifact ? 'This Canvas has no artifacts yet.' : panelOpen ? 'The artifact panel is already open.' : undefined} icon={<IconLayoutSidebarRight aria-hidden="true" size={20} stroke={1.6} />} label="Open artifact" onSelect={() => {
+      <ActionTile disabled={!newestArtifact || panelOpen} disabledReason={!newestArtifact ? 'This Canvas has no artifacts yet.' : panelOpen ? 'The artifact panel is already open.' : undefined} icon={<IconLayoutSidebar aria-hidden="true" size={20} stroke={1.6} />} label="Open artifact" onSelect={() => {
         // Replace the entry so Back leaves the Canvas rather than reopening its panel.
         if (newestArtifact) void navigate(location.pathname, { replace: true, state: openResourceState(id, newestArtifact.resourceId, { expanded: false }) });
       }} />
@@ -482,6 +482,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       </> : undefined}
       artifactSharing={artifactSharing}
       canvasArtifacts={canvas.data?.artifacts ?? (canvas.isPending && !creationBlocked ? null : undefined)}
+      // The artifact is what a Canvas is for: its panels sit beside the sidebar.
+      panelSide="leading"
       parentId={id}
       parentKind="canvas"
       composerActivity={<ComposerAgentActivity activity={workspaceSocket?.state === 'connected' && workspaceSocket.sidebarReady

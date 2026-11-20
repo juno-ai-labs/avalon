@@ -129,7 +129,7 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
 | `apps/desktop/src/main/media-permission.ts` | Chromium media permission for the shared composer: audio-only capture from the main window. |
-| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
+| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in a Canvas's panel; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |

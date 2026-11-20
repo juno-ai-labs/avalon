@@ -1140,10 +1140,10 @@ such a turn started, whose own turns meet the same manager check
 a turn that reached `"0"`'s loop any other way gets the delegation tools alone.
 
 **In the client.** The Sidekick screen is its standalone route. A Canvas's
-right panel shows the same Sidekick's details alone: no conversation, no run,
+panel shows the same Sidekick's details alone: no conversation, no run,
 no Run now, no Run history, no Pause and no Archive. It leaves the Canvas's
 route and draft intact;
-[`desktop-shell.md`](desktop-shell.md#one-right-slot) owns this layout.
+[`desktop-shell.md`](desktop-shell.md#one-slot) owns this layout.
 The Sidekick screen's composer offers a manager **Edit
 Sidekick** in its actions menu, a checkbox entry (`ComposerMenuAction.checked`)
 that switches the composer into marking every message `intent:

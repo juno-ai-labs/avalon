@@ -1,7 +1,8 @@
 # Embedded browser
 
 Rally's desktop client can show an ordinary web page beside a Canvas's Chat in
-the existing right sidebar. The browser is a local Electron `WebContentsView`,
+the Canvas's slot, which sits beside the sidebar
+([`desktop-shell.md`](desktop-shell.md#one-slot)). The browser is a local Electron `WebContentsView`,
 so a person can navigate and sign in without handing a remote sandbox their
 browser session. It is a reusable page surface; the import window that was its
 first dedicated consumer was removed with the browser session import
@@ -16,14 +17,16 @@ first dedicated consumer was removed with the browser session import
 | `apps/desktop/src/main/index.ts` | Account ownership, the main window's browser, and IPC admission. |
 | `apps/desktop/src/preload/index.ts` | The named renderer bridge, without general IPC access. |
 | `apps/desktop/src/renderer/components/embedded-browser-view.tsx` | The shared pieces: tab state and commands, native page placement, navigation toolbar, tab strip, and keyboard shortcuts. |
-| `apps/desktop/src/renderer/components/embedded-browser-rail.tsx` | The right-rail host. |
+| `apps/desktop/src/renderer/components/embedded-browser-rail.tsx` | The slot's host. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Sends web links to the rail while a Canvas is on screen, else to the system browser. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Places the browser in the existing rail slot. |
 
 ## How it works
 
-A web link clicked in a Canvas's Chat opens the existing right rail with its
-browser variant, as a new tab on that address. The Canvas header has no
+A web link clicked in a Canvas's Chat opens the Canvas's slot with its
+browser variant, as a new tab on that address. The native page is held to the
+part of the panel's frame that is on screen, so it follows the slot as it
+slides open rather than drawing over the sidebar. The Canvas header has no
 button of its own for the browser. `renderer/lib/browser-rail-links.ts` holds
 the one decision: while a Canvas's conversation surface is mounted on the
 desktop, it registers itself as the rail host (`useBrowserRailLinks`; a

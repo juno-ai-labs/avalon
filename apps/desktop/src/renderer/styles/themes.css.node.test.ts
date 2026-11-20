@@ -114,7 +114,7 @@ describe('token references', () => {
   // theme. Each is set by a rule in this same file.
   const RULE_LOCAL = ['--wheel-travel', '--attachment-file-card-height', '--attachment-media-size', '--rail-slot',
     // Runtime layout geometry, not theme-selectable design tokens.
-    '--rail-max-slot',
+    '--rail-max-slot', '--rail-shown', '--rail-reveal',
     '--composer-line-height', '--composer-submit-gap', '--composer-text-padding', '--system-message-lines',
     '--av-cmp-sidebar-width',
     // Deliberately outside the `--av-` namespace, unlike its neighbour above:

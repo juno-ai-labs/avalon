@@ -62,7 +62,7 @@ done reading.
 This is an extra in [the desktop
 app](../08-rally-everywhere/04-the-desktop-app.md). There, when you click a web
 link inside a Canvas, it does not throw you out to Safari or Chrome. It opens
-in a browser panel on the right of the page, beside the conversation. You can read the page and the chat at the same time,
+in a browser panel on the left of the Canvas, beside the conversation. You can read the page and the chat at the same time,
 and copy from one into the other without hunting for windows.
 
 This works for links in Rally's messages, its sources, search results, and
@@ -126,11 +126,11 @@ CAPTCHA, for example). Signing in to Rally itself, and connecting an app in
 
 ## Making the side panel wider
 
-The panel on the right holds what Rally made, file previews and details (and,
+The panel beside the conversation holds what Rally made, file previews and details (and,
 in the desktop app, the built-in browser). When a
 page or document needs more room, make it wider.
 
-- **Drag** the thin divider on the panel's left edge. Its tooltip says **Drag
+- **Drag** the thin divider between the panel and the conversation. Its tooltip says **Drag
   to resize**.
 - **Use the keyboard.** Click the divider (or <kbd>Tab</kbd> to it), then press
   <kbd>←</kbd> or <kbd>→</kbd> to change the width a little at a time.

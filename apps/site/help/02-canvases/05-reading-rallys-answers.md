@@ -65,7 +65,7 @@ Sections always start open. A smaller heading belongs to the section above it,
 so it folds along with it rather than on its own. Folding only changes what you
 see: copying and reading aloud always use the whole answer.
 
-Folding works in the conversation only. What Rally made, in the panel on the right,
+Folding works in the conversation only. What Rally made, in the panel on the left,
 and answers you save as an image or PDF in the desktop app, always show
 everything.
 

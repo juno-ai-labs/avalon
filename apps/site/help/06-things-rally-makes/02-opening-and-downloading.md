@@ -51,7 +51,7 @@ The preview normally lays a see-through, slightly blurred wash over the page beh
 
 ## Opening an artifact
 
-What Rally makes opens in the panel on the right of the Canvas, beside the
+What Rally makes opens in the panel on the left of the Canvas, beside the
 conversation. Opening a Canvas opens its newest artifact there; click any
 artifact's card in the conversation to open that one instead.
 
@@ -70,7 +70,7 @@ Click the pill for the artifact's menu:
   [Resources: things you bring in](04-resources.md#archiving-a-resource)
   before you click it.
 
-Drag the panel's left edge to make it wider or narrower. When the page is
+Drag the line between the panel and the conversation to make it wider or narrower. When the page is
 too narrow for both, the panel fills the space and the conversation waits
 behind it.
 

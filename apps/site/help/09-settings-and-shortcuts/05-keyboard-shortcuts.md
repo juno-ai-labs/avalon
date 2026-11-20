@@ -91,8 +91,8 @@ A.
 
 | Keys | What they do |
 | --- | --- |
-| <kbd>←</kbd> <kbd>→</kbd>, on a panel's edge | With the edge of the right-hand panel selected, <kbd>←</kbd> makes the panel wider and <kbd>→</kbd> narrower. |
-| <kbd>Return</kbd>, on a panel's edge | Put the right-hand panel back to its usual width. |
+| <kbd>←</kbd> <kbd>→</kbd>, on a panel's edge | With the edge of the panel beside the conversation selected, the arrow that points into the conversation makes the panel wider and the other narrower: <kbd>→</kbd> widens what Rally made in a Canvas. |
+| <kbd>Return</kbd>, on a panel's edge | Put the panel back to its usual width. |
 
 Pinned rows keep the order they were pinned in; there is no way to reorder
 them. See

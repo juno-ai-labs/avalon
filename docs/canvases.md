@@ -35,7 +35,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
 | `apps/api/src/services/authorization-service.ts` | A Canvas conversation's and its artifacts' canonical read decision, from `hostedConversationAuthorizationFacts`. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the Reactive, Data and authorship filters, the Recent list, and the first-run "Start from a prompt" card. |
-| `apps/desktop/src/renderer/screens/canvas.tsx` | `/canvases/:id`: the Chat as a `canvas` conversation in `ConversationSurface`, its header (pill, people present, Share, menu), and opening the newest artifact in the right rail. |
+| `apps/desktop/src/renderer/screens/canvas.tsx` | `/canvases/:id`: the Chat as a `canvas` conversation in `ConversationSurface`, its header (pill, people present, Share, menu), and opening the newest artifact in the Canvas's panel, beside the sidebar. |
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
 | `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the unchosen glyph (`PanelsTopLeft`) and `canvasHue`, field by field. |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
@@ -513,10 +513,10 @@ opened with. A Sidekick's directory write pushes the Canvas list when its
 name, state or appearance moved (`noteAttachedSidekickFace`).
 
 Selecting an openable Sidekick in the Canvas command pill opens its details,
-and only its details, in the existing right panel, preserving the Canvas chat
-and route. The panel has close and expand controls; its conversation and runs
-are reached at the Sidekick's own route.
-[`desktop-shell.md`](desktop-shell.md#one-right-slot) owns the panel behavior.
+and only its details, in the Canvas's panel, where its artifact opens,
+preserving the Canvas chat and route. The panel has close and expand controls;
+its conversation and runs are reached at the Sidekick's own route.
+[`desktop-shell.md`](desktop-shell.md#one-slot) owns the panel behavior.
 
 `GET /canvases/:id` lists them as `sidekicks` (`HostedCanvas.sidekicks`): id,
 name, state, appearance, and `madeHere` for one this Canvas's Chat made. Every
@@ -736,23 +736,39 @@ card grid with Sidekicks; the shared layout is described in
   substream `"0"`, so the composer, annotations (a Canvas's comments), the
   inspector rail, its resource cards and versions menu, and the
   per-conversation panel restore (`artifact-panel:<canvas id>:0`) are the
-  surface's own. With nothing saved, the screen opens the newest artifact of
-  `GET /canvases/:id` beside the Chat (`openResourceState`, `expanded: false`);
-  a link naming an artifact opens it expanded. The surface does not close a
-  requested panel on the device cache's copy of the conversation, which may
-  list none of its artifacts. Closing the panel clears what was saved, and the
-  command menu's **Open artifact** is the way back to it. While the conversation
-  is visible, a newly attached artifact opens the right panel at an even split,
-  including after a person closed it. `useOpenAttachedArtifact` follows the
-  conversation's live resource list. Replacement socket snapshots establish
-  the baseline, so a refreshed retained cache cannot override a saved panel or
-  explicit artifact link. Automatic reveals leave keyboard focus where it was.
-  A refresh or new version of an existing artifact does not reopen the panel,
-  nor does an ordinary source attachment. If several artifacts arrive together,
-  the newest attachment opens. Hidden conversations do not take the panel from
+  surface's own. **The artifact leads**: the screen asks for its panels on
+  the leading side (`panelSide="leading"`), so the artifact sits beside the
+  sidebar and the Chat takes the room after it; a Canvas with no artifact is
+  its Chat alone. That is all a Canvas contributes to the layout:
+  [`desktop-shell.md`](desktop-shell.md#one-slot) owns the panel layer, a
+  panel's side and how it slides in.
+- **Arriving.** With nothing saved, the screen opens the newest artifact of
+  `GET /canvases/:id` beside the Chat (`openResourceState`, `expanded:
+  false`), and it slides in. A Canvas reopened with its panel saved has it in
+  place at the first paint. A link naming an artifact opens that one,
+  expanded. The surface does not close a requested panel on the device
+  cache's copy of the conversation, which may list none of its artifacts.
+  Closing the panel clears what was saved, and the command menu's **Open
+  artifact** is the way back to it.
+- **An artifact arriving in an open Canvas** opens the panel at an even
+  split, including after a person closed it, and the Chat moves over as it
+  slides in. Nothing watches the transcript for a card: every publish into a
+  Canvas attaches its resource to the Canvas's own conversation (substream
+  `0`), whoever made it. Rally's from the Chat, a Sidekick run's
+  (`resolveTerminalPublicationHome` answers the Canvas's Chat) and a
+  person's (`CanvasPublicationService` calls `attachWorkstreamRuntimeResource`
+  on it) all do, and the conversation socket streams each as
+  `resource_attached`, which the client folds into the conversation's live
+  resource list. `useOpenAttachedArtifact` follows that list. Replacement
+  socket snapshots establish the baseline, so a refreshed retained cache
+  cannot override a saved panel or explicit artifact link. Automatic reveals
+  leave keyboard focus where it was. A refresh or new version of an existing
+  artifact (`resource_updated`) does not reopen the panel, nor does an
+  ordinary source attachment. If several artifacts arrive together, the
+  newest attachment opens. Hidden conversations do not take the panel from
   the conversation on screen. The shared surface applies this to Sidekick
-  conversations too. An arrival replaces the current right-panel content,
-  including the browser, and uses the existing full-pane layout in narrow windows.
+  conversations too. An arrival replaces what the panel held, including the
+  browser, and uses the existing full-pane layout in narrow windows.
 - **The header** is a centred `TitlePillHeader` naming the Canvas,
   with the face pile of everyone else in it now and Share at the right.
   The pill's menu starts with four action tiles, using the artifact menu's
@@ -763,7 +779,7 @@ card grid with Sidekicks; the shared layout is described in
   Change appearance follow as rows, then the **Artifacts** section
   (`CanvasArtifactsSection`): one row per artifact, newest first, with its
   kind's mark, its title and when it last changed; a row opens that artifact
-  in the right rail. Then the **Sidekicks** section, then,
+  in the Canvas's slot. Then the **Sidekicks** section, then,
   while the Canvas sends notices, a **Notifications** section
   (`CanvasNoticesMenuSection`): **Get notifications** for a member not listed
   on an Organization-wide Canvas, else **Mute notifications**, or **Turn on
@@ -867,6 +883,11 @@ detached artifact window's **Copy link** adds the artifact's segment.
   ([`canvas-share-federation.md`](canvas-share-federation.md)).
 - **A Canvas holds one artifact.** `HostedCanvas.noteArtifact` adds a second
   `canvas_artifacts` row only by replacing the first.
+- **A publish into a Canvas attaches its resource to the Canvas's
+  conversation.** That attach is what streams `resource_attached` to everyone
+  with the Canvas open, and it is the only thing that opens their panel. A
+  producer that only records the resource in `canvas_artifacts` is listed by
+  the detail and opened on the next arrival, not live.
 - **Every `canvas_*` statement names `canvas_id`, and every hosted-conversation
   statement names the parent id.** Without it a write reaches every Canvas or
   every Sidekick in the Organization.
