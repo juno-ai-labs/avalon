@@ -36,8 +36,8 @@ export const pageCards: readonly PageCard[] = [
     description: 'Rally turns your inbox into one page you can check at a glance: a dashboard, a board or a table. It updates itself as new mail arrives.',
     scene: 'canvas',
   },
-  // Each audience page's card is its row in `audiences.ts`; a page not yet written has no headline.
-  ...audiences.filter(({ headline }) => headline).map(({ slug, name, headline, pitch, scene }): PageCard => ({
+  // Each audience page's card is its row in `audiences.ts`.
+  ...audiences.map(({ slug, name, headline, pitch, scene }): PageCard => ({
     path: audiencePath(slug),
     eyebrow: `Rally for ${name.charAt(0).toLowerCase()}${name.slice(1)}`,
     title: headline,

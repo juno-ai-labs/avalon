@@ -4,8 +4,7 @@
  * Its section links are absolute (`/#who`), so the same markup works on the
  * homepage, where they scroll, and on every other page. Node only.
  */
-import { arrow } from './audiences';
-import { githubLink } from './site-icons';
+import { arrow, githubLink } from './site-icons';
 
 const APP_ORIGIN = 'https://app.rallywith.ai';
 

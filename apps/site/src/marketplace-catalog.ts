@@ -11,7 +11,7 @@ import { marked } from 'marked';
 import { loadCanvasTemplates, type CanvasTemplateData } from '../../../packages/skills/marketplace-skills/catalog';
 import { CANVAS_TEMPLATE_CATEGORIES } from '../../../packages/skills/marketplace-skills/categories';
 import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS, templateConnectorHelpPath, type TemplateConnectorId, type TemplatePluginId } from '../../../packages/skills/marketplace-skills/connectors';
-import { arrow } from './audiences';
+import { arrow } from './site-icons';
 import { escapeHtml as escape } from './html';
 import { renderConnectorMark, renderPluginGlyph } from './connector-marks';
 import { renderReadingCard } from './reading-card';

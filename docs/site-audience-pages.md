@@ -21,7 +21,7 @@ stories are drawn with. The look of the pencil pages belongs to
 | `apps/site/src/audiences.ts` | The audiences, in homepage order: slug, name, one line, the Marketplace template its page starts, and the headline and pitch of each page's link preview. Also the homepage grid, the "other audiences" list and `/for/sitemap.xml`. |
 | `apps/site/for/<slug>/index.html` | One audience's page. Hand-written, not rendered from a template. |
 | `apps/site/src/for/<slug>.css` | That page's own layout, artifacts and motion. Imports `home.css`. |
-| `apps/site/src/story.ts` | The story player: steps, tabs, pause, the stage's height, the `story:step` event. |
+| `apps/site/src/story.ts` | The story player: steps, tabs, pause, the stage's height. |
 | `apps/site/src/story.css` | The player's styles and the kit (`kit-*`): pills, faces, boards, rows, stats, checklists, timelines. Imported by `home.css`. |
 | `apps/site/src/steps.ts` | `applyStep`, the step primitive the player shares with the earlier demo and carousel. |
 | `apps/site/src/home-story.html` | The homepage's hero story: one slide per audience, each a different kind of page. |
@@ -119,11 +119,12 @@ once (`is-new`), at 1.9 seconds it starts to leave (`is-leaving` replaces
 `is-new` on whatever in `.story-mail` arrived this step), and at 2.4 seconds
 the page changes, so the eye reads cause, then effect. The player sets `s1` …
 `s<n>` on each `.story-mail` and `.story-page`, the classes above, and `is-new`
-on what arrived, then sends `story:step` (with `detail.step`) from the slide.
-When a slide comes up it sends `story:slide` (with `detail.slide`) from the
-story. How a change looks is the page's own stylesheet: a rule on `.s2 .thing`,
-a transition, an animation on `.is-touched`. A page that needs more than CSS
-listens for `story:step` in its own script.
+on what arrived. When a slide comes up it sends `story:slide` (with
+`detail.slide`) from the story. How a change looks is the page's own
+stylesheet: a rule on `.s2 .thing`, a transition, an animation on
+`.is-touched`. A keyed move is timed there too: `--story-move-ms` and
+`--story-move-ease` on the element that arrives set how long its slide takes
+and how it eases (620ms by default). No page needs a script of its own.
 
 `story.css` gives an email its look and three ways to travel, which a page
 uses or replaces with its own rules on `.is-new` and `.is-leaving`:
@@ -268,8 +269,11 @@ Examples are illustrations. They run no jobs and read no mail.
 - **No script, or reduced motion:** every slide shows its last step. With no
   script the slides of a story stack one after another; with reduced motion the
   tabs still switch slides and nothing plays.
-- **Late fonts:** the stage is measured again when the web fonts arrive, since
-  they change every height.
+- **Late fonts, and a new width:** the stage is measured again when the web
+  fonts arrive and when the window's width changes, since both change every
+  height. Measuring puts every slide at its end and back, which would undo a
+  step in flight, so mid-step the measure waits for the next slide. Until then
+  the stage may be a little too tall or too short.
 - **A missing page file:** `audiences.ts` registers each slug as a build entry,
   so a row without its `for/<slug>/index.html` fails the build.
 - **Phones:** a board keeps three columns at 390px, so card titles stay short

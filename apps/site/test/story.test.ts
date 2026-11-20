@@ -224,6 +224,65 @@ describe('story player', () => {
     expect(has('a-new', 'is-on')).toBe(true);
   });
 
+  it('plays a slide picked with an arrow key while paused, as a click would', async () => {
+    await start(story());
+    const pause = document.querySelector<HTMLButtonElement>('[data-story-pause]')!;
+    pause.click();
+    document.getElementById('tab-a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(selected('tab-b')).toBe('true');
+    expect(pause.getAttribute('aria-pressed')).toBe('false');
+    vi.advanceTimersByTime(2600);
+    expect(has('b-mail-1', 'is-on')).toBe(true);
+  });
+
+  it('plays a slide picked with a swipe before the story has been scrolled to', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    document.body.innerHTML = story();
+    await import('../src/story');
+    onScreen(true);
+    const stage = document.querySelector('.story-stage')!;
+    const touch = (type: string, clientX: number): boolean => stage.dispatchEvent(Object.assign(new Event(type), { changedTouches: [{ clientX, clientY: 0 }] }));
+    touch('touchstart', 300);
+    touch('touchend', 100);
+    expect(has('b', 'is-active')).toBe(true);
+    vi.advanceTimersByTime(2600);
+    expect(has('b-mail-1', 'is-on')).toBe(true);
+  });
+
+  it('leaves a step in flight alone when the window changes width', async () => {
+    await start(story());
+    const resize = (width: number): void => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      window.dispatchEvent(new Event('resize'));
+    };
+    vi.advanceTimersByTime(2600 + 2000);
+    // The email is leaving and the page is due to change in 400ms: a new width neither shows the change early nor brings the email back.
+    resize(700);
+    expect(has('a-mail-1', 'is-leaving')).toBe(true);
+    expect(has('a-new', 'is-on')).toBe(false);
+    vi.advanceTimersByTime(400);
+    expect(has('a-new', 'is-on')).toBe(true);
+    expect(has('a-new', 'is-touched')).toBe(true);
+    resize(900);
+    expect(has('a-mail-1', 'is-leaving')).toBe(true);
+    expect(has('a-new', 'is-touched')).toBe(true);
+  });
+
+  it('times a keyed move from the page’s stylesheet, and by default otherwise', async () => {
+    const moves: Array<{ id: string; duration: unknown; easing: unknown }> = [];
+    Element.prototype.animate = function animate(this: Element, _frames: unknown, options: { duration: number; easing: string }) {
+      moves.push({ id: this.id, duration: options.duration, easing: options.easing });
+      return { finished: Promise.resolve() };
+    } as unknown as Element['animate'];
+    await start(story());
+    vi.advanceTimersByTime(2600 + 4200 + 2400);
+    expect(moves).toEqual([{ id: 'a-moved', duration: 620, easing: 'cubic-bezier(.3,.7,.2,1)' }]);
+    document.head.innerHTML = '<style>#a-moved { --story-move-ms: 1000; --story-move-ease: linear; }</style>';
+    document.getElementById('tab-a')!.click();
+    vi.advanceTimersByTime(2600 + 4200 + 2400);
+    expect(moves[1]).toEqual({ id: 'a-moved', duration: 1000, easing: 'linear' });
+  });
+
   it('shows every slide at its last step and plays nothing with reduced motion', async () => {
     await start(story(), true);
     expect(has('a-mail-2', 'is-on')).toBe(true);

@@ -11,8 +11,8 @@
  * it goes the page changes. The eye reads cause, then effect.
  *
  * This module only keeps time: it sets each step's classes and announces
- * `story:slide` and `story:step`; how an email arrives and leaves, and how a
- * change looks, is each page's own stylesheet. A story plays only once a
+ * `story:slide`; how an email arrives and leaves, and how a change looks, is
+ * each page's own stylesheet. A story plays only once a
  * person has scrolled to it, a chosen tab plays its slide from the start, and
  * the pause button stops it. With reduced motion nothing moves and every
  * slide shows its end.
@@ -46,17 +46,26 @@ function leaving(slide: HTMLElement, step: number): Map<string, DOMRect> {
   return rects;
 }
 
-/** Slides each keyed element that arrived at `step` in from where the one it replaces sat. */
+/**
+ * Slides each keyed element that arrived at `step` in from where the one it
+ * replaces sat. How long the slide takes and how it eases is the page's to
+ * say, in its stylesheet: `--story-move-ms` and `--story-move-ease` on the
+ * element.
+ */
 function move(slide: HTMLElement, step: number, from: Map<string, DOMRect>): void {
   for (const part of parts(slide, `.story-page [data-key][data-at="${step}"]`)) {
     const start = part.dataset.key ? from.get(part.dataset.key) : undefined;
     if (!start) continue;
     const end = part.getBoundingClientRect();
+    const style = getComputedStyle(part);
     part.classList.add('is-moved');
     part.animate([
       { transform: `translate(${start.left - end.left}px, ${start.top - end.top}px)` },
       { transform: 'none' },
-    ], { duration: 620, easing: 'cubic-bezier(.3,.7,.2,1)' });
+    ], {
+      duration: Number.parseFloat(style.getPropertyValue('--story-move-ms')) || 620,
+      easing: style.getPropertyValue('--story-move-ease').trim() || 'cubic-bezier(.3,.7,.2,1)',
+    });
   }
 }
 
@@ -81,6 +90,8 @@ function run(story: HTMLElement): void {
   let ranFrom = 0;
   let spent = 0;
   let pending: Array<{ at: number; run: () => void; timer: number; done: boolean }> = [];
+  // The stage's height is due a fresh measure, once no step is in flight.
+  let stale = false;
 
   /** Puts a slide at a step with nothing animated. */
   const set = (slide: HTMLElement, at: number): void => {
@@ -113,8 +124,6 @@ function run(story: HTMLElement): void {
         void live.offsetWidth;
         live.classList.add('is-updated');
       }
-      // A page's own script can add its own motion to the step.
-      slide.dispatchEvent(new CustomEvent('story:step', { bubbles: true, detail: { step: at } }));
     };
     pending = [{ at: MAIL_LEAVES, run: mailLeaves, timer: 0, done: false }, { at: PAGE_DELAY, run: pageChanges, timer: 0, done: false }];
   };
@@ -156,6 +165,21 @@ function run(story: HTMLElement): void {
     }
   };
 
+  /**
+   * Holds the stage at the height of its tallest slide's last step, so playing
+   * never moves the page. Measuring puts every slide at its end and back, which
+   * would undo a step in flight (show its change early, bring back an email
+   * that has left), so mid-step it waits for the next slide.
+   */
+  const lock = (): void => {
+    stale = pending.length > 0;
+    if (stale) return;
+    stage.style.minHeight = '';
+    slides.forEach((slide) => set(slide, lastStep(slide)));
+    stage.style.minHeight = `${stage.offsetHeight}px`;
+    set(slides[current]!, step);
+  };
+
   const select = (index: number, chosen = false): void => {
     clearStep();
     current = (index + slides.length) % slides.length;
@@ -184,7 +208,16 @@ function run(story: HTMLElement): void {
     }
     step = reduced ? lastStep(slide) : 0;
     set(slide, step);
+    // A measure that was put off, because a step was in flight, happens now that none is.
+    if (stale) lock();
     schedule();
+  };
+
+  /** A slide a person picked, by click, key or swipe: a request to see it, so it plays even if paused or not yet scrolled to. */
+  const choose = (index: number): void => {
+    started = true;
+    if (held && pause) pause.click();
+    select(index, true);
   };
 
   function tick(): void {
@@ -199,26 +232,13 @@ function run(story: HTMLElement): void {
     }
   }
 
-  /** Holds the stage at the height of its tallest slide's last step, so playing never moves the page. */
-  const lock = (): void => {
-    stage.style.minHeight = '';
-    slides.forEach((slide) => set(slide, lastStep(slide)));
-    stage.style.minHeight = `${stage.offsetHeight}px`;
-    set(slides[current]!, step);
-  };
-
   tabs.forEach((tab, index) => {
-    tab.addEventListener('click', () => {
-      // Choosing an example is a request to see it, so it plays even if paused or not yet scrolled to.
-      started = true;
-      if (held && pause) pause.click();
-      select(index, true);
-    });
+    tab.addEventListener('click', () => choose(index));
     tab.addEventListener('keydown', (event) => {
       const by = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
-      if (by) { event.preventDefault(); select(index + by, true); }
-      if (event.key === 'Home') { event.preventDefault(); select(0, true); }
-      if (event.key === 'End') { event.preventDefault(); select(slides.length - 1, true); }
+      if (by) { event.preventDefault(); choose(index + by); }
+      if (event.key === 'Home') { event.preventDefault(); choose(0); }
+      if (event.key === 'End') { event.preventDefault(); choose(slides.length - 1); }
     });
   });
   if (pause && !reduced) {
@@ -241,7 +261,7 @@ function run(story: HTMLElement): void {
     stage.addEventListener('touchend', (event) => {
       const dx = (event.changedTouches[0]?.clientX ?? 0) - startX;
       const dy = (event.changedTouches[0]?.clientY ?? 0) - startY;
-      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) select(current + (dx < 0 ? 1 : -1), true);
+      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) choose(current + (dx < 0 ? 1 : -1));
     }, { passive: true });
   }
 

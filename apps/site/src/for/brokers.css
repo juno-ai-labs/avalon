@@ -8,10 +8,8 @@
  * below is how this page looks at each step. Contract: docs/site-audience-pages.md.
  */
 
-/* A Gmail card that leaves to the right is cut off at the page's edge, not scrolled to. */
 .bk-main {
   --bk-fresh: #7d9a5e; --bk-hot: #c2683a; --bk-fresh-text: #55683f; --bk-hot-text: #9a4f25;
-  overflow-x: clip;
 }
 
 .bk-main h2 {

@@ -10,10 +10,7 @@
  * Contract: docs/site-audience-pages.md.
  */
 
-/* A card crossing the counter may leave past the screen's edge; clip it there
-   rather than let it widen the page. `clip` keeps sticky mail working. */
 .wh-page {
-  overflow-x: clip;
   --wh-rule: #dcddcf; --wh-sunk: #f6f6ee; --wh-edge: #e0e3d6; --wh-soft: #595e53;
   --wh-manila: #f8f2de; --wh-manila-edge: #e2d7b1; --wh-rust: #8a4a26;
   --wh-move: cubic-bezier(0.5, 0, 0.15, 1);

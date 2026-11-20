@@ -16,8 +16,6 @@
 
 .ac-page {
   --ac-rule: #e6e8dc; --ac-soft: #595e53; --ac-box: #cdd2c0; --ac-wash: #f4f6ec;
-  /* An email card that crosses or tilts on its way out must not widen the page. */
-  overflow-x: clip;
 }
 
 /* ---- Text the whole page shares ---- */

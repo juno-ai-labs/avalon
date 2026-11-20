@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
-import { arrow, audiencePath, audiences, gmailMark, renderAudienceGrid, renderAudienceStartLink, renderOtherAudiences } from './audiences';
+import { audiencePath, audiences, renderAudienceGrid, renderAudienceStartLink, renderOtherAudiences } from './audiences';
 import { escapeHtml as escape } from './html';
 import { renderHomeHeader } from './home-header';
 import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
@@ -14,7 +14,7 @@ import { renderLiveCarousel } from './live-examples';
 import { renderHomeIllustration } from './home-illustrations';
 import { renderHomePricing } from './home-pricing';
 import { marketplaceTemplates, renderMarketHeader, renderMarketplaceCards, renderMarketplaceFilters, templatePagePath } from './marketplace-catalog';
-import { externalArrow, githubLink } from './site-icons';
+import { arrow, externalArrow, githubLink, gmailMark } from './site-icons';
 
 /** Every blog post, read from `content/blog/YYYY-MM-DD-<title>.md`, newest first. */
 export const blogPosts: readonly BlogPost[] = loadBlogPosts(new URL('../content/blog/', import.meta.url));

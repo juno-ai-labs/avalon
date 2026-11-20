@@ -291,6 +291,11 @@
   animation: kit-live-flash 1.5s ease-out;
 }
 
+/* A paused story holds still, its beat included. */
+.story.is-paused .kit-live::before {
+  animation-play-state: paused;
+}
+
 .kit-live .kit-face {
   width: 17px; height: 17px; font-size: 9px;
 }
@@ -512,6 +517,12 @@
 }
 
 /* A tick: an empty ring until it is done. */
+/* Words for a screen reader where the page shows only a mark. A mark that
+   changes holds two, one leaving and one arriving at the same step. */
+.kit-sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+
 .kit-tick {
   display: inline-block; position: relative; flex: none; width: 18px; height: 18px; border-radius: 50%;
   border: 1.5px solid #c9cdbd; vertical-align: middle;

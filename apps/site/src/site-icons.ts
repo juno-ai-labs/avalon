@@ -9,3 +9,9 @@ const githubMark = '<svg class="github-mark" width="14" height="14" viewBox="0 0
 /** The header's GitHub link: the mark, then the word, so it reads the same to a screen reader. */
 export const githubLink = (className = 'github-link'): string =>
   `<a class="${className}" href="${GITHUB_REPO_URL}">${githubMark}<span class="github-label">GitHub</span></a>`;
+
+/** The arrow a link or card that goes somewhere ends on. */
+export const arrow = '<svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg>';
+
+/** Gmail's mark, painted in `currentColor`. */
+export const gmailMark = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z"/></svg>';

@@ -5,7 +5,7 @@
  * hero, numbered sections hung off a ruled margin, and four example pages
  * drawn as registers. Its one motion of its own is the turn passing: a marker
  * crosses from one lane to the next, level, when an email arrives
- * (legal.ts slows the player's keyed move). Everything here is under `lg-`.
+ * (`--story-move-ms` slows the player's keyed move). Everything here is under `lg-`.
  */
 
 .lg {
@@ -17,11 +17,6 @@
 }
 
 /* ---- The sheet: one ruled margin down the page, section marks to its left ---- */
-
-/* A card that crosses out of its slot is cut at the screen's edge instead of widening the page. */
-.lg {
-  overflow-x: clip;
-}
 
 .lg-sheet {
   position: relative;
@@ -592,7 +587,10 @@
   pointer-events: none;
 }
 
+/* The turn passing is this page's one motion of its own: the marker crosses
+   to its new lane slow and level, timed here and run by the story player. */
 .lg-marker {
+  --story-move-ms: 1000; --story-move-ease: cubic-bezier(0.45, 0, 0.25, 1);
   position: relative; z-index: 1; display: inline-flex; align-items: baseline; gap: 9px;
   border: 1px solid var(--lg-legal-line); border-left: 3px solid var(--lg-legal-mark); border-radius: 3px;
   background: var(--white); padding: 6px 11px 6px 9px; font-size: 13px; line-height: 1.3; white-space: nowrap;
