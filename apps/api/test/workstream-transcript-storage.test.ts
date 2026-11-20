@@ -2390,7 +2390,7 @@ describe("canonical ordered work-stream transcript", () => {
       .toEqual([queued.inputId]);
   });
 
-  it("reports a loop as awaiting an answer only while its withheld batch is all questions", async () => {
+  it("reports a loop as awaiting an answer only while its withheld batch is all questions and one is unanswered", async () => {
     const { transcript, sql, storage } = open();
     seedPendingInputRoot(sql);
     const initial = await admitPendingInput({ storage, withAttachment: false });
@@ -2478,6 +2478,11 @@ describe("canonical ordered work-stream transcript", () => {
       NOW + 6,
     );
     expect(transcript.awaitingQuestionAnswer("persistent-loop")).toBe(true);
+
+    // Answered, but no answer input reached the queue: nobody will answer
+    // again, so this is a wedge rather than a wait.
+    sql.exec(`UPDATE elicitation_requests SET status = 'answered' WHERE elicitation_id = 'elicitation-open'`);
+    expect(transcript.awaitingQuestionAnswer("persistent-loop")).toBe(false);
   });
 
   it("cancels a withheld question when another message arrives and activates that message", async () => {

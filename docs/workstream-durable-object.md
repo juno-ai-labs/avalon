@@ -1891,9 +1891,11 @@ of the creator-only rule went with the import suite and was never replaced.
 
 **What changed:** `nextLoopWorkAt` no longer logs
 `substream_loop_parked_with_queued_input` when the loop's last assistant step is
-a batch of questions only. `WorkstreamTranscriptStorage.awaitingQuestionAnswer`
-answers that, from the same `openQuestionToolCallIds` the release guard and
-`inputsBindCanAccept` already use. Every other held queue still reports.
+a batch of questions only with one still unanswered.
+`WorkstreamTranscriptStorage.awaitingQuestionAnswer` answers that, from the
+same `openQuestionToolCallIds` the release guard and `inputsBindCanAccept`
+already use, plus a check that one of those questions is still `pending`.
+Every other held queue still reports.
 
 **Why:** One Canvas asked a question at 2026-11-18 22:49 UTC. A sub-agent's
 message landed 0.8 seconds before it, so the message queued behind the question
@@ -1908,9 +1910,10 @@ evidence of a wedge, never as a heartbeat. This change makes that true again.
 **Considered and rejected:** A once-per-isolate guard. The object is evicted
 between these alarms, so the guard would still log on every wake.
 
-**Consequences:** The exemption is for a batch made up of questions only. A
-withheld batch with any non-question call is the unrecoverable wedge this
-warning exists for, and must keep reporting.
+**Consequences:** The exemption is for a batch made up of questions only, at
+least one still `pending`. A withheld batch with any non-question call, or one
+whose questions are all closed with no answer queued, is the unrecoverable
+wedge this warning exists for, and must keep reporting.
 
 PR: [#1685](https://github.com/juno-ai-labs/avalon/pull/1685).
 

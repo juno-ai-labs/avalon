@@ -4297,13 +4297,22 @@ export class WorkstreamTranscriptStorage {
   }
 
   /**
-   * Whether the loop's last assistant step is a batch of questions only, so
-   * what is queued behind it waits for the person's answer. Read by
-   * `nextLoopWorkAt`, which does not report that wait as a parked loop.
+   * Whether the loop's last assistant step is a batch of questions only, at
+   * least one still unanswered, so what is queued behind it waits for the
+   * person's answer. Read by `nextLoopWorkAt`, which does not report that wait
+   * as a parked loop. A batch whose questions are all closed has no answer
+   * left to come, so a queue held behind it is a wedge and stays reported.
    */
   awaitingQuestionAnswer(loopId: string): boolean {
     const withheld = this.withheldBatch(loopId);
-    return withheld !== null && withheld.batch.calls.length > 0 && withheld.allQuestions;
+    if (withheld === null || withheld.batch.calls.length === 0 || !withheld.allQuestions) return false;
+    return boundParameterChunks(withheld.batch.calls.map((call) => call.receiptToolCallId))
+      .some((ids) => this.sql.exec(
+        `SELECT 1 FROM elicitation_requests
+          WHERE status = 'pending' AND tool_call_id IN (${ids.map(() => "?").join(", ")})
+          LIMIT 1`,
+        ...ids,
+      ).toArray().length > 0);
   }
 
   private withheldBatch(loopId: string): { batch: PendingBindToolBatch; allQuestions: boolean } | null {
