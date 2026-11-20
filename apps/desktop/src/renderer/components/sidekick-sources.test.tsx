@@ -405,17 +405,42 @@ describe('the Sidekick details\' Wakes on section', () => {
     expect(within(within(section()).getByRole('list', { name: LABELS })).getByText('Waiting for an answer')).toBeInTheDocument();
   });
 
-  it('keeps an account no trigger listens for in view, under Other accounts, where its person can still take it back', async () => {
+  it('keeps an account on a connector no trigger listens to in view, under Other accounts, where its person can still take it back', async () => {
+    api.getSidekickSources.mockResolvedValue(sources({
+      sources: [{ person: { userId: ME as UserId, displayName: 'Me' }, connectionId: 'c-linear', connectionName: 'me@rally.test', connectorType: 'linear',
+        eventTypes: ['issue.updated'], condition: null, available: true, yours: true }],
+      requests: [],
+    }));
+    mount(wakesOn);
+    await screen.findByRole('list', { name: 'Other accounts' });
+    expect(item('Other accounts', 'Me')).toHaveTextContent('MeYoume@rally.test · Issue updatedStop allowing');
+    expect(within(section()).getByText('Allowed or asked for a connection no trigger above listens to.')).toBeInTheDocument();
+    expect(within(section()).queryByRole('list', { name: MAIL })).toBeNull();
+  });
+
+  it('lists an account whose event type its connector\'s trigger does not declare under that trigger, and never calls it unused', async () => {
+    // The server registers by the evaluator rules, which may cover a type the trigger does not declare.
     api.getSidekickSources.mockResolvedValue(sources({
       sources: [{ person: { userId: ME as UserId, displayName: 'Me' }, connectionId: 'c-cal', connectionName: 'me@rally.test', connectorType: 'google',
         eventTypes: ['calendar.event_changed'], condition: null, available: true, yours: true }],
       requests: [],
     }));
     mount(wakesOn);
-    await screen.findByRole('list', { name: 'Other accounts' });
-    expect(item('Other accounts', 'Me')).toHaveTextContent('MeYoume@rally.test · Calendar event changedStop allowing');
-    expect(within(section()).getByText('Allowed or asked for events no trigger above listens for.')).toBeInTheDocument();
-    expect(within(section()).queryByRole('list', { name: MAIL })).toBeNull();
+    await screen.findByRole('list', { name: MAIL });
+    expect(item(MAIL, 'Me')).toHaveTextContent('MeYoume@rally.test · Calendar event changedStop allowing');
+    expect(within(section()).queryByRole('list', { name: 'Other accounts' })).toBeNull();
+    expect(within(section()).queryByText('No person’s account lets these events in.')).toBeNull();
+  });
+
+  it('does not say nobody feeds a trigger while an account on its connector is listed under another', async () => {
+    api.getSidekickSources.mockResolvedValue(sources({ requests: [] }));
+    mount(<SidekickWakesOn id={SIDEKICK} triggers={[
+      triggers[1]!,
+      { key: 'drive', icon: null, summary: 'When a file changes', listensFor: { connectorType: 'google', eventTypes: ['drive.file_changed'] } },
+    ]} />);
+    await screen.findByRole('list', { name: MAIL });
+    expect(within(section()).queryByRole('list', { name: 'Accounts for When a file changes' })).toBeNull();
+    expect(within(section()).queryByText('No person’s account lets these events in.')).toBeNull();
   });
 
   it('holds my Approve while my account lapsed and points me at the request\'s conversation, with no connect card of its own', async () => {

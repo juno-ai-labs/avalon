@@ -219,10 +219,17 @@ export interface WakeTrigger {
   organizationAccount?: { connectorType: string; name: string };
 }
 
-/** Whether a person's source or request is for events this trigger listens for. */
-function feeds(listensFor: NonNullable<WakeTrigger['listensFor']>, entry: SourceAsk): boolean {
-  if (listensFor.connectorType !== null && listensFor.connectorType !== entry.connectorType) return false;
-  return listensFor.eventTypes === null || entry.eventTypes.some((eventType) => listensFor.eventTypes!.includes(eventType));
+type Listening = NonNullable<WakeTrigger['listensFor']>;
+
+/** Whether a person's source or request is on the connector this trigger listens to. */
+function onConnector(listensFor: Listening, entry: SourceAsk): boolean {
+  return listensFor.connectorType === null || listensFor.connectorType === entry.connectorType;
+}
+
+/** Whether it is also for an event type the trigger declares. */
+function declared(listensFor: Listening, entry: SourceAsk): boolean {
+  return onConnector(listensFor, entry)
+    && (listensFor.eventTypes === null || entry.eventTypes.some((eventType) => listensFor.eventTypes!.includes(eventType)));
 }
 
 /**
@@ -231,10 +238,18 @@ function feeds(listensFor: NonNullable<WakeTrigger['listensFor']>, entry: Source
  * (`docs/sidekick-sources.md`): the Organization's connection it watches, each
  * person's source with their own filter, and each person who has been asked.
  * A source lets events in and lends no account; that is delegation, the
- * section below. A source or request no trigger listens for is still listed,
+ * section below.
+ *
+ * A source or request is listed under the triggers whose declared event types
+ * it shares. The server registers events by the Sidekick's evaluator rules,
+ * which this reader is not shown and which may cover event types a trigger
+ * does not declare, so one that shares no trigger's declared types is listed
+ * under every trigger on its connector rather than called unused, and a
+ * trigger says nobody's account feeds it only when no account is on its
+ * connector at all. Only one on a connector no trigger listens to is listed
  * under Other accounts, so its person can always see it and take it back.
- * One that feeds several triggers is listed under each, with its control on
- * the first only: the control acts on the whole source or request.
+ * One listed under several triggers has its control on the first only: the
+ * control acts on the whole source or request.
  */
 export function SidekickWakesOnList({ triggers, next, data, loading = false, words, onDecide, deciding = null, onWithdraw, withdrawing = null }: {
   triggers: readonly WakeTrigger[];
@@ -307,7 +322,9 @@ export function SidekickWakesOnList({ triggers, next, data, loading = false, wor
     </li>;
   };
   const listening = triggers.flatMap((trigger) => trigger.listensFor ? [trigger.listensFor] : []);
-  const unheard = (entry: SourceAsk): boolean => !listening.some((listensFor) => feeds(listensFor, entry));
+  const feeds = (listensFor: Listening, entry: SourceAsk): boolean => declared(listensFor, entry)
+    || (onConnector(listensFor, entry) && !listening.some((other) => declared(other, entry)));
+  const unheard = (entry: SourceAsk): boolean => !listening.some((listensFor) => onConnector(listensFor, entry));
   const otherSources = data?.sources.filter(unheard) ?? [];
   const otherRequests = data?.requests.filter(unheard) ?? [];
   return <section aria-labelledby="sidekick-wakes-on" className="sidekick-profile-section sidekick-wakes-on">
@@ -322,6 +339,9 @@ export function SidekickWakesOnList({ triggers, next, data, loading = false, wor
           const organizationMark = organizationAccount
             && connectorBrandMark(organizationAccount.connectorType, words({ connectorType: organizationAccount.connectorType, eventTypes: [] }).connector);
           const none = !organizationAccount && sources.length === 0 && requests.length === 0;
+          // Said only when no account is on its connector: one listed under another trigger may reach this one too.
+          const nobody = listensFor && data
+            && ![...data.sources, ...data.requests].some((entry) => onConnector(listensFor, entry));
           return <li className="sidekick-wake-trigger" key={trigger.key}>
             {trigger.icon}
             <div className="sidekick-wake-trigger-copy">
@@ -338,7 +358,7 @@ export function SidekickWakesOnList({ triggers, next, data, loading = false, wor
                 {requests.map(requestRow)}
               </ul>}
               {listensFor && none && (data
-                ? <small className="sidekick-wake-accounts-none">No person’s account lets these events in.</small>
+                ? nobody && <small className="sidekick-wake-accounts-none">No person’s account lets these events in.</small>
                 : loading && <small className="sidekick-wake-accounts-none" role="status">Loading accounts…</small>)}
             </div>
           </li>;
@@ -347,7 +367,7 @@ export function SidekickWakesOnList({ triggers, next, data, loading = false, wor
     {next}
     {(otherSources.length > 0 || otherRequests.length > 0) && <>
       <h3 className="sidekick-wake-other" id="sidekick-wake-other">Other accounts</h3>
-      <p className="sidekick-delegation-disclosure">Allowed or asked for events no trigger above listens for.</p>
+      <p className="sidekick-delegation-disclosure">Allowed or asked for a connection no trigger above listens to.</p>
       <ul aria-labelledby="sidekick-wake-other" className="sidekick-delegates sidekick-wake-accounts">
         {otherSources.map(sourceRow)}
         {otherRequests.map(requestRow)}

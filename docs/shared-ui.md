@@ -102,11 +102,15 @@ people read and answer them, on three surfaces that share one component:
 
   A source or request sits under a trigger when the trigger's `listensFor`
   names its connector and one of its event types; a null connector or a null
-  event list matches any. One that no trigger listens for is listed under
-  **Other accounts** at the foot, so its person can always see it and take it
-  back. An event trigger with no account says "No person’s account lets
-  these events in." once the read has answered, and "Loading accounts…"
-  before. An account that feeds several triggers is listed under each, with
+  event list matches any. The server registers events by the evaluator rules,
+  which a reader is not shown and which may cover event types a trigger does
+  not declare, so the section never states a mismatch as fact: one that
+  shares no trigger's declared types is listed under every trigger on its
+  connector, and only one on a connector no trigger listens to is listed
+  under **Other accounts** at the foot, where its person can still see it and
+  take it back. An event trigger says "No person’s account lets these events
+  in." only when no account is on its connector at all, once the read has
+  answered, and "Loading accounts…" before. An account that feeds several triggers is listed under each, with
   its control on the first only. Delegation's explanation ends by pointing at
   Wakes on, because the two lists sit together and name some of the same
   people.
@@ -365,10 +369,13 @@ trigger, which shows every person twice. Dropping accounts that match no
 trigger, which would hide a permission its person could no longer take back.
 A server join, since both reads already exist.
 
-**Consequences:** The match is the client's, on connector and event type,
-and looser than `sidekickSourceRegistrations`, which also weighs the resource
-and whether a request stands behind the source. A change that needs the exact
-registration should have the server say it rather than widen this match.
+**Consequences:** The match is the client's, on connector and declared event
+type. `sidekickSourceRegistrations` registers by the evaluator rules instead,
+and also weighs the resource and whether a request stands behind the source,
+so the section groups by the declared types where they agree and otherwise
+falls back to the connector rather than say an account is unused. A change
+that needs the exact registration should have the server say it rather than
+sharpen this match.
 
 ### 2026-11-13 — A failed Retry says it failed
 
