@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fcfbf7" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="description" content="Rally reads the Gmail you already get and turns it into an order board: orders, quotes and supplier back-and-forth in one place. It updates itself as new mail arrives." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Rally" />
+    <meta property="og:title" content="Every order in your inbox, on one board." />
+    <meta property="og:description" content="Connect Gmail and get an order board in five minutes: who asked, how many cases, how much, due when. It updates itself as customers and suppliers email." />
+    <meta property="og:url" content="https://rallywith.ai/for/wholesalers/" />
+    <meta name="twitter:title" content="Every order in your inbox, on one board." />
+    <meta name="twitter:description" content="Connect Gmail and get an order board in five minutes: who asked, how many cases, how much, due when. It updates itself as customers and suppliers email." />
+    <link rel="canonical" href="https://rallywith.ai/for/wholesalers/" />
+    <link
+      rel="preload"
+      as="font"
+      href="/src/fonts/instrument-serif-latin-400-normal.woff2"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/src/for/wholesalers.css" />
+    <script type="module" src="/src/story.ts"></script>
+    <title>Rally for wholesalers: every order in your inbox, on one board</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <!-- rally:home-header -->
+    <main id="content" class="wh-page">
+      <!-- The counter: a short headline across the top, then the order board at full width. -->
+      <section class="wh-hero wrap" aria-labelledby="wh-title">
+        <p class="eyebrow wh-eyebrow">For wholesalers and small sellers</p>
+        <h1 id="wh-title">Every order in your inbox, on one board.</h1>
+        <div class="wh-hero-say">
+          <p class="wh-lede">
+            Connect your Gmail. About five minutes later, Rally has read the
+            mail you already get and built your order board: who asked, how
+            many cases, how much, due when. Every new email moves it. Nobody
+            keys anything in.
+          </p>
+          <div class="wh-actions">
+            <a
+              class="button primary"
+              data-site-action="web-app-template"
+              href="<!-- rally:audience-start wholesalers -->"
+              >Connect your Gmail <span aria-hidden="true"><!-- rally:arrow --></span></a
+            >
+            <p class="trial-note">Free to start. No credit card needed.</p>
+          </div>
+        </div>
+
+        <div class="story wh-counter" data-story>
+          <div class="story-bar">
+            <p class="wh-bar-note">An example. Three emails come in, and the board changes by itself.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide data-steps="3" aria-label="Example: an order board that updates itself from Gmail">
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Put every order in my inbox on a board: new, quoted, confirmed, shipped.”</p></div>
+                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Harbor Cafe</p><p class="story-subject">Can you do 40 cases by Friday?</p><p class="story-did">Added Harbor Cafe to New.</p></div>
+                <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Tri-County Freight</p><p class="story-subject">Picked up: Greenleaf, 2 pallets</p><p class="story-did">Moved Greenleaf to Shipped.</p></div>
+                <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Bell &amp; Co</p><p class="story-subject">Re: Quote for 24 cases. Approved, go ahead</p><p class="story-did">Moved Bell &amp; Co to Confirmed.</p></div>
+              </div>
+              <div class="story-page wh-board">
+                <div class="kit-head wh-board-head">
+                  <h2>Orders</h2>
+                  <span class="kit-live">Updates itself from your Gmail</span>
+                  <p class="wh-booked" data-touch="3"><span>Booked this week</span> <b class="wh-num"><span data-until="3">$6,810</span><span data-at="3">$8,960</span></b></p>
+                </div>
+                <div class="wh-cols">
+                  <section class="wh-col" aria-labelledby="wh-col-new">
+                    <header><h3 id="wh-col-new">New</h3><p class="wh-sum" data-touch="1"><b class="wh-num"><span data-until="1">1</span><span data-at="1">2</span></b> to quote</p></header>
+                    <div class="wh-slots">
+                      <div class="wh-card"><strong>Corner Bakery</strong><b class="wh-amt wh-amt-none">to quote</b><span class="wh-qty">6 cases</span><span class="wh-due">by Mon</span></div>
+                      <div class="wh-card" data-at="1" data-touch="1"><strong>Harbor Cafe</strong><b class="wh-amt wh-amt-none">to quote</b><span class="wh-qty">40 cases</span><span class="wh-due">by Fri</span></div>
+                    </div>
+                  </section>
+                  <section class="wh-col" aria-labelledby="wh-col-quoted">
+                    <header><h3 id="wh-col-quoted">Quoted</h3><p class="wh-sum" data-touch="3"><b class="wh-num"><span data-until="3">$3,630</span><span data-at="3">$1,480</span></b> out</p></header>
+                    <div class="wh-slots">
+                      <div class="wh-card"><strong>Luca’s Deli</strong><b class="wh-amt">$1,480</b><span class="wh-qty">15 cases</span><span class="wh-due">quoted Tue</span></div>
+                      <div class="wh-card" data-key="bell" data-until="3"><strong>Bell &amp; Co</strong><b class="wh-amt">$2,150</b><span class="wh-qty">24 cases</span><span class="wh-due">quoted Mon</span></div>
+                    </div>
+                  </section>
+                  <section class="wh-col" aria-labelledby="wh-col-confirmed">
+                    <header><h3 id="wh-col-confirmed">Confirmed</h3><p class="wh-sum" data-touch="2 3"><b class="wh-num"><span data-until="2">$5,500</span><span data-at="2" data-until="3">$640</span><span data-at="3">$2,790</span></b></p></header>
+                    <div class="wh-slots">
+                      <div class="wh-card"><strong>Osteria Nove</strong><b class="wh-amt">$640</b><span class="wh-qty">12 cases</span><span class="wh-due">ship Fri</span></div>
+                      <div class="wh-card" data-key="greenleaf" data-until="2"><strong>Greenleaf</strong><b class="wh-amt">$4,860</b><span class="wh-qty">2 pallets</span><span class="wh-due">ship Wed</span></div>
+                      <div class="wh-card" data-key="bell" data-at="3" data-touch="3"><strong>Bell &amp; Co</strong><b class="wh-amt">$2,150</b><span class="wh-qty">24 cases</span><span class="wh-due">ship Thu</span></div>
+                    </div>
+                  </section>
+                  <section class="wh-col" aria-labelledby="wh-col-shipped">
+                    <header><h3 id="wh-col-shipped">Shipped</h3><p class="wh-sum" data-touch="2"><b class="wh-num"><span data-until="2">$1,310</span><span data-at="2">$6,170</span></b></p></header>
+                    <div class="wh-slots">
+                      <div class="wh-card"><strong>Finch &amp; Fig</strong><b class="wh-amt">$1,310</b><span class="wh-qty">18 cases</span><span class="wh-due">arrived Mon</span></div>
+                      <div class="wh-card" data-key="greenleaf" data-at="2" data-touch="2"><strong>Greenleaf</strong><b class="wh-amt">$4,860</b><span class="wh-qty">2 pallets</span><span class="wh-due">arrives Thu</span></div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+        <p class="wh-note">
+          Nobody dragged a card or typed a total. The board is built from
+          your mail, and it changes when your mail does.
+        </p>
+      </section>
+
+      <!-- One order's ticket, moved along its rail by five emails. -->
+      <section class="wh-sec wrap" aria-labelledby="wh-life-title">
+        <div class="wh-head">
+          <p class="eyebrow wh-eyebrow">One order, start to finish</p>
+          <h2 id="wh-life-title">From “can you do 40 cases?” to paid.</h2>
+          <p>
+            This is one order’s ticket. Dana at Harbor Cafe asks on Tuesday.
+            You answer your mail the way you always do. Five emails come in,
+            and each one moves the ticket a stage. You never touch it.
+          </p>
+        </div>
+        <div class="story wh-life" data-story>
+          <div class="story-bar">
+            <p class="wh-bar-note">An example. One order, five emails.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide data-steps="5" aria-label="Example: one order moving from asked to paid as emails arrive">
+              <div class="story-mail">
+                <div class="story-ask wh-m0" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show me the Harbor Cafe order, from first email to paid.”</p></div>
+                <div class="story-email wh-m1" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Harbor Cafe</p><p class="story-subject">Can you do 40 cases by Friday?</p><p class="story-did">Opened a ticket for Harbor Cafe.</p></div>
+                <div class="story-email wh-m2" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Harbor Cafe</p><p class="story-subject">Re: Quote for 40 cases. Got it, thanks</p><p class="story-did">Your quote is with Dana: $1,920.</p></div>
+                <div class="story-email wh-m3" data-at="3" data-until="4"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Harbor Cafe</p><p class="story-subject">PO 1184 attached. Go ahead</p><p class="story-did">PO 1184 is in. Order confirmed.</p></div>
+                <div class="story-email wh-m4" data-at="4" data-until="5"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Tri-County Freight</p><p class="story-subject">Picked up: 40 cases for Harbor Cafe</p><p class="story-did">Marked it shipped. Arrives Friday.</p></div>
+                <div class="story-email wh-m5" data-at="5"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Harbor Cafe Accounts</p><p class="story-subject">Payment sent for invoice 3391</p><p class="story-did">Marked it paid. Ticket closed.</p></div>
+              </div>
+              <div class="story-page wh-life-page">
+                <div class="kit-head"><h3>Harbor Cafe, 40 cases</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+                <div class="wh-line">
+                  <ol class="wh-rail">
+                    <li data-done="1"><span class="wh-stop">Asked</span><span class="wh-rec"><span data-at="1">Tue, wants Fri</span></span></li>
+                    <li data-done="2"><span class="wh-stop">Quoted</span><span class="wh-rec"><span data-at="2">$1,920, net 30</span></span></li>
+                    <li data-done="3"><span class="wh-stop">PO in</span><span class="wh-rec"><span data-at="3">PO 1184, Wed</span></span></li>
+                    <li data-done="4"><span class="wh-stop">Shipped</span><span class="wh-rec"><span data-at="4">Thu, arrives Fri</span></span></li>
+                    <li data-done="5"><span class="wh-stop">Paid</span><span class="wh-rec"><span data-at="5">$1,920 in full</span></span></li>
+                  </ol>
+                  <div class="wh-track" aria-hidden="true">
+                    <div class="wh-ticket" data-at="1">
+                      <div class="wh-ticket-paper">
+                        <strong>Harbor Cafe</strong>
+                        <span>40 cases, Friday</span>
+                        <b><span data-until="2">no price yet</span><span data-at="2">$1,920</span></b>
+                        <i class="wh-paid" data-at="5">Paid</i>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+        <p class="wh-note">
+          Rally reads the whole thread, your replies included. That is how it
+          knows what you quoted without you telling it.
+        </p>
+      </section>
+
+      <!-- Quotes going cold, and the follow-up Rally drafts. -->
+      <section class="wh-sec wh-cold wrap" aria-labelledby="wh-cold-title">
+        <div class="wh-head wh-cold-copy">
+          <p class="eyebrow wh-eyebrow">The quote you forgot</p>
+          <h2 id="wh-cold-title">A quote with no answer is a sale going cold.</h2>
+          <p>
+            You quoted on the 10th. They said they’d get back to you. Then
+            the week happened. Rally lists every quote you have out, oldest
+            first, with the days since. Anything past five days sits at the
+            top, where you can’t miss it.
+          </p>
+          <p>
+            When a customer answers, their row changes on its own. You don’t
+            tick anything off.
+          </p>
+        </div>
+        <div class="story wh-quote-story" data-story>
+          <div class="story-bar">
+            <p class="wh-bar-note">An example. Two customers finally answer.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide data-steps="2" aria-label="Example: a list of unanswered quotes that updates itself from Gmail">
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“List every quote nobody answered, oldest first, and draft a follow-up for any past five days.”</p></div>
+                <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Priya, Tall Pine Lodge</p><p class="story-subject">Re: Quote for 30 cases. Yes, send them</p><p class="story-did">Tall Pine said yes. Off the list.</p></div>
+                <div class="story-email" data-at="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Bell &amp; Co</p><p class="story-subject">Re: Quote. Can you do $2,000 even?</p><p class="story-did">Bell &amp; Co countered at $2,000. Your move.</p></div>
+              </div>
+              <div class="story-page wh-quotes-page">
+                <div class="kit-head"><h3>Quotes out, no answer</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+                <dl class="wh-tally">
+                  <div data-touch="1 2"><dt>Still out</dt><dd class="wh-num"><span data-until="1">$11,870</span><span data-at="1" data-until="2">$9,530</span><span data-at="2">$7,380</span></dd></div>
+                  <div data-touch="1"><dt>Gone cold</dt><dd class="wh-num"><span data-until="1">2</span><span data-at="1">1</span></dd></div>
+                </dl>
+                <ul class="wh-quotes">
+                  <li class="wh-is-cold"><span class="wh-days"><b>9</b> days</span><div><strong>Marlow’s Grocer</strong><span>2 pallets, sent Nov 10</span></div><b class="wh-amt">$5,120</b><span class="kit-pill late">Draft ready</span></li>
+                  <li class="wh-is-cold" data-done="1" data-touch="1"><span class="wh-days"><b>6</b> days</span><div><strong>Tall Pine Lodge</strong><span>30 cases, sent Nov 13</span></div><b class="wh-amt">$2,340</b><span class="kit-pill late" data-until="1">Draft ready</span><span class="kit-pill good" data-at="1">Said yes</span></li>
+                  <li><span class="wh-days"><b>4</b> days</span><div><strong>Luca’s Deli</strong><span>15 cases, sent Nov 15</span></div><b class="wh-amt">$1,480</b><span class="kit-pill">Waiting</span></li>
+                  <li data-touch="2"><span class="wh-days"><b>2</b> days</span><div><strong>Bell &amp; Co</strong><span>24 cases, sent Nov 17</span></div><b class="wh-amt">$2,150</b><span class="kit-pill" data-until="2">Waiting</span><span class="kit-pill new" data-at="2">Countered</span></li>
+                  <li><span class="wh-days"><b>1</b> day</span><div><strong>Finch &amp; Fig</strong><span>10 cases, sent Nov 18</span></div><b class="wh-amt">$780</b><span class="kit-pill">Waiting</span></li>
+                </ul>
+              </div>
+            </article>
+          </div>
+        </div>
+        <div class="wh-draft-side">
+          <p class="wh-draft-lead">
+            Ask, and Rally writes the follow-up for you. It waits in your
+            Gmail Drafts. Read it, change it, send it. Or don’t.
+          </p>
+          <div class="wh-draft" role="group" aria-label="Example of a follow-up Rally drafted">
+            <p class="wh-draft-top"><span><!-- rally:gmail-mark -->Draft</span><em>Waiting in your Gmail Drafts</em></p>
+            <p class="wh-draft-line"><span>To</span>Lou, Marlow’s Grocer</p>
+            <p class="wh-draft-line"><span>Subject</span>Re: Quote for 2 pallets</p>
+            <p class="wh-draft-body">
+              Hi Lou, checking in on the quote from the 10th: 2 pallets at
+              $5,120. I can hold that price through Friday. Want me to book
+              them?
+            </p>
+            <p class="wh-draft-foot">Nothing goes out until you press send.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- The supplier side: one week of inbound, fed by two inboxes. -->
+      <section class="wh-sec wrap" aria-labelledby="wh-in-title">
+        <div class="wh-in-top">
+          <div class="wh-head">
+            <p class="eyebrow wh-eyebrow">The supplier side</p>
+            <h2 id="wh-in-title">What’s coming in, and what’s late.</h2>
+            <p>
+              Customers are half of it. The other half is the delay notice
+              that landed in Jay’s inbox while you were out on deliveries.
+              Rally reads both inboxes and keeps one week: what arrives which
+              day, what slipped, and what still has no ship date. Nobody
+              updates it. The emails do.
+            </p>
+          </div>
+          <div class="wh-inboxes">
+            <p class="wh-inboxes-mark" aria-hidden="true"><i>Your inbox</i><i class="wh-jay">Jay’s inbox</i><b>→</b><span>1 page</span></p>
+            <h3>One inbox, or several</h3>
+            <p>
+              A page can run on your Gmail alone, or on yours and your
+              team’s. Each person connects their own Gmail and allows it.
+              Until they do, Rally reads none of their mail.
+            </p>
+          </div>
+        </div>
+        <div class="story wh-in" data-story>
+          <div class="story-bar">
+            <p class="wh-bar-note">An example. Three supplier emails land at once, in two inboxes.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide data-steps="1" aria-label="Example: a week of supplier deliveries that updates itself from two inboxes">
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show what we’re waiting on from suppliers this week, from my inbox and Jay’s.”</p></div>
+                <div class="story-burst wh-burst" data-at="1">
+                  <div class="story-email"><p class="story-label"><!-- rally:gmail-mark --><span>New email</span> <b>in Jay’s inbox</b></p><p class="story-from">Sun Valley Oils</p><p class="story-subject">Delay: your 60 cases now ship Friday</p><p class="story-did">Moved it to Friday. It’s late.</p></div>
+                  <div class="story-email wh-mine"><p class="story-label"><!-- rally:gmail-mark --><span>New email</span> <b>in your inbox</b></p><p class="story-from">Kettle Brook Jars</p><p class="story-subject">Shipped today, arriving Thursday</p><p class="story-did">Put it on Thursday.</p></div>
+                  <div class="story-email"><p class="story-label"><!-- rally:gmail-mark --><span>New email</span> <b>in Jay’s inbox</b></p><p class="story-from">Coastal Pack</p><p class="story-subject">Delivered 9:14am: 500 cartons</p><p class="story-did">Ticked it off. It’s in.</p></div>
+                </div>
+              </div>
+              <div class="story-page wh-in-page">
+                <div class="kit-head"><h3>Inbound this week</h3><span class="kit-live">Updates itself from 2 inboxes: yours and Jay’s</span></div>
+                <dl class="wh-tally">
+                  <div><dt>Due</dt><dd>4</dd></div>
+                  <div data-touch="1"><dt>Arrived</dt><dd class="wh-num"><span data-until="1">1</span><span data-at="1">2</span></dd></div>
+                  <div data-touch="1"><dt>Late</dt><dd class="wh-num"><span data-until="1">0</span><span data-at="1">1</span></dd></div>
+                  <div data-touch="1"><dt>No date</dt><dd class="wh-num"><span data-until="1">1</span><span data-at="1">0</span></dd></div>
+                </dl>
+                <div class="wh-week">
+                  <section class="wh-day wh-day-none" aria-labelledby="wh-day-none">
+                    <h4 id="wh-day-none">No date</h4>
+                    <div class="wh-chip" data-key="kettle" data-until="1"><strong>Kettle Brook Jars</strong><span>1 pallet</span><p><span class="kit-pill wait">Asked Monday</span><i class="wh-via">Your inbox</i></p></div>
+                  </section>
+                  <section class="wh-day" aria-labelledby="wh-day-mon">
+                    <h4 id="wh-day-mon">Mon</h4>
+                    <div class="wh-chip wh-chip-in"><strong>Alder Mills</strong><span>3 pallets</span><p><span class="kit-pill good">Arrived</span><i class="wh-via wh-jay">Jay’s inbox</i></p></div>
+                  </section>
+                  <section class="wh-day wh-day-today" aria-labelledby="wh-day-tue">
+                    <h4 id="wh-day-tue">Tue <em>Today</em></h4>
+                    <div class="wh-chip" data-done="1" data-touch="1"><strong>Coastal Pack</strong><span>500 cartons</span><p><span class="kit-pill" data-until="1">Due today</span><span class="kit-pill good" data-at="1">Arrived 9:14</span><i class="wh-via wh-jay">Jay’s inbox</i></p></div>
+                  </section>
+                  <section class="wh-day" aria-labelledby="wh-day-wed">
+                    <h4 id="wh-day-wed">Wed</h4>
+                    <div class="wh-chip" data-key="sunvalley" data-until="1"><strong>Sun Valley Oils</strong><span>60 cases</span><p><span class="kit-pill">On time</span><i class="wh-via wh-jay">Jay’s inbox</i></p></div>
+                  </section>
+                  <section class="wh-day" aria-labelledby="wh-day-thu">
+                    <h4 id="wh-day-thu">Thu</h4>
+                    <div class="wh-chip" data-key="kettle" data-at="1" data-touch="1"><strong>Kettle Brook Jars</strong><span>1 pallet</span><p><span class="kit-pill good">On its way</span><i class="wh-via">Your inbox</i></p></div>
+                  </section>
+                  <section class="wh-day" aria-labelledby="wh-day-fri">
+                    <h4 id="wh-day-fri">Fri</h4>
+                    <div class="wh-chip" data-key="sunvalley" data-at="1" data-touch="1"><strong>Sun Valley Oils</strong><span>60 cases</span><p><span class="kit-pill late">Late, was Wed</span><i class="wh-via wh-jay">Jay’s inbox</i></p></div>
+                  </section>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+        <p class="wh-note">
+          So when Sun Valley slips to Friday, you know before Harbor Cafe
+          asks. Share the page with whoever receives the trucks. They see
+          the page, not your inbox.
+        </p>
+      </section>
+
+      <!-- What it replaces. -->
+      <section class="wh-sec wh-keep wrap" aria-labelledby="wh-keep-title">
+        <div class="wh-head">
+          <p class="eyebrow wh-eyebrow">What it replaces</p>
+          <h2 id="wh-keep-title">Nothing new to keep up.</h2>
+        </div>
+        <div class="wh-keep-grid">
+          <ul class="wh-gone" aria-label="What you can stop keeping up">
+            <li><s>The spreadsheet you update at 9pm</s></li>
+            <li><s>The sticky notes around the monitor</s></li>
+            <li><s>Searching the inbox while the customer holds</s></li>
+          </ul>
+          <div class="wh-keep-copy">
+            <p>
+              A board you have to feed is one more job, and it is wrong by
+              Wednesday. This one feeds itself. You email. Your customers
+              email. Your suppliers email. Rally reads it and keeps the pages
+              current.
+            </p>
+            <p>
+              Nobody logs an order, tags a thread or moves a card. Your
+              customers and suppliers see nothing different. You keep
+              quoting, invoicing and shipping exactly the way you do now.
+              Rally adds one window on top.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- How to start. -->
+      <section class="wh-sec wrap" aria-labelledby="wh-start-title">
+        <div class="wh-head">
+          <p class="eyebrow wh-eyebrow">How to start</p>
+          <h2 id="wh-start-title">Connect. Ask. Leave it alone.</h2>
+        </div>
+        <ol class="wh-steps" role="list">
+          <li>
+            <span class="wh-step-no" aria-hidden="true">1</span>
+            <h3>Connect your Gmail</h3>
+            <div>
+              <p>
+                Sign up free. Google asks you to approve it once. Nothing to
+                install and no card to enter.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="wh-step-no" aria-hidden="true">2</span>
+            <h3>Say what you want to see</h3>
+            <div>
+              <p>
+                One sentence, in your own words. Rally reads the mail and
+                builds the page in about five minutes. Sellers type things
+                like:
+              </p>
+              <ul class="wh-says">
+                <li>“Put every order in my inbox on a board: new, quoted, confirmed, shipped.”</li>
+                <li>“List every quote I sent that nobody answered, oldest first.”</li>
+                <li>“Show what we’re waiting on from suppliers this week, from my inbox and Jay’s.”</li>
+              </ul>
+            </div>
+          </li>
+          <li>
+            <span class="wh-step-no" aria-hidden="true">3</span>
+            <h3>Leave it alone</h3>
+            <div>
+              <p>
+                From then on, every new email updates the page. You never
+                refresh it and you never fill it in. Want backorders in their
+                own column, or standing orders on their own list? Say so, and
+                Rally changes it.
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <!-- The email-safety note. -->
+      <section class="wh-sec wrap" aria-labelledby="wh-safe-title">
+        <div class="wh-safe">
+          <div class="wh-safe-copy">
+            <p class="eyebrow wh-eyebrow">Before you connect</p>
+            <h2 id="wh-safe-title">Your inbox stays yours.</h2>
+            <p>
+              Rally sees your mail only after you connect Gmail yourself, and
+              you can disconnect it any time. A page like the ones above only
+              needs to read your mail. Rally changes nothing in your mailbox
+              unless you ask it to. It has completed an independent security
+              assessment.
+            </p>
+            <p>
+              One limit worth knowing: Rally reads the email, not the PDF
+              attached to it. If the PO number is in the subject or the
+              message, it is on the board.
+            </p>
+            <a class="text-link wh-safe-link" href="/trust/security/">See our security controls <span aria-hidden="true"><!-- rally:arrow --></span></a>
+          </div>
+          <div class="wh-safe-ledger">
+            <div>
+              <h3>Only when you ask</h3>
+              <ul>
+                <li>Write drafts that wait in Gmail Drafts</li>
+                <li>Send mail</li>
+                <li>Label, archive or trash mail</li>
+              </ul>
+            </div>
+            <div class="wh-cant">
+              <h3>Never</h3>
+              <ul>
+                <li>Delete mail for good. It has no way to</li>
+                <li>Read a teammate’s mail before they connect it</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="wh-sec wh-others wrap" aria-labelledby="wh-others-title">
+        <h2 id="wh-others-title">Not selling by the case? Rally does the same for other work that runs on email.</h2>
+        <!-- rally:audience-others wholesalers -->
+      </section>
+
+      <section class="wh-close wrap" aria-labelledby="wh-close-title">
+        <div class="wh-close-inner">
+          <p class="eyebrow wh-eyebrow">Five minutes from now</p>
+          <h2 id="wh-close-title">“Where’s my order?” One look, and you know.</h2>
+          <a
+            class="button primary"
+            data-site-action="web-app-template"
+            href="<!-- rally:audience-start wholesalers -->"
+            >Connect your Gmail <span aria-hidden="true"><!-- rally:arrow --></span></a
+          >
+          <p class="trial-note">Free to start. No credit card needed. Priced per team, not per seat.</p>
+        </div>
+      </section>
+    </main>
+    <!-- rally:site-footer -->
+  </body>
+</html>

@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fcfbf7" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="description" content="Rally turns the Gmail you already get from candidates and clients into one page: every intro, whose reply it is waiting on, and where each candidate stands on each role. It updates itself as mail arrives." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Rally" />
+    <meta property="og:title" content="Candidates on one side, clients on the other." />
+    <meta property="og:description" content="Connect Gmail and get one page of every candidate, client and intro, and whose reply you’re waiting on. It updates itself." />
+    <meta property="og:url" content="https://rallywith.ai/for/recruiters/" />
+    <meta name="twitter:title" content="Candidates on one side, clients on the other." />
+    <meta name="twitter:description" content="Connect Gmail and get one page of every candidate, client and intro, and whose reply you’re waiting on. It updates itself." />
+    <link rel="canonical" href="https://rallywith.ai/for/recruiters/" />
+    <link
+      rel="preload"
+      as="font"
+      href="/src/fonts/instrument-serif-latin-400-normal.woff2"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/src/for/recruiters.css" />
+    <script type="module" src="/src/story.ts"></script>
+    <title>Rally for recruiters: candidates, clients and every intro on one page</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <!-- rally:home-header -->
+    <main id="content" class="rc-page">
+      <!-- 1. The desk: the headline across the top, then candidates, intros and clients. -->
+      <section class="rc-hero wrap" aria-labelledby="rc-title">
+        <p class="eyebrow rc-eyebrow">For recruiters and staffing shops</p>
+        <div class="rc-hero-top">
+          <h1 id="rc-title">Candidates on one side, clients on the other.</h1>
+          <p class="rc-lede-text">
+            Rally puts your whole desk on one page. Connect Gmail, and five
+            minutes later you can see every intro you’ve made, whose reply
+            it’s waiting on, and for how long. The page updates itself as
+            mail lands. Nobody fills it in.
+          </p>
+          <div class="rc-cta">
+            <a
+              class="button primary"
+              data-site-action="web-app-template"
+              href="<!-- rally:audience-start recruiters -->"
+              >Connect your Gmail <span aria-hidden="true"><!-- rally:arrow --></span></a
+            >
+            <p class="trial-note">Free to start. No credit card needed.</p>
+          </div>
+        </div>
+
+        <h2 class="kit-sr">An example: a recruiter’s desk</h2>
+        <div class="story rc-desk-story" data-story>
+          <div class="story-bar">
+            <p class="rc-bar-note">
+              An example desk. Every change is an email landing. Nobody
+              touches the page.
+            </p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide>
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show me every intro I’ve made, by role, and whose reply I’m waiting on.”</p></div>
+                <div class="story-email rc-from-client" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a client</b></p><p class="story-from">Ravi Patel, Acme Health</p><p class="story-subject">Re: Intro, Lena Fox. Lena, can you do Thursday at 2?</p><p class="story-did">Acme answered after 6 days. Now waiting on Lena.</p></div>
+                <div class="story-email rc-from-cand" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Ana Ruiz</p><p class="story-subject">Re: Intro, Ana Ruiz. Friday at 10 works for me</p><p class="story-did">Ana answered. Now waiting on Mia at Brightline.</p></div>
+                <div class="story-email rc-from-cand" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Kai Moss</p><p class="story-subject">Any word from Acme?</p><p class="story-did">Kai is asking. Ravi has had his intro for 4 days.</p></div>
+              </div>
+              <div class="story-page rc-desk">
+                <div class="kit-head"><h3>My desk, by role</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+                <div class="rc-tally">
+                  <div class="rc-tally-side" data-touch="1 2">
+                    <p class="rc-tally-name">Candidates</p>
+                    <p class="rc-tally-n"><span data-until="1"><b>1</b> owes you a reply</span><span data-at="1" data-until="2"><b>2</b> owe you a reply</span><span data-at="2"><b>1</b> owes you a reply</span></p>
+                  </div>
+                  <div class="rc-tally-mid">
+                    <p class="rc-tally-name">Intros</p>
+                    <p class="rc-tally-n"><span><b>4</b> out, on 2 roles</span></p>
+                  </div>
+                  <div class="rc-tally-side rc-tally-right" data-touch="1 2">
+                    <p class="rc-tally-name">Clients</p>
+                    <p class="rc-tally-n"><span data-until="1"><b>3</b> owe you a reply</span><span data-at="1" data-until="2"><b>2</b> owe you a reply</span><span data-at="2"><b>3</b> owe you a reply</span></p>
+                  </div>
+                </div>
+                <section class="rc-req">
+                  <h4 class="rc-req-name">Senior Product Designer <span>Acme Health</span></h4>
+                  <ul class="rc-intros">
+                    <li class="rc-intro" data-touch="1">
+                      <div class="rc-cand"><i class="rc-face" aria-hidden="true">LF</i><div><strong>Lena Fox</strong><span>Intro sent Nov 13</span></div></div>
+                      <div class="rc-lane">
+                        <span class="rc-wait rc-on-cand" data-key="rc-desk-lena" data-at="1">Waiting <i>on Lena</i> <b>today</b></span>
+                        <span class="rc-wait rc-on-client rc-late" data-key="rc-desk-lena" data-until="1">Waiting <i>on Ravi</i> <b>6 days</b></span>
+                      </div>
+                      <div class="rc-client"><i class="rc-face rc-co" aria-hidden="true">RP</i><div><strong>Ravi Patel</strong><span>Acme Health</span></div></div>
+                    </li>
+                    <li class="rc-intro" data-touch="3">
+                      <div class="rc-cand"><i class="rc-face" aria-hidden="true">KM</i><div><strong>Kai Moss</strong><span>Intro sent Nov 15</span></div></div>
+                      <div class="rc-lane">
+                        <span class="rc-wait rc-on-client rc-slow" data-until="3">Waiting <i>on Ravi</i> <b>4 days</b></span>
+                        <span class="rc-wait rc-on-client rc-late" data-at="3"><em>Kai asked.</em> Waiting <i>on Ravi</i> <b>4 days</b></span>
+                      </div>
+                      <div class="rc-client"><i class="rc-face rc-co" aria-hidden="true">RP</i><div><strong>Ravi Patel</strong><span>Acme Health</span></div></div>
+                    </li>
+                  </ul>
+                </section>
+                <section class="rc-req">
+                  <h4 class="rc-req-name">Controller <span>Brightline</span></h4>
+                  <ul class="rc-intros">
+                    <li class="rc-intro" data-touch="2">
+                      <div class="rc-cand"><i class="rc-face" aria-hidden="true">AR</i><div><strong>Ana Ruiz</strong><span>Intro sent Nov 17</span></div></div>
+                      <div class="rc-lane">
+                        <span class="rc-wait rc-on-cand rc-slow" data-key="rc-desk-ana" data-until="2">Waiting <i>on Ana</i> <b>2 days</b></span>
+                        <span class="rc-wait rc-on-client" data-key="rc-desk-ana" data-at="2">Waiting <i>on Mia</i> <b>today</b></span>
+                      </div>
+                      <div class="rc-client"><i class="rc-face rc-co" aria-hidden="true">MC</i><div><strong>Mia Chen</strong><span>Brightline</span></div></div>
+                    </li>
+                    <li class="rc-intro">
+                      <div class="rc-cand"><i class="rc-face" aria-hidden="true">OD</i><div><strong>Omar Diaz</strong><span>Intro sent Nov 18</span></div></div>
+                      <div class="rc-lane">
+                        <span class="rc-wait rc-on-client">Waiting <i>on Mia</i> <b>1 day</b></span>
+                      </div>
+                      <div class="rc-client"><i class="rc-face rc-co" aria-hidden="true">MC</i><div><strong>Mia Chen</strong><span>Brightline</span></div></div>
+                    </li>
+                  </ul>
+                </section>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. A role's track: every candidate on one req, advancing as email arrives. -->
+      <section class="rc-track-section wrap" id="track" aria-labelledby="rc-track-title">
+        <div class="rc-head">
+          <p class="eyebrow rc-eyebrow">Role by role</p>
+          <h2 id="rc-track-title">Every req is its own track. Email moves people along.</h2>
+          <p>
+            Ask about one role and Rally lines up everyone you’ve submitted,
+            stage by stage. A reply from the client or the candidate moves
+            their marker one stop. You never drag a card and you never
+            refresh the page.
+          </p>
+        </div>
+        <div class="story rc-track-story" data-story>
+          <div class="story-bar">
+            <p class="rc-bar-note">An example role. Four emails, four moves, one placement.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide data-steps="4">
+              <div class="rc-mail-col">
+                <div class="story-mail">
+                  <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Track everyone I’ve submitted for the Acme designer role, stage by stage.”</p></div>
+                  <div class="story-email rc-from-client rc-to-row-3" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from the client</b></p><p class="story-from">Ravi Patel, Acme Health</p><p class="story-subject">Kai looks strong. Phone screen Tuesday?</p><p class="story-did">Moved Kai Moss to Screen.</p></div>
+                  <div class="story-email rc-from-cand rc-to-row-2" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Tom Baker</p><p class="story-subject">Confirmed for the onsite, Thursday at 10</p><p class="story-did">Moved Tom Baker to Interview.</p></div>
+                  <div class="story-email rc-from-client rc-to-row-1" data-at="3" data-until="4"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from the client</b></p><p class="story-from">Ravi Patel, Acme Health</p><p class="story-subject">We’d like to make Lena an offer</p><p class="story-did">Moved Lena Fox to Offer.</p></div>
+                  <div class="story-email rc-from-cand rc-to-row-1" data-at="4"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Lena Fox</p><p class="story-subject">Signed. I start December 1!</p><p class="story-did">Lena Fox is placed. Start date December 1.</p></div>
+                </div>
+                <p class="rc-aside">
+                  The page reads both sides of the thread. Nobody logged a
+                  stage to make any of this move.
+                </p>
+              </div>
+              <div class="story-page rc-track">
+                <div class="kit-head"><h3>Senior Product Designer, Acme Health</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+                <div class="rc-track-head">
+                  <span class="rc-track-label">Candidate</span>
+                  <ol class="rc-stages" aria-label="Stages"><li>Submitted</li><li>Screen</li><li>Interview</li><li>Offer</li><li>Placed</li></ol>
+                </div>
+                <ul class="rc-runs">
+                  <li class="rc-run" data-touch="3 4" data-done="4">
+                    <div class="rc-who"><strong>Lena Fox</strong><span data-until="3">Second interview done</span><span data-at="3" data-until="4">Offer out</span><span class="rc-won" data-at="4">Placed. Starts Dec 1</span></div>
+                    <div class="rc-stops" aria-hidden="true">
+                      <i class="rc-stop rc-past"></i>
+                      <i class="rc-stop rc-past"></i>
+                      <i class="rc-stop rc-past"><b class="rc-mark" data-key="rc-track-lena" data-until="3">LF</b></i>
+                      <i class="rc-stop" data-done="3"><b class="rc-mark" data-key="rc-track-lena" data-at="3" data-until="4">LF</b></i>
+                      <i class="rc-stop" data-done="4"><b class="rc-mark rc-placed" data-key="rc-track-lena" data-at="4">Placed</b></i>
+                    </div>
+                  </li>
+                  <li class="rc-run" data-touch="2">
+                    <div class="rc-who"><strong>Tom Baker</strong><span data-until="2">Screened Nov 12</span><span data-at="2">Onsite Thursday at 10</span></div>
+                    <div class="rc-stops" aria-hidden="true">
+                      <i class="rc-stop rc-past"></i>
+                      <i class="rc-stop rc-past"><b class="rc-mark" data-key="rc-track-tom" data-until="2">TB</b></i>
+                      <i class="rc-stop" data-done="2"><b class="rc-mark" data-key="rc-track-tom" data-at="2">TB</b></i>
+                      <i class="rc-stop"></i>
+                      <i class="rc-stop"></i>
+                    </div>
+                  </li>
+                  <li class="rc-run" data-touch="1">
+                    <div class="rc-who"><strong>Kai Moss</strong><span data-until="1">Submitted Nov 15</span><span data-at="1">Phone screen Tuesday</span></div>
+                    <div class="rc-stops" aria-hidden="true">
+                      <i class="rc-stop rc-past"><b class="rc-mark" data-key="rc-track-kai" data-until="1">KM</b></i>
+                      <i class="rc-stop" data-done="1"><b class="rc-mark" data-key="rc-track-kai" data-at="1">KM</b></i>
+                      <i class="rc-stop"></i>
+                      <i class="rc-stop"></i>
+                      <i class="rc-stop"></i>
+                    </div>
+                  </li>
+                  <li class="rc-run">
+                    <div class="rc-who"><strong>Nia Okafor</strong><span>No word since Monday</span></div>
+                    <div class="rc-stops" aria-hidden="true">
+                      <i class="rc-stop rc-past"><b class="rc-mark">NO</b></i>
+                      <i class="rc-stop"></i>
+                      <i class="rc-stop"></i>
+                      <i class="rc-stop"></i>
+                      <i class="rc-stop"></i>
+                    </div>
+                  </li>
+                </ul>
+                <div class="rc-track-foot">
+                  <p><span data-until="4">4 in play on this role</span><span data-at="4">Role filled</span></p>
+                  <p class="rc-count" data-touch="4"><strong><span data-until="4">3</span><span data-at="4">4</span></strong> placements this month</p>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Going dark: days of silence on both sides, and the nudge Rally drafts. -->
+      <section class="rc-dark-section wrap" aria-labelledby="rc-dark-title">
+        <div class="rc-dark-copy">
+          <p class="eyebrow rc-eyebrow">Going dark</p>
+          <h2 id="rc-dark-title">See who’s gone quiet. Chase them today.</h2>
+          <p>
+            A client sits on a submittal for six days. Your candidate takes
+            another offer. You find out on day seven.
+          </p>
+          <p>
+            Rally counts the days of silence on both sides and puts the
+            longest at the top. Nobody keeps that count. The page does, from
+            your mail, and it clears a name when they reply.
+          </p>
+          <p>
+            Want the nudge written too? Ask. Rally drafts it and leaves it in
+            your Gmail Drafts until you send it.
+          </p>
+        </div>
+        <div class="story rc-dark-story" data-story>
+          <div class="story-bar">
+            <p class="rc-bar-note">An example list. A name clears itself when the reply lands.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide>
+              <div class="story-mail">
+                <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Who’s gone dark on me, longest first? When a candidate chases me, draft the nudge to the client.”</p></div>
+                <div class="story-email rc-from-cand" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Kai Moss</p><p class="story-subject">Any word from Acme?</p><p class="story-did">Drafted a nudge to Ravi. It’s waiting in your Gmail Drafts.</p></div>
+                <div class="story-email rc-from-client" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a client</b></p><p class="story-from">Dana Reyes, Orbit Foods</p><p class="story-subject">Sorry, slammed. Feedback on Sam below</p><p class="story-did">Orbit Foods answered after 8 days. Off the list.</p></div>
+                <div class="story-email rc-from-cand" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>from a candidate</b></p><p class="story-from">Dev Shah</p><p class="story-subject">Sorry for the silence. Still interested</p><p class="story-did">Dev answered after 5 days. Off the list.</p></div>
+              </div>
+              <div class="story-page rc-dark">
+                <div class="kit-head"><h3>Gone dark</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+                <section class="rc-quiet">
+                  <h4>Clients sitting on a submittal <span class="rc-quiet-n" data-touch="2"><b data-until="2">3</b><b data-at="2">2</b></span></h4>
+                  <ul>
+                    <li class="rc-q rc-late" data-touch="2" data-done="2">
+                      <div class="rc-q-who"><strong>Dana Reyes, Orbit Foods</strong><span>Sam Ortiz, Ops Manager</span></div>
+                      <span class="rc-days" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                      <span class="rc-q-n" data-until="2"><b>8</b> days</span><span class="kit-pill good" data-at="2">Replied</span>
+                    </li>
+                    <li class="rc-q rc-slow" data-touch="1">
+                      <div class="rc-q-who"><strong>Ravi Patel, Acme Health</strong><span>Kai Moss, designer</span><span class="kit-pill new" data-at="1">Nudge drafted</span></div>
+                      <span class="rc-days" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                      <span class="rc-q-n"><b>4</b> days</span>
+                    </li>
+                    <li class="rc-q rc-slow">
+                      <div class="rc-q-who"><strong>Jen Wu, Kestrel Labs</strong><span>Noor Ali, interview feedback</span></div>
+                      <span class="rc-days" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <span class="rc-q-n"><b>3</b> days</span>
+                    </li>
+                  </ul>
+                </section>
+                <section class="rc-quiet">
+                  <h4>Candidates who haven’t answered you <span class="rc-quiet-n" data-touch="3"><b data-until="3">2</b><b data-at="3">1</b></span></h4>
+                  <ul>
+                    <li class="rc-q rc-late" data-touch="3" data-done="3">
+                      <div class="rc-q-who"><strong>Dev Shah</strong><span>Interview times at Kestrel Labs</span></div>
+                      <span class="rc-days" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+                      <span class="rc-q-n" data-until="3"><b>5</b> days</span><span class="kit-pill good" data-at="3">Replied</span>
+                    </li>
+                    <li class="rc-q rc-slow">
+                      <div class="rc-q-who"><strong>Iris Cole</strong><span>The Brightline offer</span></div>
+                      <span class="rc-days" aria-hidden="true"><i></i><i></i></span>
+                      <span class="rc-q-n"><b>2</b> days</span>
+                    </li>
+                  </ul>
+                </section>
+                <div class="rc-draft-slot">
+                  <div class="rc-draft-none" data-until="1"><p class="rc-draft-label"><!-- rally:gmail-mark -->Your Gmail Drafts</p><p>No nudges waiting.</p></div>
+                  <div class="rc-draft" data-at="1">
+                    <p class="rc-draft-label"><!-- rally:gmail-mark -->Draft, waiting in your Gmail Drafts</p>
+                    <p class="rc-draft-to">To Ravi Patel. Kai Moss for Senior Product Designer</p>
+                    <p class="rc-draft-body">“Hi Ravi, checking in on Kai Moss. He asked me for an update today. Where do things stand?”</p>
+                    <p class="rc-draft-foot">You read it. You send it.</p>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. The firm's board: several recruiters' inboxes feeding one page. -->
+      <section class="rc-firm-section wrap" aria-labelledby="rc-firm-title">
+        <div class="rc-head">
+          <p class="eyebrow rc-eyebrow">More than one of you</p>
+          <h2 id="rc-firm-title">One board for the firm, from everyone’s inbox.</h2>
+          <p>
+            Start with your own Gmail. When the others connect theirs, every
+            inbox feeds the same board, and each candidate carries the face
+            of whoever owns the relationship. If two of you are emailing the
+            same person, the board shows it to both of you.
+          </p>
+        </div>
+        <div class="story rc-firm-story" data-story>
+          <div class="story-bar">
+            <p class="rc-bar-note">An example board. Three recruiters, three inboxes, nobody keying anything in.</p>
+            <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+          </div>
+          <div class="story-stage">
+            <article class="story-slide" data-slide>
+              <div class="story-mail">
+                <div class="rc-inboxes" aria-hidden="true">
+                  <span class="rc-inbox rc-maya"><i class="kit-face maya">M</i><span>Maya<b>’s Gmail</b></span></span>
+                  <span class="rc-inbox rc-theo"><i class="kit-face theo">T</i><span>Theo<b>’s Gmail</b></span></span>
+                  <span class="rc-inbox rc-priya"><i class="kit-face priya">P</i><span>Priya<b>’s Gmail</b></span></span>
+                </div>
+                <div class="story-ask" data-until="1"><p class="story-label">Maya asks Rally</p><p class="story-quote">“One board for the firm: who’s interviewing, who we placed this month, and whose candidate is whose.”</p></div>
+                <div class="story-burst rc-burst" data-at="1" data-until="2">
+                  <div class="story-email rc-in-theo"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Jen Wu, Kestrel Labs</p><p class="story-subject">Dev Shah: onsite Thursday at 1</p><p class="story-did">Added Dev Shah’s interview. Theo’s candidate.</p></div>
+                  <div class="story-email is-small rc-in-maya" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Maya’s inbox</p><p class="story-from">Building office</p><p class="story-subject">Parking passes for December</p><p class="rc-skip">Not for the board</p></div>
+                  <div class="story-email is-small rc-in-priya" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Priya’s inbox</p><p class="story-from">Payroll</p><p class="story-subject">Timesheets are due Friday</p><p class="rc-skip">Not for the board</p></div>
+                </div>
+                <div class="story-burst rc-burst" data-at="2" data-until="3">
+                  <div class="story-email rc-in-priya"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priya’s inbox</b></p><p class="story-from">Sam Ortiz</p><p class="story-subject">Thanks for reaching out, Priya</p><p class="story-did">Sam Ortiz is already Maya’s candidate. Flagged it.</p></div>
+                  <div class="story-email is-small rc-in-maya" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Maya’s inbox</p><p class="story-from">Calendar</p><p class="story-subject">Standup moved to 10</p><p class="rc-skip">Not for the board</p></div>
+                  <div class="story-email is-small rc-in-theo" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Theo’s inbox</p><p class="story-from">Accounts</p><p class="story-subject">Invoice 1184 was paid</p><p class="rc-skip">Not for the board</p></div>
+                </div>
+                <div class="story-burst rc-burst" data-at="3">
+                  <div class="story-email rc-in-maya"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Maya’s inbox</b></p><p class="story-from">Ana Ruiz</p><p class="story-subject">Offer signed. I start December 8</p><p class="story-did">Ana Ruiz is placed. Maya’s placement.</p></div>
+                  <div class="story-email is-small rc-in-theo" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Theo’s inbox</p><p class="story-from">IT support</p><p class="story-subject">Your password expires soon</p><p class="rc-skip">Not for the board</p></div>
+                  <div class="story-email is-small rc-in-priya" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->Priya’s inbox</p><p class="story-from">Newsletter</p><p class="story-subject">The hiring market this week</p><p class="rc-skip">Not for the board</p></div>
+                </div>
+              </div>
+              <div class="story-page rc-firm">
+                <div class="kit-head"><h3>The firm, November</h3><span class="kit-live">Updates itself from 3 inboxes <i class="kit-face maya" aria-hidden="true">M</i><i class="kit-face theo" aria-hidden="true">T</i><i class="kit-face priya" aria-hidden="true">P</i></span></div>
+                <div class="rc-firm-top">
+                  <p class="rc-firm-tally">
+                    <span class="rc-count" data-touch="3"><strong><span data-until="3">3</span><span data-at="3">4</span></strong> placed this month</span>
+                    <span class="rc-count" data-touch="1 3"><strong><span data-until="1">4</span><span data-at="1" data-until="3">5</span><span data-at="3">4</span></strong> in interviews</span>
+                  </p>
+                  <div class="rc-clash-slot">
+                    <p class="rc-clash-none" data-until="2">No candidate is hearing from two of you.</p>
+                    <p class="rc-clash" data-at="2"><span class="rc-clash-faces" aria-hidden="true"><i class="kit-face maya">M</i><i class="kit-face priya">P</i></span><span><strong>Sam Ortiz</strong> is hearing from Maya and Priya. Maya has had him since Nov 4.</span></p>
+                  </div>
+                </div>
+                <div class="rc-books">
+                  <section class="rc-book">
+                    <h4><i class="kit-face maya" aria-hidden="true">M</i>Maya</h4>
+                    <div class="rc-book-cols">
+                      <div class="rc-book-col">
+                        <p>In interviews</p>
+                        <div class="rc-chip" data-touch="2"><strong>Sam Ortiz</strong><span>Orbit Foods</span><em class="rc-also" data-at="2"><i class="kit-face priya" aria-hidden="true">P</i>Priya too</em></div>
+                        <div class="rc-chip" data-key="rc-firm-ana" data-until="3"><strong>Ana Ruiz</strong><span>Brightline</span></div>
+                      </div>
+                      <div class="rc-book-col rc-book-placed">
+                        <p>Placed</p>
+                        <div class="rc-chip"><strong>Lena Fox</strong><span>Acme Health</span></div>
+                        <div class="rc-chip" data-key="rc-firm-ana" data-at="3" data-touch="3"><strong>Ana Ruiz</strong><span>Starts Dec 8</span></div>
+                      </div>
+                    </div>
+                  </section>
+                  <section class="rc-book rc-book-grows">
+                    <h4><i class="kit-face theo" aria-hidden="true">T</i>Theo</h4>
+                    <div class="rc-book-cols">
+                      <div class="rc-book-col">
+                        <p>In interviews</p>
+                        <div class="rc-chip"><strong>Tom Baker</strong><span>Acme Health</span></div>
+                        <div class="rc-chip" data-at="1" data-touch="1"><strong>Dev Shah</strong><span>Kestrel, Thu 1pm</span></div>
+                      </div>
+                      <div class="rc-book-col rc-book-placed">
+                        <p>Placed</p>
+                        <div class="rc-chip"><strong>Noor Ali</strong><span>Northwind</span></div>
+                      </div>
+                    </div>
+                  </section>
+                  <section class="rc-book">
+                    <h4><i class="kit-face priya" aria-hidden="true">P</i>Priya</h4>
+                    <div class="rc-book-cols">
+                      <div class="rc-book-col">
+                        <p>In interviews</p>
+                        <div class="rc-chip"><strong>Iris Cole</strong><span>Brightline</span></div>
+                      </div>
+                      <div class="rc-book-col rc-book-placed">
+                        <p>Placed</p>
+                        <div class="rc-chip"><strong>Jo Park</strong><span>Bell &amp; Co</span></div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+        <p class="rc-firm-note">
+          Each recruiter connects their own Gmail and allows it. Nobody’s mail
+          is read until they do. Plans are priced per team, not per seat.
+        </p>
+      </section>
+
+      <!-- 5. No system to update. -->
+      <section class="rc-nosystem wrap" aria-labelledby="rc-nosystem-title">
+        <div class="rc-nosystem-copy">
+          <p class="eyebrow rc-eyebrow">No system to update</p>
+          <h2 id="rc-nosystem-title">You already did the data entry. It was the email.</h2>
+          <p>
+            You submit by email. They answer by email. That is everything
+            Rally needs. Candidates and clients keep emailing you the way they
+            do now, and every page above keeps itself current. Nobody on your
+            team has to open it and type.
+          </p>
+        </div>
+        <ul class="rc-chores" aria-label="Things nobody has to do">
+          <li><s>Log the submittal</s></li>
+          <li><s>Update the stage</s></li>
+          <li><s>Note when you last chased</s></li>
+          <li><s>Ask who owns a candidate</s></li>
+          <li><s>Refresh the page</s></li>
+        </ul>
+        <div class="rc-facts">
+          <article>
+            <h3>It sits on top of Gmail</h3>
+            <p>
+              Rally reads the mail where it is and adds one new window shaped
+              like your desk. Your inbox stays your inbox.
+            </p>
+          </article>
+          <article>
+            <h3>No ATS needed</h3>
+            <p>
+              Don’t have one, or stopped updating yours? You don’t need one
+              for this. If a client runs their hiring in Ashby, Rally connects
+              to that too.
+            </p>
+          </article>
+          <article>
+            <h3>It tracks the conversation</h3>
+            <p>
+              Rally does not find candidates for you and it does not read the
+              résumés attached to your mail. It keeps track of the
+              conversations you already have.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- 6. How to start: three stops. -->
+      <section class="rc-start wrap" id="start" aria-labelledby="rc-start-title">
+        <div class="rc-head">
+          <p class="eyebrow rc-eyebrow">How to start</p>
+          <h2 id="rc-start-title">Three stops. About five minutes.</h2>
+          <p>Nothing to install and nothing to import. You can do it between two calls.</p>
+        </div>
+        <ol class="rc-steps" role="list">
+          <li>
+            <span class="rc-step-n" aria-hidden="true">1</span>
+            <h3>Connect Gmail</h3>
+            <p>Sign up free and connect your Gmail. Google asks you to approve it once.</p>
+          </li>
+          <li>
+            <span class="rc-step-n" aria-hidden="true">2</span>
+            <h3>Say what you want to see</h3>
+            <p>One sentence, the way you’d say it to a colleague. Rally reads the mail and builds the page.</p>
+            <ul class="rc-asks">
+              <li>“Show me every intro I’ve made, by role, and whose reply I’m waiting on.”</li>
+              <li>“Track everyone I’ve submitted for the Acme designer role.”</li>
+              <li>“Who’s gone dark on me this week?”</li>
+            </ul>
+          </li>
+          <li>
+            <span class="rc-step-n rc-step-last" aria-hidden="true">3</span>
+            <h3>It keeps itself current</h3>
+            <p>
+              Every new email updates the page on its own. You never refresh
+              it or fill it in. Want it laid out differently? Say so, and
+              Rally changes it.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- 7. Email safety. -->
+      <section class="rc-safe wrap" aria-labelledby="rc-safe-title">
+        <div>
+          <p class="eyebrow rc-eyebrow">Before you connect</p>
+          <h2 id="rc-safe-title">Candidate mail is personal.</h2>
+        </div>
+        <div class="rc-safe-body">
+          <p>
+            So here is exactly what Rally does with it. It reads your mail
+            only after you connect Gmail yourself, and you can remove the
+            connection at any time. A page like the ones above only needs to
+            read. Rally changes nothing in your mailbox unless you ask it to,
+            such as writing a draft or sending a reply. It has no way to
+            delete mail for good.
+          </p>
+          <p>
+            You choose who can open a page. Keep it to yourself, share it
+            with a few colleagues, or open it to the whole firm. Rally has
+            completed an independent security assessment.
+          </p>
+          <a class="text-link rc-safe-link" href="/trust/security/">See our security controls <span aria-hidden="true"><!-- rally:arrow --></span></a>
+        </div>
+      </section>
+
+      <!-- 8. Other audiences. -->
+      <section class="rc-others wrap" aria-labelledby="rc-others-title">
+        <h2 id="rc-others-title">Not a recruiter? Rally builds other desks too.</h2>
+        <!-- rally:audience-others recruiters -->
+      </section>
+
+      <!-- 9. Closing call to action. -->
+      <section class="rc-close wrap" aria-labelledby="rc-close-title">
+        <div class="rc-close-track" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <p class="eyebrow rc-eyebrow">Five minutes from now</p>
+        <h2 id="rc-close-title">Know who owes you a reply.</h2>
+        <a
+          class="button primary"
+          data-site-action="web-app-template"
+          href="<!-- rally:audience-start recruiters -->"
+          >Connect your Gmail <span aria-hidden="true"><!-- rally:arrow --></span></a
+        >
+        <p class="trial-note">Free to start. No credit card needed.</p>
+      </section>
+    </main>
+    <!-- rally:site-footer -->
+  </body>
+</html>

@@ -579,7 +579,7 @@ main{counter-reset:fig}
 
 /* ---------------------------------------------------------------- Footer */
 .rally-footer{position:relative;margin-top:clamp(96px,12vw,160px);padding:56px var(--gutter) 0;border-top:1px solid var(--text);font-size:14px;color:var(--text-3);overflow:hidden}
-.footer-grid{max-width:calc(var(--max) - 2 * var(--gutter));margin:auto;display:grid;grid-template-columns:minmax(0,1.4fr) repeat(4,minmax(0,1fr));gap:40px}
+.footer-grid{max-width:calc(var(--max) - 2 * var(--gutter));margin:auto;display:grid;grid-template-columns:minmax(0,1.4fr) repeat(5,minmax(0,1fr));gap:32px}
 .footer-brand .wordmark{color:var(--text)}
 .footer-tagline{margin-top:16px;max-width:16rem;font-family:var(--display-font);font-size:22px;font-style:italic;line-height:1.15;color:var(--text-2)}
 .footer-heading{margin:0 0 16px;font-family:var(--mono);font-size:12px;font-weight:400;letter-spacing:.04em;color:var(--text)}

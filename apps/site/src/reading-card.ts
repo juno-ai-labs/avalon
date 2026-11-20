@@ -29,7 +29,7 @@ function illustration(scene: ReadingCard['scene']): Promise<Buffer> {
 }
 
 /** The line every card ends on, set flush right; the product's own words from the landing page. */
-const SIGN_OFF = 'Reactive artifacts, shared with your team.';
+const SIGN_OFF = 'Your inbox, as one page that updates itself.';
 
 const graphemes = new Intl.Segmenter('en', { granularity: 'grapheme' });
 

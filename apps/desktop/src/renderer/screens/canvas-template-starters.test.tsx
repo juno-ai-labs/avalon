@@ -108,13 +108,22 @@ describe("an empty Canvas's templates", () => {
     const starters = await screen.findByRole('region', { name: 'Start from a template' });
     const groups = within(starters).getByRole('group', { name: 'Template group' });
     expect(within(groups).getAllByRole('button').map((button) => button.textContent))
-      .toEqual(['Popular', 'Developers', 'Product managers', 'Parents', 'Recruiters']);
+      .toEqual([
+        'Popular', 'Wholesalers', 'Agencies', 'Legal teams', 'Accountants', 'Recruiters', 'Brokers', 'Event planners',
+        'Developers', 'Product managers', 'Parents',
+      ]);
     expect(within(groups).getByRole('button', { name: 'Popular', pressed: true })).toBeInTheDocument();
     expect(within(starters).getAllByRole('listitem').map((card) => card.textContent)).toEqual([
+      'Order boardTurn order emails into a board of what is new, quoted, confirmed and shipped.For wholesalers',
+      'Client wallSee which clients are waiting on you, and for how long.For agencies',
+      'Legal docketTrack every legal request by whose turn it is, and for how many days.For legal teams',
+      'Client document checklistTick off the documents each client owes you as they arrive by email.For accountants',
+      'Recruiting deskSee every intro between a candidate and a client, and whose reply it is waiting on.For recruiters',
+      'Today’s follow-upsA list of who is waiting on you today, new leads first.For brokers',
+      'Event countdownOne page for an event: every vendor’s state and what is due before the date.For event planners',
       'PR dashboardSee open pull requests and highlight the ones that have gone stale.For developers',
       'Granola feature requestsCollect requests from customer interviews and let your team vote.For product managers',
       'School notifications and calendarTurn school email into a notification list and calendar.For parents',
-      'Recruiting market mapResearch a hiring company and map relevant employers and teams.For recruiters',
     ]);
 
     fireEvent.click(within(groups).getByRole('button', { name: 'Parents' }));
@@ -125,6 +134,8 @@ describe("an empty Canvas's templates", () => {
   it("sends a picked template's prompt as the Chat's first message, and puts the templates away", async () => {
     renderCanvas();
     const starters = await screen.findByRole('region', { name: 'Start from a template' });
+    // Popular shows each group's first template; this one is its group's second.
+    fireEvent.click(within(starters).getByRole('button', { name: 'Recruiters' }));
     fireEvent.click(within(starters).getByRole('button', { name: /^Recruiting market map/u }));
 
     await waitFor(() => expect(createMessage).toHaveBeenCalledTimes(1));

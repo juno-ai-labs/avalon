@@ -57,8 +57,10 @@ On the Canvases dashboard, members open **Marketplace** from the header,
 beside **New Canvas**, including before they have made a Canvas. It replaces
 the page rather than filtering it: the heading becomes **Marketplace** with a
 **Canvases** button back, the search and filter row go, and the one row left
-picks from **Developers**, **Product managers**, **Parents**, and
-**Recruiters**, starting on **Developers**. Going back restores the previous
+picks a category, starting on the first. The categories are the audiences the
+public site has a page for (**Wholesalers**, **Agencies**, **Legal teams**,
+**Accountants**, **Recruiters**, **Brokers**, **Event planners**), then
+**Developers**, **Product managers** and **Parents**; the row wraps. Going back restores the previous
 filter and any unsent **Start from a prompt** text. At phone width, where the
 sheet's bar carries the title and New Canvas, the header still shows the
 Marketplace button, and the Marketplace's own title and way back.
@@ -493,6 +495,34 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-19 — A category per audience the site sells to, listed first
+
+**What changed:** The Marketplace gained six categories (Wholesalers, Agencies,
+Legal teams, Accountants, Brokers, Event planners) and seven templates that
+build a page from Gmail, one for each audience page on the public site
+(Recruiters already had a category). Those seven categories now come first, in
+the site's order, ahead of Developers, Product managers and Parents, so the
+Marketplace opens on Wholesalers and an empty Canvas's Popular row leads with
+the inbox templates.
+
+**Why:** The public site now sells one use, a page built from your inbox, to
+seven named audiences, and each audience page starts its own template
+([`site-audience-pages.md`](site-audience-pages.md)). The product owner asked
+for a category per audience, so each of them finds their own name in the app,
+and for those categories to lead.
+
+**Considered and rejected:** One "Your inbox" category holding all seven, which
+keeps the rows short but hides each audience behind a name none of them would
+look for. Templates reachable only by link, which leaves the app's Marketplace
+with nothing for the people the site is bringing in.
+
+**Consequences:** Ten categories: the category row wraps to two lines on a wide
+window and three on a phone, and Popular, one template per category, is ten
+cards and scrolls. A further category makes both longer. Popular shows each
+category's first template, so reorder a category's files with that in mind.
+An audience's site page starts the template its row in
+`apps/site/src/audiences.ts` names, whatever the order.
 
 ### 2026-11-12 — The Marketplace is a page, opened from the header
 

@@ -1,0 +1,1275 @@
+@import "../home.css";
+
+/*
+ * /for/accountants/: "the checklist". The page is laid out as a clean
+ * workpaper: a client-by-document grid in the hero, then the chase list, the
+ * deadline calendar and the practice view. Its motion is ticking off: a tick
+ * draws itself into its box, a client's meter fills one document at a time and
+ * settles into "Ready", a crossed-off line is ruled through, and a due date's
+ * chip flips to "Filed". Each example brings its mail in its own way: the
+ * hero's card floats down and dissolves over the checklist, the chase list
+ * keeps the shared flow, the calendar's cards cross left to right, and the
+ * practice view drops a card from each inbox, then three at once. story.ts
+ * keeps time; every rule here hangs off the classes it sets.
+ * Contract: docs/site-audience-pages.md.
+ */
+
+.ac-page {
+  --ac-rule: #e6e8dc; --ac-soft: #595e53; --ac-box: #cdd2c0; --ac-wash: #f4f6ec;
+}
+
+/* ---- Text the whole page shares ---- */
+
+.ac-page .eyebrow {
+  display: flex; align-items: center; gap: 9px; margin: 0 0 18px; color: var(--green);
+  letter-spacing: 0.03em;
+}
+
+/* An empty tick box leads each label, as on a checklist. */
+.ac-page .eyebrow::before {
+  content: ""; flex: none; width: 10px; height: 10px; border: 1.5px solid #91a577;
+  border-radius: 3px;
+}
+
+.ac-h2 {
+  max-width: 17em; font-family: var(--display-font); font-weight: 400; font-size: 56px;
+  letter-spacing: -0.03em; line-height: 1.03; text-wrap: balance;
+}
+
+.ac-p {
+  max-width: 46ch; font-size: 16px; line-height: 1.75; color: var(--ac-soft); text-wrap: pretty;
+}
+
+.ac-p + .ac-p {
+  margin-top: 14px;
+}
+
+.ac-fine {
+  max-width: 50ch; margin-top: 14px; font-size: 15px; line-height: 1.7; color: var(--muted);
+  text-wrap: pretty;
+}
+
+.ac-page .trial-note {
+  font-size: 12.5px;
+}
+
+/* ---- The hero: copy beside the checklist ---- */
+
+.ac-hero {
+  display: grid; grid-template-columns: minmax(0, 0.84fr) minmax(0, 1fr); gap: 64px;
+  align-items: start; padding-block: 36px 64px;
+}
+
+.ac-hero-copy {
+  padding-top: 46px;
+}
+
+.ac-hero h1 {
+  max-width: 7.2em; margin: 0; font-family: var(--display-font); font-weight: 400;
+  font-size: clamp(64px, 5.85vw, 84px); letter-spacing: -0.035em; line-height: 0.99; text-wrap: balance;
+}
+
+.ac-lede {
+  max-width: 27em; margin-top: 30px; font-size: 17px; line-height: 1.75; letter-spacing: -0.01em;
+  color: var(--ac-soft); text-wrap: pretty;
+}
+
+.ac-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; margin-top: 28px;
+}
+
+.ac-actions .text-link {
+  font-size: 14px;
+}
+
+.ac-hero-story {
+  min-width: 0;
+}
+
+/* ---- What every example on this page shares ---- */
+
+.ac-story .story-bar {
+  min-height: 34px; margin-bottom: 10px;
+}
+
+.ac-story-note {
+  font-size: 12.5px; color: var(--muted);
+}
+
+.ac-caption {
+  max-width: 60ch; margin-top: 12px; font-size: 14px; line-height: 1.6; color: var(--muted);
+  text-wrap: pretty;
+}
+
+.ac-story .story-ask {
+  border-style: dashed; border-color: #d4d9c8; background: #f8f8f1;
+}
+
+.ac-story .story-quote {
+  text-wrap: pretty;
+}
+
+/* What was attached, by its file name: all Rally has to go on. */
+.ac-files {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: 7px 0 0; padding: 0; list-style: none;
+}
+
+.ac-files li {
+  display: inline-flex; align-items: center; gap: 7px; border: 1px solid #dfe3d3;
+  border-radius: 6px; background: #f8f8f1; padding: 2px 8px 2px 8px; font-family: var(--mono);
+  font-size: 11.5px; line-height: 1.5; color: var(--ac-soft); overflow-wrap: anywhere;
+}
+
+/* A paperclip, near enough. */
+.ac-files li::before {
+  content: ""; flex: none; width: 5px; height: 10px; border: 1.5px solid #8f9e76;
+  border-radius: 3px; transform: rotate(38deg);
+}
+
+.ac-story .story-email.is-new .ac-files {
+  animation: story-fade 0.4s 0.3s both;
+}
+
+.ac-page .kit-head h2 {
+  font-family: var(--display-font); font-weight: 400; font-size: 25px; letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+/* The hero's mail floats down, slowly: the card tips in from above, then
+   drifts on toward the checklist and dissolves as its tick is drawn. */
+.ac-check .story-mail {
+  --ac-sink: 78px;
+}
+
+.ac-check .story-mail .is-new.story-email {
+  animation: ac-float-in 0.85s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.ac-check .story-mail .is-leaving.story-email {
+  animation: ac-float-out 1.9s cubic-bezier(0.4, 0, 0.75, 0.75) both;
+}
+
+@keyframes ac-float-in {
+  from { opacity: 0; transform: translateY(-36px) rotate(-1.4deg); }
+}
+
+@keyframes ac-float-out {
+  45% { opacity: 0.8; filter: blur(0); }
+  to { opacity: 0; transform: translateY(var(--ac-sink)) rotate(1.4deg) scale(0.95); filter: blur(4px); }
+}
+
+/* Under a page's title: what it lists, and the count that moves. */
+.ac-sub {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: 2px 14px; margin: -4px 0 12px; font-size: 12.5px; line-height: 1.5; color: var(--muted);
+}
+
+.ac-sub b {
+  display: inline-block; min-width: 0.7em; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ac-tally-line {
+  white-space: nowrap;
+}
+
+/* What an email touched glows once, softly. */
+.ac-page .story-page .is-touched {
+  animation: ac-glow 2s ease-out both;
+}
+
+@keyframes ac-glow {
+  0%, 35% { box-shadow: 0 0 0 4px #91a57759; }
+  100% { box-shadow: 0 0 0 4px #91a57700; }
+}
+
+/* ---- The tick: a box, and a pencil check that draws itself ---- */
+
+.ac-tick {
+  display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px;
+  border: 1.5px solid var(--ac-box); border-radius: 6px; background: var(--white);
+  vertical-align: middle;
+}
+
+.ac-tick svg {
+  width: 22px; height: 22px; overflow: visible; fill: none; stroke: var(--green);
+  stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* Hidden as well as undrawn: a round cap leaves a dot at the start of an empty dash. */
+.ac-tick path {
+  stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0;
+}
+
+.ac-tick.ac-in,
+.ac-tick.is-done,
+.story:not(.is-live) .ac-tick[data-done] {
+  border-color: #b4c09f; background: #eef2e3;
+}
+
+.ac-tick.ac-in path,
+.ac-tick.is-done path,
+.story:not(.is-live) .ac-tick[data-done] path {
+  stroke-dashoffset: 0; opacity: 1;
+}
+
+/* Only arriving is drawn. Rewinding the example clears a tick at once. */
+.story.is-live .ac-tick.is-done {
+  transition: border-color 0.5s ease 0.1s, background-color 0.5s ease 0.1s;
+}
+
+.story.is-live .ac-tick.is-done path {
+  transition: stroke-dashoffset 0.7s cubic-bezier(0.55, 0, 0.25, 1) 0.2s;
+}
+
+/* The second file in one email is ticked a beat after the first. */
+.story.is-live .ac-tick.ac-second.is-done path {
+  transition-delay: 0.75s;
+}
+
+/* Three emails at once tick in the order their cards landed. */
+.story.is-live .ac-tick.ac-beat2.is-done path {
+  transition-delay: 0.45s;
+}
+
+.story.is-live .ac-tick.ac-beat3.is-done path {
+  transition-delay: 0.7s;
+}
+
+.ac-tick.ac-sm {
+  width: 16px; height: 16px; border-radius: 4px;
+}
+
+.ac-tick.ac-sm svg {
+  width: 15px; height: 15px; stroke-width: 2.8;
+}
+
+.ac-na {
+  display: inline-block; width: 24px; font-size: 14px; line-height: 24px; color: #a4aa96;
+}
+
+/* ---- The checklist: clients down the side, what each owes across the top ---- */
+
+.ac-sheet {
+  width: 100%; border-collapse: collapse; table-layout: fixed;
+}
+
+.ac-sheet thead th {
+  padding: 0 2px 8px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; line-height: 1.3;
+  color: var(--muted); text-align: center;
+}
+
+.ac-sheet thead th:first-child {
+  width: 40%; padding-left: 10px; text-align: left;
+}
+
+.ac-sheet tbody th,
+.ac-sheet td {
+  border-top: 1px solid var(--ac-rule); vertical-align: middle;
+}
+
+.ac-sheet tbody th {
+  padding: 10px 8px 10px 10px; font-weight: 400; text-align: left;
+}
+
+.ac-sheet td {
+  padding: 8px 2px; text-align: center;
+}
+
+.ac-name {
+  display: block; font-size: 14px; font-weight: 600; line-height: 1.3;
+}
+
+/* One segment per document owed. It fills as the tick lands. */
+.ac-meter {
+  display: flex; gap: 3px; max-width: 132px; margin-top: 7px;
+}
+
+.ac-meter.ac-three {
+  max-width: 98px;
+}
+
+.ac-meter i {
+  position: relative; flex: 1; height: 4px; overflow: hidden; border-radius: 2px; background: #e4e6da;
+}
+
+.ac-meter i::before {
+  content: ""; position: absolute; inset: 0; border-radius: 2px; background: #8f9e76;
+  transform: scaleX(0); transform-origin: left;
+}
+
+.ac-meter i.ac-in::before,
+.ac-meter i.is-done::before,
+.story:not(.is-live) .ac-meter i[data-done]::before {
+  transform: none;
+}
+
+.story.is-live .ac-meter i.is-done::before {
+  transition: transform 0.7s cubic-bezier(0.3, 0.7, 0.2, 1) 0.6s;
+}
+
+.story.is-live .ac-meter i.is-done + i.is-done::before {
+  transition-delay: 1.1s;
+}
+
+.ac-state {
+  display: block; min-height: 20px; margin-top: 5px; font-size: 11.5px; line-height: 20px;
+  color: var(--muted);
+}
+
+/* A row with everything in: the meter turns to ink and the row settles into "Ready". */
+.ac-ready {
+  display: inline-block; border-radius: 999px; background: var(--green); padding: 0 9px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; line-height: 20px; color: var(--paper);
+}
+
+.ac-sheet tr.is-done > *,
+.story:not(.is-live) .ac-sheet tr[data-done] > * {
+  background: var(--ac-wash);
+}
+
+.ac-sheet tr.is-done .ac-meter i::before,
+.story:not(.is-live) .ac-sheet tr[data-done] .ac-meter i::before {
+  background: var(--green);
+}
+
+.story.is-live .ac-sheet tr.is-done > * {
+  transition: background-color 0.8s ease 1.1s;
+}
+
+.ac-page .story-page .ac-ready.is-new {
+  animation: ac-settle 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) 1.2s both;
+}
+
+/* A count that changes only swaps: no pop. */
+.ac-page .story-page .ac-state > [data-at].is-new:not(.ac-ready),
+.ac-page .story-page .ac-sub [data-at].is-new {
+  animation: story-fade 0.5s both;
+}
+
+@keyframes ac-settle {
+  0% { opacity: 0; transform: translateY(-5px) scale(1.12); }
+  60% { opacity: 1; transform: translateY(1px) scale(0.985); }
+  100% { opacity: 1; transform: none; }
+}
+
+/* ---- Who to chase ---- */
+
+.ac-chase {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.78fr); gap: 76px;
+  align-items: start; padding-block: 56px 30px;
+}
+
+/* The example sits on the left here; the words still come first in the page's order. */
+.ac-chase-story {
+  order: -1; min-width: 0;
+}
+
+.ac-chase-copy {
+  padding-top: 44px;
+}
+
+.ac-chase-copy .ac-h2 {
+  margin-bottom: 24px;
+}
+
+/* The point this reader came for, set apart. */
+.ac-note {
+  max-width: 30em; margin-top: 26px; border-left: 2px solid #91a577; padding: 2px 0 2px 18px;
+}
+
+.ac-note h3 {
+  font-family: var(--display-font); font-weight: 400; font-size: 26px; letter-spacing: -0.02em;
+  line-height: 1.12; text-wrap: balance;
+}
+
+.ac-note p {
+  margin-top: 8px; font-size: 15.5px; line-height: 1.7; color: var(--ac-soft); text-wrap: pretty;
+}
+
+.ac-chase-list {
+  margin: 0; padding: 0; list-style: none;
+}
+
+.ac-chase-list > li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px 12px;
+  border-top: 1px solid var(--ac-rule); border-radius: 6px; padding: 12px 8px;
+}
+
+/* The name and the count share a line; what is owed runs the full width under them. */
+.ac-who {
+  display: contents;
+}
+
+.ac-who strong {
+  grid-area: 1 / 1; font-size: 14px; font-weight: 600; line-height: 1.6;
+}
+
+.ac-chase-list > li > .ac-asked {
+  grid-area: 1 / 2;
+}
+
+.ac-owes {
+  grid-area: 2 / 1 / auto / -1; display: flex; flex-wrap: wrap; gap: 5px 14px; margin: 0; padding: 0;
+  list-style: none;
+}
+
+.ac-owes li {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 13px; line-height: 1.4;
+  color: var(--ac-soft);
+}
+
+/* A document that arrived is ruled through, left to right. */
+.ac-owes li > span:not(.kit-sr) {
+  position: relative;
+}
+
+.ac-owes li > span:not(.kit-sr)::after {
+  content: ""; position: absolute; left: -2px; right: -2px; top: 54%; height: 1.5px;
+  border-radius: 1px; background: #7c8c66; transform: scaleX(0); transform-origin: left;
+}
+
+.ac-owes li.is-done > span:not(.kit-sr)::after,
+.story:not(.is-live) .ac-owes li[data-done] > span:not(.kit-sr)::after {
+  transform: none;
+}
+
+.ac-owes li.is-done,
+.story:not(.is-live) .ac-owes li[data-done] {
+  color: #8b917f;
+}
+
+.story.is-live .ac-owes li.is-done {
+  transition: color 0.6s ease 0.9s;
+}
+
+.story.is-live .ac-owes li.is-done > span:not(.kit-sr)::after {
+  transition: transform 0.6s cubic-bezier(0.55, 0, 0.25, 1) 0.85s;
+}
+
+/* How many times you have asked, as tally strokes. */
+.ac-asked {
+  display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; background: #eeeee6;
+  padding: 3px 10px; font-size: 11.5px; font-weight: 500; line-height: 1.4; color: #5f6556;
+  white-space: nowrap;
+}
+
+.ac-asked.ac-twice {
+  background: #f3ead0; color: #6b5a1f;
+}
+
+.ac-asked.ac-thrice {
+  background: var(--peach); color: #8a4a26;
+}
+
+.ac-asked.ac-you {
+  background: var(--lilac); color: #5b4a68;
+}
+
+.ac-asked.ac-all {
+  background: var(--sage); color: var(--green);
+}
+
+.ac-marks {
+  display: inline-flex; gap: 3px;
+}
+
+.ac-marks b {
+  width: 1.5px; height: 11px; border-radius: 1px; background: currentColor; transform: rotate(9deg);
+}
+
+/* The reminder Rally wrote, where the client is. */
+.ac-draft {
+  grid-column: 1 / -1; border-left: 2px solid #b4c09f; border-radius: 0 8px 8px 0;
+  background: #f6f7ef; padding: 8px 12px 9px;
+}
+
+.ac-draft-label {
+  font-size: 11.5px; font-weight: 600; line-height: 1.4; color: var(--green);
+}
+
+.ac-draft-text {
+  margin-top: 3px; font-family: var(--display-font); font-style: italic; font-size: 17.5px;
+  line-height: 1.28; color: #4c5540; text-wrap: pretty;
+}
+
+.ac-asks {
+  grid-column: 1 / -1; font-size: 13px; line-height: 1.5; color: #5b4a68; text-wrap: pretty;
+}
+
+.ac-page .story-page .ac-draft.is-new,
+.ac-page .story-page .ac-asks.is-new {
+  animation: ac-unfold 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.45s both;
+}
+
+.ac-page .story-page .ac-asked.is-new {
+  animation: story-fade 0.6s both;
+}
+
+.ac-chase-list > li.is-done,
+.story:not(.is-live) .ac-chase-list > li[data-done] {
+  opacity: 0.62;
+}
+
+.story.is-live .ac-chase-list > li.is-done {
+  transition: opacity 0.9s ease 1.8s;
+}
+
+@keyframes ac-unfold {
+  from { opacity: 0; transform: translateY(-6px); }
+}
+
+/* ---- What is due: the calendar ---- */
+
+.ac-due {
+  padding-block: 90px 30px;
+}
+
+.ac-due-head {
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 20px 70px;
+  align-items: end; margin-bottom: 40px;
+}
+
+.ac-due-head .ac-h2 {
+  max-width: 12em;
+}
+
+/* The calendar's mail crosses: in from the left, then on to the right along
+   the top of the month, farther where there is room, and gone. */
+.ac-cal .story-mail {
+  --ac-cross: 17rem;
+}
+
+.ac-cal .story-mail[data-flow="across"] .is-new.story-email {
+  animation: ac-cross-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.ac-cal .story-mail[data-flow="across"] .is-leaving.story-email {
+  animation: ac-cross-out 1.4s cubic-bezier(0.45, 0, 0.7, 0.7) both;
+}
+
+@keyframes ac-cross-in {
+  from { opacity: 0; transform: translateX(-72px); }
+}
+
+@keyframes ac-cross-out {
+  40% { opacity: 0.85; filter: blur(0); }
+  to { opacity: 0; transform: translateX(var(--ac-cross)) scale(0.97); filter: blur(3px); }
+}
+
+.ac-dow {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 5px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; line-height: 1.4; color: var(--muted);
+}
+
+.ac-dow span {
+  padding-left: 9px;
+}
+
+.ac-month {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; padding: 0;
+  border-top: 1px solid var(--ac-rule); border-left: 1px solid var(--ac-rule); list-style: none;
+}
+
+.ac-month > li {
+  display: grid; align-content: start; gap: 5px; min-width: 0; min-height: 68px;
+  border-right: 1px solid var(--ac-rule); border-bottom: 1px solid var(--ac-rule); padding: 7px 7px 8px;
+}
+
+.ac-month time {
+  justify-self: start; min-width: 24px; font-family: var(--display-font); font-size: 18px;
+  line-height: 24px; color: #60694f;
+}
+
+.ac-month .ac-out time {
+  color: #b3b8a6;
+}
+
+.ac-month .ac-today {
+  grid-template-columns: auto minmax(0, 1fr); column-gap: 7px; background: #fbfaf2;
+}
+
+.ac-month .ac-today time {
+  border-radius: 12px; background: var(--green); padding: 0 6px; color: var(--paper);
+  text-align: center;
+}
+
+.ac-today-word {
+  align-self: center; font-size: 11.5px; font-weight: 600; line-height: 1.4; color: var(--green);
+}
+
+/* A due date on its day. Open is paper and a ring; filed is sage and a tick. */
+.ac-chip {
+  display: flex; align-items: flex-start; gap: 7px; min-width: 0; border: 1px solid #eadfc4;
+  border-radius: 7px; background: #fbf6e7; padding: 5px 9px 5px 7px; transform-origin: 50% 0;
+}
+
+.ac-chip.ac-filed {
+  border-color: #cfd7c2; background: var(--sage);
+}
+
+.ac-chip .ac-tick,
+.ac-ring {
+  margin-top: 1px;
+}
+
+.ac-chip .ac-tick {
+  border-color: transparent; background: none;
+}
+
+.ac-ring {
+  flex: none; width: 16px; height: 16px; border: 1.5px solid #c9b77f; border-radius: 50%;
+}
+
+/* One line where the day is wide enough; it wraps on its own where it is not. */
+.ac-chip-text {
+  display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; gap: 0 6px; min-width: 0;
+  font-size: 12.5px; line-height: 1.45; color: var(--ac-soft);
+}
+
+.ac-chip-text b {
+  font-weight: 600; color: var(--ink);
+}
+
+.ac-chip-text em {
+  margin-left: auto; font-style: normal; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em;
+  color: #6b5a1f;
+}
+
+.ac-filed .ac-chip-text em {
+  color: var(--green);
+}
+
+/* The flip: a filed chip swings down from its top edge, then its tick is drawn. */
+.ac-page .story-page .ac-chip.is-new {
+  animation: ac-flip 0.75s cubic-bezier(0.25, 0.8, 0.25, 1) both, ac-glow 2.2s ease-out 0.4s both;
+}
+
+.ac-page .story-page .ac-chip.is-new .ac-tick path {
+  animation: ac-draw 0.7s cubic-bezier(0.55, 0, 0.25, 1) 0.6s both;
+}
+
+.ac-page .story-page .ac-flap.is-new {
+  animation: ac-flip 0.75s cubic-bezier(0.25, 0.8, 0.25, 1) both; transform-origin: 50% 0;
+}
+
+@keyframes ac-flip {
+  from { opacity: 0.3; transform: perspective(320px) rotateX(-90deg); }
+  to { opacity: 1; transform: perspective(320px) rotateX(0deg); }
+}
+
+@keyframes ac-draw {
+  0% { stroke-dashoffset: 1; opacity: 0; }
+  1% { stroke-dashoffset: 1; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 1; }
+}
+
+/* The dates as a list: narrow screens only. */
+.ac-agenda {
+  display: none; margin: 14px 0 0; padding: 0; list-style: none;
+}
+
+.ac-agenda > li {
+  display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  border-top: 1px solid var(--ac-rule); border-radius: 6px; padding: 7px 4px;
+}
+
+.ac-agenda time {
+  font-family: var(--display-font); font-size: 16px; line-height: 1.2; color: #60694f;
+}
+
+.ac-agenda li > span {
+  font-size: 13px; line-height: 1.4; color: var(--ac-soft);
+}
+
+.ac-agenda b {
+  font-weight: 600; color: var(--ink);
+}
+
+.ac-agenda em {
+  font-style: normal;
+}
+
+/* ---- The whole practice ---- */
+
+.ac-firm {
+  display: grid; grid-template-columns: minmax(0, 0.78fr) minmax(0, 1fr); gap: 76px;
+  align-items: start; padding-block: 100px 30px;
+}
+
+.ac-firm-copy {
+  padding-top: 44px;
+}
+
+.ac-firm-copy .ac-h2 {
+  margin-bottom: 24px;
+}
+
+.ac-firm-story {
+  min-width: 0;
+}
+
+/* Whose inbox, whose client: an initial, never smaller than the rest of an example's text. */
+.ac-page .kit-face {
+  width: 22px; height: 22px; font-size: 11.5px;
+}
+
+.ac-page .kit-live .kit-face {
+  width: 19px; height: 19px;
+}
+
+.kit-face.ac-dana {
+  background: #ead8c6; color: #5d5346;
+}
+
+.kit-face.ac-marcus {
+  background: #d5dfe2; color: #44555a;
+}
+
+.kit-face.ac-priti {
+  background: #e4d6e6; color: #5a4a5e;
+}
+
+/* The practice view's mail: three inboxes side by side, and each email
+   drops from its own. One on a quiet morning, then one into each at once. */
+.ac-firm-story {
+  container-type: inline-size;
+}
+
+.ac-desk .story-mail {
+  grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 8px;
+}
+
+.ac-desk .story-mail > * {
+  grid-column: 1 / -1;
+}
+
+.ac-desk .story-mail > .ac-to-marcus {
+  grid-column: 2;
+}
+
+/* The rail keeps its own row; the ask and the emails share the one beneath. */
+.ac-desk.story.is-live .story-mail > .ac-rail {
+  grid-area: 1 / 1 / auto / -1;
+}
+
+.ac-desk.story.is-live .story-mail > :not(.ac-rail) {
+  grid-area: 2 / 1 / auto / -1;
+}
+
+.ac-desk.story.is-live .story-mail > .ac-to-marcus {
+  grid-area: 2 / 2;
+}
+
+/* The inboxes that feed the page. One lights up while its email is landing. */
+.ac-rail {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 8px;
+  justify-items: start; margin: 0 0 8px; padding: 0; list-style: none;
+}
+
+.ac-inbox {
+  display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line);
+  border-radius: 999px; padding: 4px 12px 4px 5px; font-size: 12.5px; line-height: 1.4;
+  color: var(--muted); transition: background-color 0.4s ease, border-color 0.4s ease, color 0.4s ease;
+}
+
+.ac-desk .story-mail:has(.ac-to-marcus.is-new) .ac-inbox.ac-marcus,
+.ac-desk .story-mail:has(.ac-burst.is-new) .ac-inbox {
+  border-color: #91a577; background: var(--sage); color: var(--green);
+}
+
+.ac-desk .story-burst {
+  display: block;
+}
+
+.ac-trio {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 8px; align-items: start;
+}
+
+.ac-desk .story-label {
+  flex-wrap: wrap; row-gap: 0;
+}
+
+.ac-desk .story-mail .is-new.story-email,
+.ac-desk .story-mail .is-new .story-email {
+  animation: ac-drop-in 0.62s cubic-bezier(0.2, 0.8, 0.2, 1) both; transform-origin: 50% 0;
+}
+
+.ac-desk .story-mail .is-leaving.story-email,
+.ac-desk .story-mail .is-leaving .story-email {
+  animation: ac-drop-out 1.15s cubic-bezier(0.45, 0, 0.75, 0.6) both;
+}
+
+.ac-desk .ac-trio > .story-email:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.ac-desk .ac-trio > .story-email:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes ac-drop-in {
+  from { opacity: 0; transform: translateY(-26px) scale(0.9); }
+}
+
+@keyframes ac-drop-out {
+  to { opacity: 0; transform: translateY(46px) scale(0.94); filter: blur(3px); }
+}
+
+/* Where three cards cannot stand side by side, they stack, each cut down to
+   three short lines, and the inboxes sit in a row above them. */
+@container (max-width: 520px) {
+  .ac-desk .story-mail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ac-desk .story-mail > .ac-to-marcus,
+  .ac-desk.story.is-live .story-mail > .ac-to-marcus {
+    grid-column: 1;
+  }
+
+  .ac-rail {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+
+  .ac-trio {
+    grid-template-columns: minmax(0, 1fr); row-gap: 5px;
+  }
+
+  .ac-trio > .story-email {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline;
+    padding: 7px 13px 8px;
+  }
+
+  .ac-trio .story-label,
+  .ac-trio .story-from {
+    grid-column: 1 / -1;
+  }
+
+  .ac-trio .story-from {
+    margin-top: 2px;
+  }
+
+  .ac-trio .story-did {
+    margin: 0; border: 0; padding: 0;
+  }
+}
+
+.ac-client {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 9px; align-items: center;
+}
+
+.ac-client .kit-face {
+  grid-row: 1 / 3; width: 24px; height: 24px;
+}
+
+.ac-sheet-firm .ac-state {
+  margin-top: 2px;
+}
+
+/* ---- Busy season ---- */
+
+.ac-season {
+  margin-top: 100px; border-radius: 28px 16px 26px 18px; background: #eef0e1; padding: 58px 60px 56px;
+}
+
+.ac-season-head {
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 0 60px;
+  align-items: end;
+}
+
+.ac-season-head .eyebrow {
+  grid-column: 1 / -1;
+}
+
+.ac-season-head .ac-h2 {
+  max-width: 13em;
+}
+
+.ac-season-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; margin-top: 46px;
+}
+
+.ac-season-grid article {
+  border-top: 1px solid #d3d9c2; padding-top: 20px;
+}
+
+.ac-season-grid h3,
+.ac-steps h3 {
+  font-family: var(--display-font); font-weight: 400; font-size: 29px; letter-spacing: -0.02em;
+  line-height: 1.1; text-wrap: balance;
+}
+
+.ac-season-grid p,
+.ac-steps p {
+  max-width: 36ch; margin-top: 12px; font-size: 15.5px; line-height: 1.75; color: var(--ac-soft);
+  text-wrap: pretty;
+}
+
+/* ---- How to start ---- */
+
+.ac-start {
+  padding-block: 100px 30px;
+}
+
+.ac-steps {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; margin: 44px 0 0;
+  padding: 0; list-style: none;
+}
+
+.ac-steps > li {
+  border-top: 1px solid var(--line); padding-top: 20px;
+}
+
+.ac-steps h3 {
+  margin-top: 10px;
+}
+
+/* What a bookkeeper would type. */
+.ac-says {
+  display: grid; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none;
+}
+
+.ac-says li {
+  max-width: 30em; border: 1px dashed #d4d9c8; border-radius: 10px; background: #f8f8f1;
+  padding: 9px 13px; font-family: var(--display-font); font-style: italic; font-size: 18.5px;
+  line-height: 1.3; color: #4c5540; text-wrap: pretty;
+}
+
+/* ---- Your clients' mail ---- */
+
+.ac-mail {
+  display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr); gap: 76px;
+  align-items: start; padding-block: 100px 30px;
+}
+
+.ac-mail-copy .ac-h2 {
+  margin-bottom: 24px;
+}
+
+.ac-link {
+  margin-top: 20px; font-size: 15px; color: var(--green);
+}
+
+.ac-ledger {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
+}
+
+.ac-can,
+.ac-cannot {
+  border: 1px solid #d4d9c8; border-radius: 12px; background: var(--white); padding: 20px 20px 22px;
+}
+
+.ac-ledger h3 {
+  font-family: var(--display-font); font-weight: 400; font-size: 27px; letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.ac-ledger ul {
+  display: grid; gap: 12px; margin: 16px 0 0; padding: 0; list-style: none;
+}
+
+.ac-ledger li {
+  position: relative; padding-left: 28px; font-size: 15px; line-height: 1.6; color: var(--ac-soft);
+  text-wrap: pretty;
+}
+
+.ac-ledger li::before {
+  content: ""; position: absolute; left: 0; top: 4px; width: 16px; height: 16px; border-radius: 4px;
+  border: 1.5px solid #b4c09f; background: #eef2e3;
+}
+
+/* A tick for what it can do, a rule through for what it does not. */
+.ac-can li::after {
+  content: ""; position: absolute; left: 5.5px; top: 6px; width: 4px; height: 8px;
+  border: solid var(--green); border-width: 0 2px 2px 0; transform: rotate(40deg);
+}
+
+.ac-cannot li::before {
+  border-color: #dccbbb; background: #f8efe7;
+}
+
+.ac-cannot li::after {
+  content: ""; position: absolute; left: 4.5px; top: 12px; width: 10px; height: 2px;
+  border-radius: 1px; background: #8a4a26;
+}
+
+.ac-ledger-note {
+  grid-column: 1 / -1; max-width: 58ch; margin-top: 6px; font-size: 15px; line-height: 1.7;
+  color: var(--muted); text-wrap: pretty;
+}
+
+/* ---- The other audiences, and the close ---- */
+
+.ac-others {
+  padding-block: 90px 10px;
+}
+
+.ac-others h2 {
+  max-width: 24em; margin-bottom: 20px; font-family: var(--display-font); font-weight: 400;
+  font-size: 30px; letter-spacing: -0.02em; line-height: 1.15; text-wrap: balance;
+}
+
+.ac-closer {
+  display: grid; justify-items: center; padding-block: 100px 90px; text-align: center;
+}
+
+.ac-closer .ac-h2 {
+  max-width: 12em; margin-bottom: 30px; font-size: 64px;
+}
+
+/* ---- Narrower ---- */
+
+@media (max-width: 1150px) {
+  .ac-hero {
+    gap: 40px;
+  }
+
+  .ac-hero h1 {
+    font-size: 62px;
+  }
+
+  .ac-h2 {
+    font-size: 48px;
+  }
+
+  .ac-chase,
+  .ac-firm,
+  .ac-mail {
+    gap: 44px;
+  }
+
+  .ac-season {
+    padding: 44px 40px;
+  }
+
+  .ac-season-grid,
+  .ac-steps {
+    gap: 28px;
+  }
+
+  .ac-closer .ac-h2 {
+    font-size: 56px;
+  }
+}
+
+@media (max-width: 900px) {
+  .ac-hero,
+  .ac-chase,
+  .ac-firm,
+  .ac-mail {
+    grid-template-columns: minmax(0, 1fr); gap: 34px;
+  }
+
+  .ac-hero-copy,
+  .ac-chase-copy,
+  .ac-firm-copy {
+    padding-top: 0;
+  }
+
+  .ac-chase-story {
+    order: 0;
+  }
+
+  .ac-due-head,
+  .ac-season-head {
+    grid-template-columns: minmax(0, 1fr); gap: 0;
+  }
+
+  .ac-due-head .ac-h2,
+  .ac-season-head .ac-h2 {
+    margin-bottom: 22px;
+  }
+
+  .ac-cal .story-mail {
+    --ac-cross: 9rem;
+  }
+
+
+  .ac-season-grid,
+  .ac-steps {
+    grid-template-columns: minmax(0, 1fr); gap: 26px;
+  }
+
+  .ac-season-grid p,
+  .ac-steps p {
+    max-width: 52ch;
+  }
+
+  .ac-p,
+  .ac-lede {
+    max-width: 56ch;
+  }
+}
+
+@media (max-width: 650px) {
+  /* The header's links hang into the top of the hero on a phone. */
+  .ac-hero {
+    padding-block: 84px 50px;
+  }
+
+  .ac-hero h1 {
+    font-size: 50px;
+  }
+
+  .ac-lede {
+    margin-top: 24px; font-size: 16px;
+  }
+
+  .ac-h2 {
+    font-size: 39px;
+  }
+
+  .ac-chase {
+    padding-block: 40px 20px;
+  }
+
+  .ac-due,
+  .ac-firm,
+  .ac-start,
+  .ac-mail {
+    padding-block: 64px 20px;
+  }
+
+  .ac-due-head {
+    margin-bottom: 28px;
+  }
+
+  .ac-sheet thead th {
+    padding-inline: 0; letter-spacing: 0;
+  }
+
+  .ac-sheet thead th:first-child {
+    width: 36%; padding-left: 6px;
+  }
+
+  .ac-sheet-firm thead th:first-child {
+    width: 44%;
+  }
+
+  .ac-sheet tbody th {
+    padding: 9px 4px 9px 6px;
+  }
+
+  .ac-name {
+    font-size: 13.5px;
+  }
+
+  .ac-client {
+    column-gap: 7px;
+  }
+
+  .ac-client .kit-face {
+    width: 22px; height: 22px;
+  }
+
+  .ac-chase-list > li {
+    padding: 11px 4px;
+  }
+
+  .ac-draft-text {
+    font-size: 16.5px;
+  }
+
+  /* The month keeps its shape and loses its words: a ring or a tick on the
+     day, with the dates listed beneath. The fortnight already past goes. */
+  .ac-month .ac-early {
+    display: none;
+  }
+
+  .ac-month > li {
+    grid-template-columns: repeat(3, auto); justify-content: start; align-items: center; gap: 4px;
+    min-height: 54px; padding: 5px;
+  }
+
+  .ac-month time {
+    grid-column: 1 / -1; font-size: 16px; line-height: 22px;
+  }
+
+  .ac-month .ac-today {
+    grid-template-columns: repeat(3, auto); background: #fbfaf2;
+  }
+
+  .ac-today-word,
+  .ac-chip-text {
+    display: none;
+  }
+
+  .ac-chip {
+    border: 0; background: none; padding: 0;
+  }
+
+  .ac-chip.ac-filed .ac-tick {
+    border-color: #b4c09f; background: #eef2e3;
+  }
+
+  .ac-dow span {
+    padding-left: 5px;
+  }
+
+  .ac-agenda {
+    display: block;
+  }
+
+  .ac-check .story-mail {
+    --ac-sink: 46px;
+  }
+
+  .ac-cal .story-mail {
+    --ac-cross: 5rem;
+  }
+
+  .ac-inbox {
+    gap: 5px; padding: 3px 8px 3px 3px; font-size: 11.5px;
+  }
+
+  .ac-inbox .kit-face {
+    width: 20px; height: 20px;
+  }
+
+  .ac-season {
+    width: calc(100% - 24px); margin-top: 64px; padding: 34px 20px 36px;
+  }
+
+  .ac-season-grid {
+    margin-top: 32px;
+  }
+
+  .ac-season-grid h3,
+  .ac-steps h3 {
+    font-size: 26px;
+  }
+
+  .ac-steps {
+    margin-top: 30px;
+  }
+
+  .ac-ledger {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ac-others {
+    padding-block: 64px 0;
+  }
+
+  .ac-others h2 {
+    font-size: 26px;
+  }
+
+  .ac-closer {
+    padding-block: 70px 60px;
+  }
+
+  .ac-closer .ac-h2 {
+    font-size: 38px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ac-page .story-page .is-touched,
+  .ac-page .story-page .is-new,
+  .ac-page .story-page .is-new *,
+  .ac-story .story-email.is-new .ac-files {
+    animation: none !important;
+  }
+}

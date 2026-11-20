@@ -63,10 +63,10 @@ Tagged links on the landing page, by `data-site-action` id:
 
 | Id | Link | Action · placement |
 | --- | --- | --- |
-| `sign-in-header` | Homepage Open Rally link; rolling sign-in button on the supporting pages | primary_cta · header |
-| `web-app-hero` | Homepage Get started for free and closing invitation (app.rallywith.ai); primary web entry in `/start-fast/` | secondary_cta · hero |
+| `sign-in-header` | Open Rally link in the pencil pages' header (homepage, audience pages, marketplace); rolling sign-in button on the supporting pages | primary_cta · header |
+| `web-app-hero` | Homepage Connect your Gmail and closing invitation (app.rallywith.ai); the sign-up buttons on `/developer-mode/`; primary web entry in `/start-fast/` | secondary_cta · hero |
 | `web-app-offer` | Homepage inline browser-entry link under pricing; retains the historical offer action | primary_cta · offer |
-| `web-app-template` | Each `/marketplace/` card's Start from this, the template's link on the web app (`/app/templates/<slug>`) | primary_cta · body |
+| `web-app-template` | Each `/marketplace/` card's Start from this, and every sign-up button on an audience page (`/for/<slug>/`), each the link of a template on the web app (`/app/templates/<slug>`) | primary_cta · body |
 | `download-hero` | Homepage macOS text link; desktop download button on `/start-fast/` | download · hero |
 | `download-linux-hero` | Homepage Linux (.deb) text link; desktop download button on `/start-fast/` | download · hero |
 | `download-pricing-start` / `-grow` / `-max` / `-ultra` | Start for free and paid-plan Start free trial buttons | download · pricing · plan |
@@ -88,6 +88,15 @@ keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
 The homepage has no offer card; `web-app-offer` identifies its inline browser-entry link under pricing.
+
+Each audience page at `/for/<slug>/` counts as page class `landing` with its own
+`$pathname`, so which audience a visit or a sign-up click came from is read from
+the path, and the signup that follows is joined to it by `flowId`. Its sign-up
+buttons are `web-app-template` links to that audience's Marketplace template
+(`template` in `apps/site/src/audiences.ts`), so the person arrives in a Canvas
+that has already asked Rally for their page. The pages add no action ids of
+their own. The audience pages do not run Apollo; adding them means `runsApollo`
+and the landing-only CSP, as for any new landing variant.
 
 Not reported as site events: scrolling, section views, header nav clicks, the
 "See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page

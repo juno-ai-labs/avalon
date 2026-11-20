@@ -1,0 +1,1262 @@
+@import "../home.css";
+
+/*
+ * /for/wholesalers/ — "the counter". A short headline across the top, the order
+ * board at full width, then one order's ticket followed down its rail, the
+ * quotes going cold, and the supplier side. Motion is things travelling:
+ * emails arrive as little Gmail cards, move on and dissolve (a different way
+ * in each example), cards slide between columns (the player's data-key), the
+ * ticket slides along its rail, and totals tick over. Brisk, no bounce.
+ * Contract: docs/site-audience-pages.md.
+ */
+
+.wh-page {
+  --wh-rule: #dcddcf; --wh-sunk: #f6f6ee; --wh-edge: #e0e3d6; --wh-soft: #595e53;
+  --wh-manila: #f8f2de; --wh-manila-edge: #e2d7b1; --wh-rust: #8a4a26;
+  --wh-move: cubic-bezier(0.5, 0, 0.15, 1);
+}
+
+.wh-page h2,
+.wh-page h3,
+.wh-page h4 {
+  margin: 0;
+}
+
+.wh-page p {
+  text-wrap: pretty;
+}
+
+.wh-page h3 {
+  text-wrap: balance;
+}
+
+.wh-eyebrow {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--green);
+}
+
+.wh-page .trial-note {
+  font-size: 13px;
+}
+
+/* ---- Hero: the headline across the top, the board beneath ---- */
+
+.wh-hero {
+  padding-top: 22px; padding-bottom: 8px;
+}
+
+.wh-hero h1 {
+  margin-top: 16px; font-family: var(--display-font); font-weight: 400; letter-spacing: -0.035em;
+  line-height: 1; font-size: clamp(44px, 4.7vw, 68px); text-wrap: balance;
+}
+
+.wh-hero-say {
+  display: grid; grid-template-columns: minmax(0, 40em) auto; justify-content: space-between;
+  align-items: end; gap: 22px 48px; margin-top: 22px;
+}
+
+.wh-lede {
+  font-size: 17.5px; line-height: 1.65; letter-spacing: -0.01em; color: var(--wh-soft);
+}
+
+.wh-actions {
+  display: grid; justify-items: start;
+}
+
+.wh-counter {
+  margin-top: 30px;
+}
+
+.wh-bar-note {
+  flex: 1; min-width: 0; font-size: 14px; line-height: 1.4; color: var(--muted);
+}
+
+.wh-page .story-bar {
+  margin-bottom: 8px;
+}
+
+.wh-note {
+  margin-top: 16px; max-width: 46em; font-size: 15px; line-height: 1.65; color: var(--muted);
+}
+
+/* Mail on this page is the shared little Gmail card, and each example moves it
+   its own way: across the counter (the board), down onto a station (one
+   order), a slow sink (quotes), a burst (suppliers). */
+.wh-page .story-ask {
+  justify-self: start; align-self: start; width: min(100%, 36rem);
+}
+
+/* The board: orders come over the counter, in from the left and on to the right. */
+.wh-counter {
+  --wh-run: 340px;
+}
+
+.wh-counter .story-mail .is-new.story-email {
+  animation: wh-over-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.wh-counter .story-mail .is-leaving.story-email {
+  animation: wh-over-out 1.1s cubic-bezier(0.5, 0, 0.8, 0.5) both;
+}
+
+.wh-page .story-label b {
+  font-weight: 600;
+}
+
+/* The board. */
+.wh-page .kit-head h2 {
+  font-family: var(--display-font); font-weight: 400; font-size: 30px; letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.wh-board {
+  padding: 18px;
+}
+
+.wh-board-head {
+  justify-content: flex-start; gap: 8px 14px; margin-bottom: 14px;
+}
+
+.wh-booked {
+  display: flex; align-items: baseline; gap: 10px; margin-left: auto; border-radius: 6px;
+  padding: 2px 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted);
+}
+
+.wh-booked b {
+  font-family: var(--mono); font-size: 22px; font-weight: 600; letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+/* A number that ticks over: the new figure rolls up into a fixed window. */
+.wh-num {
+  display: inline-block; overflow: hidden; vertical-align: bottom; line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.wh-num > span {
+  display: inline-block;
+}
+
+.wh-cols {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+}
+
+.wh-col {
+  min-width: 0; border-radius: 8px; background: var(--wh-sunk); padding: 10px;
+}
+
+.wh-col > header {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 0 2px 8px; border-bottom: 1px solid var(--wh-rule); margin-bottom: 8px;
+}
+
+.wh-col h3 {
+  font-family: var(--body); font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+  line-height: 1.4; text-transform: uppercase; color: var(--muted);
+}
+
+.wh-page .wh-sum {
+  border-radius: 4px; padding: 0 4px; font-family: var(--mono); font-size: 13.5px;
+  font-weight: 600; line-height: 1.25; color: var(--ink); white-space: nowrap;
+}
+
+/* Two slots a column, so a card that leaves never shifts the one beside it. */
+.wh-slots {
+  display: grid; gap: 6px; grid-auto-rows: 58px; min-height: 122px; align-content: start;
+}
+
+.wh-card {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; gap: 3px 10px;
+  border: 1px solid var(--wh-edge); border-radius: 6px; background: var(--white); padding: 0 12px;
+  min-width: 0;
+}
+
+.wh-card strong {
+  font-size: 14px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wh-amt {
+  font-family: var(--mono); font-size: 13.5px; font-weight: 600; line-height: 1.3;
+  font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap;
+}
+
+.wh-amt-none {
+  font-family: var(--body); font-size: 12px; font-weight: 500; color: var(--wh-rust);
+}
+
+.wh-qty,
+.wh-due {
+  font-size: 12.5px; line-height: 1.3; color: var(--muted); white-space: nowrap;
+}
+
+.wh-due {
+  text-align: right;
+}
+
+/* How a change looks on this page: what arrives drops in, what an email
+   touched is marked for a moment, and a figure rolls over. */
+.wh-page .story-page .is-touched {
+  animation: wh-mark 1.5s ease-out both;
+}
+
+.wh-page .story-page [data-at].is-new:not(.is-moved) {
+  animation: wh-drop 0.3s cubic-bezier(0.3, 0.6, 0.2, 1) both;
+}
+
+.wh-page .story-page [data-at].is-new.is-touched:not(.is-moved) {
+  animation: wh-drop 0.3s cubic-bezier(0.3, 0.6, 0.2, 1) both, wh-mark 1.5s ease-out both;
+}
+
+.wh-page .story-page .wh-num > span[data-at].is-new:not(.is-moved) {
+  animation: wh-tick 0.34s var(--wh-move) both;
+}
+
+.wh-page .story-page .is-moved {
+  box-shadow: 0 10px 18px -12px #39402e66;
+}
+
+@keyframes wh-over-in {
+  from { opacity: 0; transform: translateX(-90px); }
+}
+
+@keyframes wh-over-out {
+  to { opacity: 0; transform: translateX(var(--wh-run)); filter: blur(3px); }
+}
+
+@keyframes wh-land {
+  from { opacity: 0; transform: translateY(-24px); }
+}
+
+@keyframes wh-sink {
+  to { opacity: 0; transform: translateY(44px) scale(0.92); filter: blur(2px); }
+}
+
+@keyframes wh-drop {
+  from { opacity: 0; transform: translateY(-12px); }
+}
+
+@keyframes wh-mark {
+  0%, 35% { background-color: #e3ead2; box-shadow: 0 0 0 1.5px #91a577; }
+  100% { box-shadow: 0 0 0 1.5px #91a57700; }
+}
+
+@keyframes wh-tick {
+  from { transform: translateY(105%); }
+}
+
+@keyframes wh-stamp {
+  from { opacity: 0; transform: rotate(-9deg) scale(1.6); }
+}
+
+/* ---- Sections ---- */
+
+.wh-sec {
+  padding-top: 108px;
+}
+
+.wh-head h2,
+.wh-safe h2,
+.wh-close h2 {
+  margin-top: 16px; font-family: var(--display-font); font-weight: 400; letter-spacing: -0.035em;
+  line-height: 1.04; font-size: clamp(38px, 4.3vw, 58px); text-wrap: balance; max-width: 17em;
+}
+
+.wh-head > p:not(.eyebrow) {
+  margin-top: 20px; max-width: 38em; font-size: 17px; line-height: 1.7; color: var(--wh-soft);
+}
+
+.wh-head > p:not(.eyebrow) + p {
+  margin-top: 12px;
+}
+
+.wh-head + .story,
+.wh-in-top + .story {
+  margin-top: 36px;
+}
+
+/* ---- One order, start to finish: a ticket on a rail ---- */
+
+.wh-page .wh-life .story-ask,
+.wh-life .story-email {
+  align-self: end;
+}
+
+/* Each email lands, then drops toward the page and is gone as the ticket moves. */
+.wh-life .story-mail .is-new.story-email {
+  animation: wh-land 0.36s cubic-bezier(0.3, 0.6, 0.2, 1) both;
+}
+
+.wh-life .story-mail .is-leaving.story-email {
+  animation: wh-sink 0.9s cubic-bezier(0.5, 0, 0.8, 0.5) both;
+}
+
+.wh-life-page {
+  padding: 18px 0 20px;
+}
+
+.wh-life-page .kit-head {
+  padding-inline: 20px; margin-bottom: 20px;
+}
+
+.wh-line {
+  position: relative;
+}
+
+.wh-rail {
+  position: relative; list-style: none; margin: 0; padding: 0; display: grid;
+}
+
+.wh-rail::before,
+.wh-rail::after {
+  content: ""; position: absolute; background: var(--wh-rule);
+}
+
+.wh-rail::after {
+  background: var(--green); transition: transform 0.52s var(--wh-move);
+}
+
+.wh-rail li {
+  position: relative; z-index: 1; display: grid; gap: 3px; min-width: 0;
+}
+
+.wh-rail li::before {
+  content: ""; box-sizing: border-box; width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid #c9cdbd; background: var(--white);
+  transition: background 0.2s 0.3s, border-color 0.2s 0.3s;
+}
+
+.wh-rail li::after {
+  content: ""; position: absolute; width: 5px; height: 10px; border: solid var(--white);
+  border-width: 0 2px 2px 0; transform: rotate(40deg);
+}
+
+.wh-rail li.is-done::before,
+.story:not(.is-live) .wh-rail li[data-done]::before {
+  border-color: var(--green); background: var(--green);
+}
+
+.wh-stop {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.06em; line-height: 1.4; text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wh-rail li.is-done .wh-stop,
+.story:not(.is-live) .wh-rail li[data-done] .wh-stop {
+  color: var(--ink);
+}
+
+.wh-rec {
+  display: block; min-height: 20px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+  color: var(--wh-soft);
+}
+
+.wh-ticket {
+  transition: transform 0.52s var(--wh-move);
+}
+
+.wh-ticket-paper {
+  position: relative; display: grid; align-content: center; gap: 1px; height: 100%;
+  border: 1px solid var(--wh-manila-edge); border-radius: 4px; background: var(--wh-manila);
+  padding: 9px 12px 9px 22px; box-shadow: 0 10px 18px -14px #57503066;
+}
+
+/* The punched hole a ticket hangs from. */
+.wh-ticket-paper::before {
+  content: ""; position: absolute; left: 8px; top: 50%; width: 7px; height: 7px; margin-top: -4px;
+  border-radius: 50%; background: var(--white); box-shadow: inset 0 0 0 1px var(--wh-manila-edge);
+}
+
+.wh-ticket-paper strong {
+  font-size: 14px; font-weight: 600; line-height: 1.3; white-space: nowrap;
+}
+
+.wh-ticket-paper > span {
+  font-size: 12.5px; line-height: 1.35; color: #6a6247; white-space: nowrap;
+}
+
+.wh-ticket-paper > b {
+  font-family: var(--mono); font-size: 13.5px; font-weight: 600; line-height: 1.35;
+}
+
+.wh-ticket-paper > b [data-until] {
+  font-family: var(--body); font-size: 12px; font-weight: 500; color: var(--wh-rust);
+}
+
+.wh-paid {
+  position: absolute; right: 8px; bottom: 7px; border: 2px solid var(--green); border-radius: 3px;
+  padding: 0 6px; font-family: var(--mono); font-size: 12px; font-style: normal; font-weight: 700;
+  letter-spacing: 0.1em; line-height: 1.5; text-transform: uppercase; color: var(--green);
+  transform: rotate(-9deg);
+}
+
+.wh-page .story-page .wh-paid.is-new {
+  animation: wh-stamp 0.2s 0.5s ease-in both;
+}
+
+.wh-page .story-page .wh-ticket.is-new {
+  animation: wh-drop 0.3s cubic-bezier(0.3, 0.6, 0.2, 1) both;
+}
+
+/* Wide: five stations across, each email lands over the station it moves the ticket to. */
+@media (min-width: 901px) {
+  .wh-life .story-mail {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .wh-life.story .story-mail > .story-email {
+    justify-self: stretch; width: auto; margin-inline: 8px; padding: 11px 13px;
+  }
+
+  .wh-life.story .story-mail > .wh-m0 { grid-area: 1 / 1 / 2 / 4; margin-inline: 8px; }
+  .wh-life.story .story-mail > .wh-m1 { grid-area: 1 / 1; }
+  .wh-life.story .story-mail > .wh-m2 { grid-area: 1 / 2; }
+  .wh-life.story .story-mail > .wh-m3 { grid-area: 1 / 3; }
+  .wh-life.story .story-mail > .wh-m4 { grid-area: 1 / 4; }
+  .wh-life.story .story-mail > .wh-m5 { grid-area: 1 / 5; }
+
+  .wh-rail {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .wh-rail::before,
+  .wh-rail::after {
+    left: 10%; right: 10%; top: 10px; height: 2px;
+  }
+
+  .wh-rail::after {
+    transform-origin: left;
+  }
+
+  .story.is-live .wh-life-page .wh-rail::after { transform: scaleX(0); }
+  .story.is-live .wh-life-page.s2 .wh-rail::after { transform: scaleX(0.25); }
+  .story.is-live .wh-life-page.s3 .wh-rail::after { transform: scaleX(0.5); }
+  .story.is-live .wh-life-page.s4 .wh-rail::after { transform: scaleX(0.75); }
+  .story.is-live .wh-life-page.s5 .wh-rail::after { transform: scaleX(1); }
+
+  .wh-rail li {
+    justify-items: center; padding-inline: 8px; text-align: center;
+  }
+
+  .wh-rail li::before {
+    margin-bottom: 6px;
+  }
+
+  .wh-rail li::after {
+    left: 50%; top: 4px; margin-left: -3px;
+  }
+
+  .wh-track {
+    margin-top: 14px; min-height: 84px;
+  }
+
+  .wh-ticket {
+    width: 20%; height: 84px; padding-inline: 14px; transform: translateX(400%);
+  }
+
+  .story.is-live .wh-life-page .wh-ticket { transform: translateX(0); }
+  .story.is-live .wh-life-page.s2 .wh-ticket { transform: translateX(100%); }
+  .story.is-live .wh-life-page.s3 .wh-ticket { transform: translateX(200%); }
+  .story.is-live .wh-life-page.s4 .wh-ticket { transform: translateX(300%); }
+  .story.is-live .wh-life-page.s5 .wh-ticket { transform: translateX(400%); }
+}
+
+/* Narrow: the rail stands up, and the ticket rides down it beside the stations. */
+@media (max-width: 900px) {
+  .wh-life-page {
+    padding: 14px 14px 12px;
+  }
+
+  .wh-life-page .kit-head {
+    padding-inline: 0; margin-bottom: 14px;
+  }
+
+  .wh-rail {
+    grid-auto-rows: 62px;
+  }
+
+  .wh-rail::before,
+  .wh-rail::after {
+    left: 10px; top: 20px; bottom: 42px; width: 2px;
+  }
+
+  .wh-rail::after {
+    transform-origin: top;
+  }
+
+  .story.is-live .wh-life-page .wh-rail::after { transform: scaleY(0); }
+  .story.is-live .wh-life-page.s2 .wh-rail::after { transform: scaleY(0.25); }
+  .story.is-live .wh-life-page.s3 .wh-rail::after { transform: scaleY(0.5); }
+  .story.is-live .wh-life-page.s4 .wh-rail::after { transform: scaleY(0.75); }
+  .story.is-live .wh-life-page.s5 .wh-rail::after { transform: scaleY(1); }
+
+  .wh-rail li {
+    grid-template-columns: 22px minmax(0, 1fr); column-gap: 12px; align-content: center;
+    padding-right: 46%;
+  }
+
+  .wh-rec {
+    font-size: 12px;
+  }
+
+  .wh-rail li::before {
+    grid-row: 1 / 3; align-self: center;
+  }
+
+  .wh-rail li::after {
+    left: 8px; top: 50%; margin-top: -7px;
+  }
+
+  .wh-rail .wh-stop {
+    align-self: end;
+  }
+
+  .wh-track {
+    position: absolute; top: 0; right: 0; bottom: 0; z-index: 2; width: 44%;
+  }
+
+  .wh-ticket {
+    height: 20%; padding-block: 5px; transform: translateY(400%);
+  }
+
+  .story.is-live .wh-life-page .wh-ticket { transform: translateY(0); }
+  .story.is-live .wh-life-page.s2 .wh-ticket { transform: translateY(100%); }
+  .story.is-live .wh-life-page.s3 .wh-ticket { transform: translateY(200%); }
+  .story.is-live .wh-life-page.s4 .wh-ticket { transform: translateY(300%); }
+  .story.is-live .wh-life-page.s5 .wh-ticket { transform: translateY(400%); }
+
+  .wh-ticket-paper {
+    padding: 4px 8px 4px 20px;
+  }
+
+  .wh-ticket-paper strong {
+    font-size: 13px;
+  }
+
+  .wh-ticket-paper > span {
+    display: none;
+  }
+
+  .wh-paid {
+    right: 6px; bottom: 5px; font-size: 11.5px;
+  }
+}
+
+/* ---- The quote you forgot ---- */
+
+.wh-cold {
+  display: grid; grid-template-columns: minmax(0, 0.84fr) minmax(0, 1.16fr); column-gap: 64px;
+  grid-template-areas: "copy story" "draft story"; grid-template-rows: auto 1fr; align-items: start;
+}
+
+.wh-cold-copy {
+  grid-area: copy;
+}
+
+.wh-quote-story {
+  grid-area: story; min-width: 0; margin-top: 6px;
+}
+
+.wh-draft-side {
+  grid-area: draft; margin-top: 30px;
+}
+
+.wh-draft-lead {
+  max-width: 30em; font-size: 17px; line-height: 1.7; color: var(--wh-soft);
+}
+
+.wh-draft {
+  margin-top: 18px; max-width: 460px; border: 1px solid #d4d9c8; border-radius: 10px;
+  background: var(--white); box-shadow: 0 12px 30px -24px #57624866; padding: 14px 16px 12px;
+}
+
+.wh-draft-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px;
+  font-size: 12.5px; font-weight: 600; color: var(--ink);
+}
+
+.wh-draft-top > span {
+  display: inline-flex; align-items: center; gap: 7px;
+}
+
+.wh-draft-top svg {
+  width: 15px; height: 15px; fill: var(--muted);
+}
+
+.wh-draft-top em {
+  border-radius: 999px; background: #f3ead0; padding: 3px 10px; font-size: 11.5px; font-style: normal;
+  font-weight: 500; color: #6b5a1f; white-space: nowrap;
+}
+
+.wh-draft-line {
+  display: flex; gap: 12px; border-top: 1px solid #ecede3; padding: 7px 0; font-size: 14px;
+  line-height: 1.4;
+}
+
+.wh-draft-line span {
+  flex: none; width: 54px; font-size: 12.5px; line-height: 1.55; color: var(--muted);
+}
+
+.wh-draft-body {
+  border-top: 1px solid #ecede3; padding: 11px 0 12px; font-size: 15px; line-height: 1.6;
+}
+
+.wh-draft-foot {
+  border-top: 1px dashed var(--line); padding-top: 9px; font-size: 13px; font-weight: 500;
+  color: var(--green);
+}
+
+/* Tallies: figures across the top of a page, each one able to tick over. */
+.wh-tally {
+  display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px;
+}
+
+.wh-tally > div {
+  flex: 1 1 0; min-width: 0; border-radius: 8px; background: var(--wh-sunk); padding: 8px 12px 9px;
+}
+
+.wh-tally dt {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.05em; line-height: 1.4;
+  text-transform: uppercase; color: var(--muted);
+}
+
+.wh-tally dd {
+  margin: 2px 0 0; font-family: var(--mono); font-size: 22px; font-weight: 600; letter-spacing: -0.02em;
+  line-height: 1.25; font-variant-numeric: tabular-nums;
+}
+
+.wh-tally dd.wh-num {
+  display: block;
+}
+
+.wh-quotes {
+  list-style: none; margin: 0; padding: 0;
+}
+
+.wh-quotes > li {
+  display: grid; grid-template-columns: 56px minmax(0, 1fr) auto 104px; align-items: center;
+  gap: 4px 14px; border-top: 1px solid #ecede3; padding: 9px 4px;
+}
+
+.wh-quotes > li > div {
+  display: grid; gap: 1px; min-width: 0;
+}
+
+.wh-quotes strong {
+  font-size: 14.5px; font-weight: 600; line-height: 1.35;
+}
+
+.wh-quotes > li > div span {
+  font-size: 12.5px; line-height: 1.4; color: var(--muted);
+}
+
+.wh-quotes .kit-pill {
+  justify-self: end; white-space: nowrap;
+}
+
+.wh-days {
+  display: grid; justify-items: center; border-radius: 6px; background: #f1f1e8; padding: 6px 0 5px;
+  font-size: 11.5px; line-height: 1.2; color: var(--muted);
+}
+
+.wh-days b {
+  font-family: var(--mono); font-size: 20px; font-weight: 600; line-height: 1.1; color: var(--ink);
+}
+
+/* Past five days: the day count goes warm, and the row carries a warm edge. */
+.wh-is-cold .wh-days {
+  background: var(--peach); color: var(--wh-rust);
+}
+
+.wh-is-cold .wh-days b {
+  color: var(--wh-rust);
+}
+
+.wh-quotes > li.is-done > :not(.kit-pill),
+.story:not(.is-live) .wh-quotes > li[data-done] > :not(.kit-pill) {
+  opacity: 0.5;
+}
+
+.wh-quotes > li.is-done .wh-days,
+.story:not(.is-live) .wh-quotes > li[data-done] .wh-days {
+  background: #f1f1e8; color: var(--muted);
+}
+
+.wh-quotes > li.is-done .wh-days b,
+.story:not(.is-live) .wh-quotes > li[data-done] .wh-days b {
+  color: var(--ink);
+}
+
+/* ---- The supplier side ---- */
+
+.wh-in-top {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); gap: 40px 72px; align-items: end;
+}
+
+.wh-inboxes {
+  border-left: 2px solid #c9d2b8; padding: 2px 0 4px 22px;
+}
+
+.wh-inboxes h3 {
+  margin-top: 12px; font-family: var(--display-font); font-weight: 400; font-size: 28px;
+  letter-spacing: -0.02em; line-height: 1.1;
+}
+
+.wh-inboxes > p:last-child {
+  margin-top: 10px; font-size: 15.5px; line-height: 1.7; color: var(--wh-soft);
+}
+
+.wh-inboxes-mark {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px;
+}
+
+.wh-inboxes-mark b {
+  font-weight: 400; color: #91a577;
+}
+
+.wh-inboxes-mark i,
+.wh-via {
+  border-radius: 4px; background: #ead8c6; padding: 1px 7px; font-size: 11.5px; font-style: normal;
+  font-weight: 600; line-height: 1.5; color: #5d5346; white-space: nowrap;
+}
+
+.wh-inboxes-mark i.wh-jay,
+.wh-via.wh-jay {
+  background: #ded4e5; color: #554a5e;
+}
+
+/* Quotes: the reply floats down and takes its time dissolving into the list. */
+.wh-quote-story .story-mail .is-leaving.story-email {
+  animation-duration: 1.45s;
+}
+
+/* Suppliers: three notices land together, a beat apart, each for its own chip. */
+.wh-in .wh-burst > .story-email {
+  flex: 1 1 0; max-width: 22rem;
+}
+
+/* The player hides a waiting mail item as a block, which would stack the
+   burst's cards and stretch the mail slot; it keeps its row while it waits. */
+.wh-in.story.is-live .story-mail > .wh-burst[data-at]:not(.is-on) {
+  display: flex !important;
+}
+
+.wh-in-page {
+  padding: 18px;
+}
+
+.wh-week {
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px;
+}
+
+.wh-day {
+  display: grid; align-content: start; gap: 8px; min-width: 0; min-height: 138px; border-radius: 8px;
+  background: var(--wh-sunk); padding: 10px;
+}
+
+.wh-day-none {
+  background: none; box-shadow: inset 0 0 0 1.5px #dfe2d3;
+}
+
+.wh-day h4 {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px;
+  font-weight: 600; letter-spacing: 0.06em; line-height: 1.5; text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wh-day h4 em {
+  border-radius: 999px; background: var(--green); padding: 0 8px; font-size: 11.5px; font-style: normal;
+  font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--paper);
+}
+
+.wh-chip {
+  display: grid; gap: 1px; min-width: 0; border: 1px solid var(--wh-edge); border-radius: 6px;
+  background: var(--white); padding: 9px 10px 10px;
+}
+
+.wh-chip strong {
+  font-size: 13.5px; font-weight: 600; line-height: 1.3;
+}
+
+.wh-chip > span {
+  font-size: 12.5px; line-height: 1.4; color: var(--muted);
+}
+
+.wh-chip > p {
+  display: grid; justify-items: start; gap: 5px; margin-top: 7px;
+}
+
+.wh-chip-in strong,
+.wh-chip.is-done strong,
+.story:not(.is-live) .wh-chip[data-done] strong {
+  color: var(--muted);
+}
+
+/* ---- What it replaces ---- */
+
+.wh-keep-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px 72px;
+  align-items: start; margin-top: 36px;
+}
+
+.wh-gone {
+  list-style: none; margin: 0; padding: 0; display: grid;
+}
+
+.wh-gone li {
+  border-top: 1px solid var(--line); padding: 16px 0 17px;
+}
+
+.wh-gone li:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.wh-gone s {
+  font-family: var(--display-font); font-size: clamp(25px, 2.5vw, 33px); letter-spacing: -0.02em;
+  line-height: 1.2; color: #7b8170; text-decoration: line-through; text-decoration-color: #91a577;
+  text-decoration-thickness: 2px;
+}
+
+.wh-keep-copy p {
+  max-width: 34em; font-size: 17px; line-height: 1.7; color: var(--wh-soft);
+}
+
+.wh-keep-copy p + p {
+  margin-top: 14px;
+}
+
+/* ---- How to start ---- */
+
+.wh-steps {
+  list-style: none; margin: 36px 0 0; padding: 0;
+}
+
+.wh-steps > li {
+  display: grid; grid-template-columns: 64px minmax(0, 0.8fr) minmax(0, 1.4fr); gap: 10px 32px;
+  align-items: start; border-top: 1px solid var(--line); padding: 26px 0 28px;
+}
+
+.wh-steps > li:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.wh-step-no {
+  font-family: var(--mono); font-size: 14px; font-weight: 600; line-height: 34px; color: var(--green);
+}
+
+.wh-step-no::before {
+  content: "No. ";
+}
+
+.wh-steps h3 {
+  font-family: var(--display-font); font-weight: 400; font-size: 31px; letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.wh-steps p {
+  max-width: 36em; font-size: 16px; line-height: 1.7; color: var(--wh-soft);
+}
+
+.wh-says {
+  list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px;
+}
+
+.wh-says li {
+  border-left: 3px solid #c9d2b8; border-radius: 0 8px 8px 0; background: #f6f6ee; padding: 9px 14px 10px;
+  font-family: var(--display-font); font-style: italic; font-size: 20px; line-height: 1.3;
+  color: #4c5540; text-wrap: pretty;
+}
+
+/* ---- The email-safety note ---- */
+
+.wh-safe {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px 64px; align-items: center;
+  border-radius: 14px; background: #f1f3e6; padding: 44px 48px;
+}
+
+.wh-safe-copy > p:not(.eyebrow) {
+  margin-top: 16px; max-width: 34em; font-size: 16px; line-height: 1.7; color: var(--wh-soft);
+}
+
+.wh-page .wh-safe-link {
+  margin-top: 20px; font-size: 15px; color: var(--green);
+}
+
+.wh-safe-ledger {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border: 1px solid #d4d9c8;
+  border-radius: 10px; background: var(--white);
+}
+
+.wh-safe-ledger > div {
+  padding: 18px 20px 20px;
+}
+
+.wh-safe-ledger > div + div {
+  border-left: 1px solid #e4e7da;
+}
+
+.wh-safe-ledger h3 {
+  font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
+  line-height: 1.5; text-transform: uppercase; color: var(--green);
+}
+
+.wh-cant h3 {
+  color: var(--wh-rust);
+}
+
+.wh-safe-ledger ul {
+  list-style: none; margin: 10px 0 0; padding: 0;
+}
+
+.wh-safe-ledger li {
+  position: relative; border-top: 1px solid #ecede3; padding: 9px 0 9px 22px; font-size: 15px;
+  line-height: 1.45;
+}
+
+.wh-safe-ledger li::before {
+  content: ""; position: absolute; left: 3px; top: 13px; width: 5px; height: 10px;
+  border: solid var(--green); border-width: 0 2px 2px 0; transform: rotate(40deg);
+}
+
+.wh-cant li::before {
+  left: 1px; top: 19px; width: 11px; height: 0; border-width: 2px 0 0; border-color: var(--wh-rust);
+  transform: none;
+}
+
+/* ---- Other audiences, and the close ---- */
+
+.wh-others h2 {
+  max-width: 26em; margin-bottom: 20px; font-family: var(--body); font-size: 17px; font-weight: 500;
+  letter-spacing: -0.01em; line-height: 1.6; text-wrap: pretty;
+}
+
+.wh-close {
+  padding-block: 96px 84px;
+}
+
+.wh-close-inner {
+  display: grid; justify-items: start; border-top: 2px solid var(--ink); padding-top: 34px;
+}
+
+.wh-close h2 {
+  max-width: 13em; margin-bottom: 30px; font-size: clamp(44px, 5.4vw, 74px); line-height: 1;
+}
+
+/* ---- Narrow screens ---- */
+
+@media (max-width: 1100px) {
+  .wh-cold {
+    column-gap: 40px;
+  }
+
+}
+
+@media (max-width: 940px) {
+  /* Between a phone and a desk the board folds to two columns by two. */
+  .wh-cols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .wh-sec {
+    padding-top: 84px;
+  }
+
+  .wh-hero-say {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wh-cold {
+    grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "story" "draft";
+  }
+
+  .wh-quote-story {
+    margin-top: 30px;
+  }
+
+  .wh-in-top,
+  .wh-keep-grid,
+  .wh-safe {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wh-safe {
+    padding: 34px 30px;
+  }
+
+  .wh-steps > li {
+    grid-template-columns: 64px minmax(0, 1fr); gap: 8px 16px;
+  }
+
+  .wh-steps > li > div {
+    grid-column: 2;
+  }
+
+  /* The week turns on its side: one row a day. */
+  .wh-week {
+    grid-template-columns: minmax(0, 1fr); gap: 6px;
+  }
+
+  .wh-day {
+    grid-template-columns: 62px minmax(0, 1fr); align-items: start; min-height: 74px; padding: 6px 8px;
+  }
+
+  .wh-day h4 {
+    display: grid; justify-items: start; gap: 4px; padding-top: 3px;
+  }
+
+  .wh-chip {
+    grid-column: 2; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 1px 8px;
+    padding: 6px 9px 7px;
+  }
+
+  .wh-chip > span {
+    text-align: right;
+  }
+
+  .wh-chip > p {
+    grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; margin-top: 4px;
+  }
+}
+
+@media (max-width: 760px) {
+  /* A long page on a small screen: the email stays in view while the page it changes scrolls under it. */
+  .wh-counter .story-mail,
+  .wh-quote-story .story-mail,
+  .wh-in .story-mail {
+    position: sticky; top: 8px; z-index: 3;
+  }
+
+  .wh-page .story-ask,
+  .wh-page .story-email {
+    box-shadow: 0 10px 22px -16px #39402e80;
+  }
+
+  .wh-counter {
+    --wh-run: 64px;
+  }
+
+  /* No room for three cards side by side: the burst becomes three rows of an inbox. */
+  .wh-in .wh-burst {
+    flex-flow: column nowrap; align-items: stretch; gap: 5px;
+  }
+
+  .wh-in .wh-burst > .story-email {
+    flex: none; display: grid; grid-template-columns: 14px auto minmax(0, 1fr) auto;
+    align-items: center; gap: 3px 7px; max-width: none; padding: 7px 11px 8px;
+  }
+
+  .wh-burst .story-label {
+    display: contents;
+  }
+
+  .wh-burst .story-label span {
+    display: none;
+  }
+
+  .wh-burst .story-label b {
+    grid-area: 2 / 4; border-radius: 4px; background: #ded4e5; padding: 0 6px; color: #554a5e;
+  }
+
+  .wh-burst .wh-mine .story-label b {
+    background: #ead8c6; color: #5d5346;
+  }
+
+  .wh-burst .story-from {
+    margin-top: 0; font-size: 13.5px; white-space: nowrap;
+  }
+
+  .wh-burst .story-subject {
+    grid-column: 3 / 5; overflow: hidden; font-size: 13px; white-space: nowrap; text-overflow: ellipsis;
+  }
+
+  .wh-burst .story-did {
+    grid-area: 2 / 1 / 3 / 4; margin-top: 0; border-top: 0; padding-top: 0; font-size: 12.5px;
+  }
+
+  /* The board becomes an order book: one lane under another, one line an order. */
+  .wh-board,
+  .wh-in-page {
+    padding: 13px;
+  }
+
+  .wh-page .kit-head h2 {
+    font-size: 26px;
+  }
+
+  .wh-booked {
+    flex-basis: 100%; justify-content: space-between; margin-left: 0; background: var(--wh-sunk);
+    padding: 7px 10px;
+  }
+
+  .wh-booked b {
+    font-size: 19px;
+  }
+
+  .wh-cols {
+    grid-template-columns: minmax(0, 1fr); gap: 6px;
+  }
+
+  .wh-col {
+    padding: 8px 8px 8px;
+  }
+
+  .wh-col > header {
+    padding-bottom: 5px; margin-bottom: 5px;
+  }
+
+  .wh-slots {
+    gap: 4px; grid-auto-rows: 36px; min-height: 76px;
+  }
+
+  .wh-card {
+    grid-template-columns: minmax(0, 1fr) auto auto minmax(48px, auto); align-items: center; gap: 0 8px;
+    padding: 0 9px;
+  }
+
+  .wh-card strong {
+    font-size: 13.5px;
+  }
+
+  .wh-card .wh-qty { order: 2; }
+  .wh-card .wh-due { order: 3; }
+  .wh-card .wh-amt { order: 4; }
+
+  .wh-qty,
+  .wh-due {
+    font-size: 12px;
+  }
+
+  .wh-amt {
+    font-size: 13px;
+  }
+
+  .wh-amt-none {
+    font-size: 11.5px;
+  }
+}
+
+@media (max-width: 650px) {
+  .wh-hero {
+    padding-top: 78px;
+  }
+
+  .wh-hero h1 {
+    font-size: clamp(40px, 11.4vw, 48px); max-width: 9.5em;
+  }
+
+  .wh-lede {
+    font-size: 16px; line-height: 1.6;
+  }
+
+  .wh-hero-say {
+    margin-top: 18px; gap: 20px;
+  }
+
+  .wh-counter {
+    margin-top: 26px;
+  }
+
+  .wh-sec {
+    padding-top: 68px;
+  }
+
+  .wh-head h2,
+  .wh-safe h2 {
+    font-size: 38px;
+  }
+
+  .wh-head > p:not(.eyebrow),
+  .wh-draft-lead,
+  .wh-keep-copy p {
+    font-size: 16px; line-height: 1.65;
+  }
+
+  .wh-head + .story,
+  .wh-in-top + .story {
+    margin-top: 26px;
+  }
+
+  .wh-tally {
+    gap: 6px;
+  }
+
+  .wh-tally > div {
+    padding: 7px 8px 8px;
+  }
+
+  .wh-tally dt {
+    letter-spacing: 0.02em;
+  }
+
+  .wh-tally dd {
+    font-size: 19px;
+  }
+
+  .wh-quotes > li {
+    grid-template-columns: 46px minmax(0, 1fr) 84px; gap: 3px 10px;
+  }
+
+  .wh-quotes > li > .wh-days,
+  .wh-quotes > li > div {
+    grid-row: 1 / 3;
+  }
+
+  .wh-quotes .wh-amt {
+    grid-column: 3; grid-row: 1; align-self: end; padding-right: 4px;
+  }
+
+  .wh-quotes .kit-pill {
+    grid-column: 3; grid-row: 2; align-self: start;
+  }
+
+  .wh-days b {
+    font-size: 18px;
+  }
+
+  .wh-safe {
+    padding: 28px 20px;
+  }
+
+  .wh-safe-ledger {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wh-safe-ledger > div + div {
+    border-left: 0; border-top: 1px solid #e4e7da;
+  }
+
+  .wh-steps > li {
+    grid-template-columns: minmax(0, 1fr); padding: 20px 0 22px;
+  }
+
+  .wh-steps > li > div {
+    grid-column: 1;
+  }
+
+  .wh-step-no {
+    line-height: 1.4;
+  }
+
+  .wh-steps h3 {
+    font-size: 28px;
+  }
+
+  .wh-says li {
+    font-size: 19px;
+  }
+
+  .wh-close {
+    padding-block: 68px 56px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wh-page *,
+  .wh-page *::before,
+  .wh-page *::after {
+    animation: none !important;
+  }
+}

@@ -5,6 +5,7 @@
  *
  * - `s1` … `s<n>` on the root, so CSS can place things per step;
  * - `is-on` on every `[data-at]` at or below n;
+ * - `is-gone` on every `[data-until]` at or below n, for what a later step replaces;
  * - `is-done` on every `[data-done]` at or below n;
  * - `is-current` on the `[data-status]` equal to n;
  * - `is-new` on what changed at n, when the step is played rather than set.
@@ -21,6 +22,9 @@ export function applyStep(root: HTMLElement, step: number, last: number, played 
     part.classList.toggle('is-on', at <= step);
     part.classList.toggle('is-new', played && at === step && at > 0);
   }
+  for (const part of root.querySelectorAll<HTMLElement>('[data-until]')) {
+    part.classList.toggle('is-gone', Number(part.dataset.until) <= step);
+  }
   for (const part of root.querySelectorAll<HTMLElement>('[data-done]')) {
     const done = Number(part.dataset.done);
     part.classList.toggle('is-done', done <= step);
@@ -31,13 +35,17 @@ export function applyStep(root: HTMLElement, step: number, last: number, played 
   }
 }
 
-/** Calls `change` with whether `element` is on screen, each time that flips. */
-export function whenVisible(element: Element, change: (visible: boolean) => void, threshold = 0): void {
+/**
+ * Calls `change` with whether `element` is on screen, each time that flips.
+ * `rootMargin` shrinks or grows the screen it is tested against: a negative
+ * bottom margin makes "on screen" mean "scrolled well into view".
+ */
+export function whenVisible(element: Element, change: (visible: boolean) => void, threshold = 0, rootMargin = '0px'): void {
   let visible: boolean | undefined;
   new IntersectionObserver(([entry]) => {
     const next = entry?.isIntersecting ?? false;
     if (next === visible) return;
     visible = next;
     change(next);
-  }, { threshold }).observe(element);
+  }, { threshold, rootMargin }).observe(element);
 }

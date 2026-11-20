@@ -1,4 +1,5 @@
 @import "./site-theme.css";
+@import "./story.css";
 
 /* Homepage layout. Each selector has one declaration block per breakpoint. */
 
@@ -609,7 +610,7 @@ h2 {
 }
 
 .prompt-number,
-.reactive-number {
+.step-number {
   font-family: "Instrument Serif"; font-style: italic; font-size: 17px; color: #a1a88e;
 }
 
@@ -629,25 +630,25 @@ h2 {
   padding-block: 70px 40px;
 }
 
-.reactive-list {
+.step-list {
   list-style: none; margin: 48px 0 0; padding: 0; display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px;
 }
 
-.reactive-list li {
+.step-list li {
   border-top: 1px solid var(--line); padding-top: 22px;
 }
 
-.reactive-number {
+.step-number {
   display: block;
 }
 
-.reactive-list h3 {
+.step-list h3 {
   font-family: var(--note); font-weight: 400; letter-spacing: -0.02em;
   font-size: 30px; line-height: 1.1; margin: 12px 0 14px;
 }
 
-.reactive-list p {
+.step-list p {
   color: var(--muted); font-size: 14px; line-height: 1.9; margin: 0; max-width: 360px;
 }
 
@@ -755,7 +756,7 @@ h2 {
 }
 
 .footer-grid {
-  display: grid; grid-template-columns: 1.45fr 0.7fr 0.85fr 1.1fr 1.1fr; gap: 24px; padding-top: 10px;
+  display: grid; grid-template-columns: 1.3fr 0.75fr 0.8fr 0.85fr 1fr 1.05fr; gap: 24px; padding-top: 10px;
 }
 
 .footer-legal {
@@ -1245,7 +1246,7 @@ h2 {
   }
 
   .footer-grid {
-    gap: 19px; grid-template-columns: 1.2fr 0.8fr 0.85fr 1.1fr 1fr; padding-top: 10px;
+    gap: 19px; grid-template-columns: 1.1fr 0.8fr 0.8fr 0.85fr 1fr 1fr; padding-top: 10px;
   }
 
   .hero-copy h1 {
@@ -1295,7 +1296,7 @@ h2 {
 }
 
 @media (max-width: 900px) {
-  .reactive-list {
+  .step-list {
     grid-template-columns: 1fr; gap: 28px; margin-top: 36px;
   }
 
@@ -1496,11 +1497,11 @@ h2 {
     padding-block: 50px 20px;
   }
 
-  .reactive-list h3 {
+  .step-list h3 {
     font-size: 26px;
   }
 
-  .reactive-list p {
+  .step-list p {
     font-size: 13px;
   }
 
@@ -1927,3 +1928,279 @@ h2 {
 .footer-casa { color: inherit; text-decoration: none; }
 .footer-casa:hover { color: var(--green); }
 
+/* ---- The Gmail homepage and the pieces the audience pages share ---- */
+
+/* A hero whose right half is a story (story.css) instead of the drawing. */
+.story-hero {
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1fr); gap: 56px; align-items: start; padding-top: 50px;
+}
+
+.story-hero .hero-copy h1 {
+  font-size: 76px; line-height: 1;
+}
+
+.story-hero .hero-intro {
+  max-width: 440px; margin-top: 30px;
+}
+
+/* Text wraps on its own everywhere on these pages: no manual breaks. Headings
+   balance their lines, and a measure, not a <br>, decides where they turn. */
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+p,
+li {
+  text-wrap: pretty;
+}
+
+.section-intro h2 {
+  max-width: 14em;
+}
+
+.pricing-heading h2,
+.faq-section h2,
+.home-closer h2 {
+  max-width: 9em;
+}
+
+/* The headline's words follow the story's slide (word-swap.ts). A new word
+   can turn the lines somewhere else, so every word is its own inline-block
+   that word-swap.ts glides to its new place, and the block keeps room for its
+   longest wording so nothing below it moves. */
+.story-hero .hero-copy h1 {
+  text-wrap: balance; min-height: 4em;
+}
+
+/* Every slide's page fills the stage, so a short example is a page with room
+   on it and not a gap under the card. */
+.home-story.is-live .story-slide {
+  display: flex; flex-direction: column;
+}
+
+.home-story.is-live .story-page {
+  flex: 1;
+}
+
+.swap {
+  display: inline-block; position: relative; white-space: nowrap;
+}
+
+.swap-now,
+.swap-part {
+  display: inline-block;
+}
+
+.swap-old {
+  position: absolute; left: 0; top: 0;
+}
+
+.hero-word {
+  color: var(--green);
+}
+
+.hero-story {
+  min-width: 0; padding-top: 6px;
+}
+
+.hero-story-note {
+  margin-top: 6px; font-size: 12px; color: var(--muted);
+}
+
+.story-more {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px;
+  color: var(--green); text-decoration: none;
+}
+
+.story-more:hover {
+  text-decoration: underline;
+}
+
+.who-section,
+.how-section,
+.fits-section,
+.devmode-next {
+  padding-block: 80px 20px;
+}
+
+/* One card per audience, each a link to its page. */
+.audience-grid {
+  list-style: none; margin: 44px 0 0; padding: 0; display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px;
+}
+
+.audience-grid a {
+  position: relative; display: grid; gap: 8px; align-content: start; height: 100%;
+  border: 1px solid #d4d9c8; border-radius: 12px; background: var(--white); padding: 20px 20px 46px;
+  text-decoration: none; transition: transform 0.15s, border-color 0.15s;
+}
+
+.audience-grid .audience-grid-more a {
+  background: #eef0e1; border-color: transparent;
+}
+
+.audience-grid a:hover {
+  transform: translateY(-2px); border-color: #91a577;
+}
+
+.audience-grid strong {
+  font-family: var(--display-font); font-weight: 400; font-size: 25px; line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.audience-grid span {
+  font-size: 14px; line-height: 1.6; color: var(--muted);
+}
+
+.audience-grid i {
+  position: absolute; left: 20px; bottom: 16px; color: var(--green); line-height: 0;
+}
+
+/* The other audiences, at the foot of an audience page. */
+.audience-others {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px;
+}
+
+.audience-others a {
+  display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line);
+  border-radius: 999px; padding: 8px 15px; font-size: 14px; text-decoration: none;
+}
+
+.audience-others a:hover {
+  background: var(--sage); border-color: #cfd7c2;
+}
+
+.how-section .step-list p,
+.fits-grid p {
+  font-size: 15px;
+}
+
+.fits-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; margin-top: 48px;
+}
+
+.fits-grid article {
+  border-top: 1px solid var(--line); padding-top: 22px;
+}
+
+.fits-grid h3 {
+  font-family: var(--note); font-weight: 400; letter-spacing: -0.02em; font-size: 30px;
+  line-height: 1.1; margin-bottom: 14px;
+}
+
+.fits-grid p {
+  color: var(--muted); line-height: 1.9; max-width: 360px;
+}
+
+.fits-grid .fits-inboxes {
+  display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: 13px; color: var(--ink);
+}
+
+.fits-inboxes .kit-face + .kit-face {
+  margin-left: -13px; box-shadow: 0 0 0 1.5px var(--paper);
+}
+
+.fits-inboxes b {
+  font-weight: 400; color: #91a577;
+}
+
+.beyond-section {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: end; margin-top: 90px;
+  margin-bottom: 40px; padding: 38px 42px; border-radius: 26px 14px 24px 16px; background: #eef0e1;
+}
+
+.beyond-section h2 {
+  font-family: var(--display-font); font-weight: 400; letter-spacing: -0.03em; font-size: 44px;
+  line-height: 1.04; margin-top: 14px;
+}
+
+.beyond-section > p {
+  color: #595e53; font-size: 15px; line-height: 1.9;
+}
+
+.beyond-section .text-link {
+  display: flex; margin-top: 10px; font-size: 14px; color: var(--green);
+}
+
+.faq-list summary {
+  font-size: 15px;
+}
+
+.faq-list details > p {
+  font-size: 14px; line-height: 1.8;
+}
+
+@media (max-width: 1150px) {
+  .story-hero {
+    gap: 34px;
+  }
+
+  .story-hero .hero-copy h1 {
+    font-size: 62px;
+  }
+
+  .audience-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .fits-grid {
+    gap: 28px;
+  }
+}
+
+@media (max-width: 900px) {
+  .story-hero {
+    grid-template-columns: minmax(0, 1fr); gap: 36px; align-items: stretch;
+  }
+
+  .audience-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fits-grid {
+    grid-template-columns: 1fr; gap: 26px; margin-top: 34px;
+  }
+
+  .beyond-section {
+    grid-template-columns: 1fr; gap: 18px; padding: 30px;
+  }
+}
+
+@media (max-width: 650px) {
+  .story-hero .hero-copy h1 {
+    font-size: 48px;
+  }
+
+  .who-section,
+  .how-section,
+  .fits-section,
+  .devmode-next {
+    padding-block: 54px 10px;
+  }
+
+  .audience-grid {
+    grid-template-columns: 1fr; gap: 10px; margin-top: 28px;
+  }
+
+  .audience-grid a {
+    padding: 16px 44px 16px 16px;
+  }
+
+  .audience-grid strong {
+    font-size: 23px;
+  }
+
+  .audience-grid i {
+    left: auto; right: 16px; bottom: auto; top: 20px;
+  }
+
+  .beyond-section {
+    margin-top: 60px; padding: 24px 20px; width: calc(100% - 28px);
+  }
+
+  .beyond-section h2 {
+    font-size: 34px;
+  }
+}

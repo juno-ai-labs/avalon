@@ -1,6 +1,6 @@
 /**
- * The link preview of every hand-written page: home, the product pages, the
- * marketplace and blog indexes, and the Trust Center. Help, blog posts and
+ * The link preview of every hand-written page: home, the audience pages, the
+ * product pages, the marketplace and blog indexes, and the Trust Center. Help, blog posts and
  * marketplace templates draw theirs from their own front matter instead.
  *
  * The `rally-page-cards` plugin in `vite.config.ts` draws each card at build
@@ -11,6 +11,7 @@
  */
 import { escapeHtml } from './html';
 import { accessCopy } from './access-copy';
+import { audiencePath, audiences } from './audiences';
 import { getIllustration } from './home-illustrations';
 import { renderReadingCard, type ReadingCard } from './reading-card';
 
@@ -31,22 +32,37 @@ export const pageCards: readonly PageCard[] = [
   {
     path: '/',
     eyebrow: 'Start free · No credit card needed',
-    title: 'Rally creates reactive\nMulti-human Artifacts',
-    description: 'Dashboards, micro-apps, podcast feeds and websites that react to the tools you already use, and that your team shapes together.',
+    title: 'Connect Gmail. Get a dashboard of your leads in five minutes.',
+    description: 'Rally turns your inbox into one page you can check at a glance: a dashboard, a board or a table. It updates itself as new mail arrives.',
+    scene: 'canvas',
+  },
+  // Each audience page's card is its row in `audiences.ts`.
+  ...audiences.map(({ slug, name, headline, pitch, scene }): PageCard => ({
+    path: audiencePath(slug),
+    eyebrow: `Rally for ${name.charAt(0).toLowerCase()}${name.slice(1)}`,
+    title: headline,
+    description: pitch,
+    scene,
+  })),
+  {
+    path: '/developer-mode/',
+    eyebrow: 'Beyond the inbox',
+    title: 'Developer mode',
+    description: 'Email is where most people start. Rally also builds dashboards, small apps, podcast feeds and websites that react to the tools you already use.',
     scene: 'canvas',
   },
   {
     path: '/canvases/',
     eyebrow: 'Rally Canvases',
     title: 'Made once.\nKept current.',
-    description: 'A document, spreadsheet, dashboard or site that Rally republishes whenever something changes in your tools. Start alone, then share it.',
+    description: 'Your conversation with Rally and the page it makes beside it: a dashboard, a board or a table, kept up to date from your email and your tools.',
     scene: 'canvas',
   },
   {
     path: '/sidekicks/',
     eyebrow: 'Rally Sidekicks',
     title: 'The AI that keeps\nwork current.',
-    description: 'It watches your tools or runs on a schedule, then does the work: updates a Canvas, drafts the follow-up, posts the digest.',
+    description: 'The helper behind a page that updates itself. It watches your email and tools, or runs on a schedule, then does the work.',
     scene: 'sidekick',
   },
   {
@@ -60,7 +76,7 @@ export const pageCards: readonly PageCard[] = [
     path: '/marketplace/',
     eyebrow: 'Rally Marketplace',
     title: 'Start from something\nalready reactive.',
-    description: 'Templates for developers, product managers, parents and recruiters. Pick one, and Rally builds it with you and keeps it current.',
+    description: 'Templates for the work you run from email, and for developers, product managers and parents. Pick one, and Rally builds it with you and keeps it current.',
     scene: 'canvas',
   },
   {

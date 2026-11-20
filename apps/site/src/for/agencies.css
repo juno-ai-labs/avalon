@@ -1,0 +1,1379 @@
+@import "../home.css";
+
+/*
+ * Rally for agencies and freelancers: "the client wall".
+ *
+ * The page is organised around one question, "who is waiting on me?". Its hero
+ * is centered over a full-width wall of client tiles, and its motion is waiting
+ * made visible: a tile's tint and its four-part meter warm from sage toward
+ * peach the longer a client has waited, a client who emails jumps forward, and
+ * a signed-off client cools and settles at the end.
+ *
+ * story.ts only keeps time. A tile that moves is two elements with one
+ * `data-key`; everything about how it looks while it moves is below.
+ * Every class this page invents starts with `ag-`.
+ */
+
+/* ---- How long a client has waited: one class per step ---- */
+
+.ag-w0 {
+  --ag-bg: #edf1e2; --ag-edge: #cdd6bd; --ag-fill: #8fa173; --ag-soft: #5f6656;
+}
+
+.ag-w1 {
+  --ag-bg: #f2f0d6; --ag-edge: #dbd6aa; --ag-fill: #b0a74f; --ag-soft: #605d48;
+}
+
+.ag-w2 {
+  --ag-bg: #f7e8cb; --ag-edge: #e6cf9d; --ag-fill: #d9a44e; --ag-soft: #635743;
+}
+
+.ag-w3 {
+  --ag-bg: #f6dbc8; --ag-edge: #e5b999; --ag-fill: #d78450; --ag-soft: #66513f;
+}
+
+/* Asked twice: as warm as the wall gets. Worn with a wait class, which still sets how much of the meter is full. */
+.ag-hot {
+  --ag-bg: #f3c9b0; --ag-edge: #d4906a; --ag-fill: #bb5e30; --ag-soft: #6a4a37;
+}
+
+.ag-them {
+  --ag-bg: #fdfcf8; --ag-edge: #cdd1c0; --ag-soft: #646b5b;
+}
+
+.ag-square {
+  --ag-bg: #f3f0e4; --ag-edge: #e3dfce; --ag-soft: #6b705f;
+}
+
+/* What a tile was a moment ago, so it can warm or cool into what it is now. */
+.ag-was-them {
+  --ag-was-bg: #fdfcf8; --ag-was-edge: #cdd1c0;
+}
+
+.ag-was-w1 {
+  --ag-was-bg: #f2f0d6; --ag-was-edge: #dbd6aa;
+}
+
+.ag-was-w2 {
+  --ag-was-bg: #f7e8cb; --ag-was-edge: #e6cf9d;
+}
+
+/* ---- Section heads ---- */
+
+.ag-head .eyebrow {
+  color: var(--green); margin-bottom: 18px; font-size: 13px;
+}
+
+.ag-head h2,
+.ag-closer h2 {
+  font-family: var(--display-font); font-weight: 400; letter-spacing: -0.03em; line-height: 1.04;
+  font-size: clamp(38px, 4.4vw, 58px); text-wrap: balance;
+}
+
+.ag-head > p:not(.eyebrow) {
+  margin-top: 18px; max-width: 54ch; font-size: 16.5px; line-height: 1.75; color: #595e53;
+  text-wrap: pretty;
+}
+
+.ag-head.ag-center {
+  max-width: 720px; margin-inline: auto; text-align: center;
+}
+
+.ag-head.ag-center > p:not(.eyebrow) {
+  margin-inline: auto; max-width: 620px;
+}
+
+.ag-monday,
+.ag-studio,
+.ag-scope,
+.ag-keep,
+.ag-start,
+.ag-safe {
+  padding-top: 120px;
+}
+
+.ag-page .trial-note {
+  font-size: 13px;
+}
+
+/* The longhand, so a line that must not wrap (a sender on a small card) still does not. */
+.ag-page p:not(.ag-start-foot) {
+  text-wrap-style: pretty;
+}
+
+/* ---- The hero: a centered question over the wall ---- */
+
+.ag-hero {
+  padding-top: 22px; text-align: center;
+}
+
+.ag-hero > .eyebrow {
+  display: inline-block; border: 1px solid #cfd7c2; border-radius: 999px; background: var(--sage);
+  padding: 5px 14px; font-size: 13px; letter-spacing: 0.01em; color: var(--green);
+}
+
+.ag-hero h1 {
+  margin-top: 22px; font-family: var(--display-font); font-weight: 400; letter-spacing: -0.035em;
+  font-size: clamp(46px, 6.3vw, 90px); line-height: 0.98; max-width: 13em; margin-inline: auto;
+  text-wrap: balance;
+}
+
+.ag-lede {
+  max-width: 62ch; margin: 28px auto 0; font-size: 17.5px; line-height: 1.7; letter-spacing: -0.01em;
+  color: #595e53; text-wrap: pretty;
+}
+
+.ag-actions {
+  margin-top: 26px;
+}
+
+.ag-hero-story {
+  margin-top: 36px;
+}
+
+/* Wide screens: the note and the pause button sit either side of the email, on its row. */
+.ag-hero-story .story-bar {
+  position: absolute; inset: 4px 0 auto; z-index: 4; margin: 0; justify-content: space-between;
+  align-items: flex-start; pointer-events: none;
+}
+
+.ag-hero-story .story-bar > * {
+  pointer-events: auto;
+}
+
+.ag-bar-note {
+  font-size: 14px; line-height: 1.5; color: var(--muted);
+}
+
+.ag-hero-story .ag-bar-note {
+  max-width: 230px; padding-top: 6px; font-family: var(--note); font-style: italic; font-size: 21px;
+  line-height: 1.25; color: #7b826c; text-align: left; rotate: -2deg;
+}
+
+.ag-hero-story .story-mail {
+  position: relative; z-index: 3; max-width: 560px; margin-inline: auto;
+}
+
+/* How mail flows on this page. Each example has its own way in and out, all on
+   the shared Gmail card: on the hero a card drops onto the wall and dissolves
+   toward the place its tile is about to take; in "Just me" it crosses from the
+   left toward the wall; in "My studio" three inboxes get mail in the same
+   minute; and on the list of asks it is posted into the top of the list. */
+
+/* The hero: a card lands with a tilt, then falls onto the wall, shrinking as it goes. */
+.ag-hero-story .story-mail > .story-ask,
+.ag-hero-story .story-mail > .story-email {
+  justify-self: center;
+}
+
+.ag-hero-story .story-mail .is-new.story-email {
+  animation: ag-drop-in 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+
+.ag-hero-story .story-mail .is-leaving.story-email {
+  animation: ag-drop-out 1.05s cubic-bezier(0.35, 0.05, 0.3, 1) both;
+}
+
+/* Where on a three-column wall a card is heading: which row, and one column left or right. */
+.ag-hero-story {
+  --ag-column: calc((min(1240px, 100vw - 112px) - 92px) / 3 + 20px);
+}
+
+.ag-to-row1 { --ag-fall: 130px; }
+.ag-to-row2 { --ag-fall: 296px; }
+.ag-to-left { --ag-drift: calc(var(--ag-column) * -1); --ag-lean: -5deg; }
+.ag-to-right { --ag-drift: var(--ag-column); --ag-lean: 5deg; }
+
+@keyframes ag-drop-in {
+  from { opacity: 0; transform: translateY(-26px) rotate(-1.6deg); }
+}
+
+@keyframes ag-drop-out {
+  50% { opacity: 0.85; }
+
+  100% {
+    opacity: 0; filter: blur(1.5px);
+    transform: translate(var(--ag-drift, 0), var(--ag-fall, 70px)) rotate(var(--ag-lean, -3deg)) scale(0.6);
+  }
+}
+
+/* ---- The wall ---- */
+
+.ag-page .ag-board {
+  margin-top: 0; padding: 20px; border-color: #e2decd; border-radius: 16px; background-color: #f6f3e8;
+  background-image: radial-gradient(#e2dccb 1px, transparent 1.4px); background-size: 18px 18px;
+  box-shadow: none;
+}
+
+/* The email overlaps the wall's top edge, so cause sits on top of effect. */
+.ag-hero-story .ag-board {
+  margin-top: -34px; padding: 58px 26px 22px;
+}
+
+.ag-board-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px;
+}
+
+.ag-board-head h2,
+.ag-board-head h3 {
+  margin: 0; font-family: var(--display-font); font-weight: 400; font-size: 31px;
+  letter-spacing: -0.02em; line-height: 1.1;
+}
+
+.ag-sort {
+  flex: 1; min-width: 220px; font-size: 14px; line-height: 1.5; color: var(--muted);
+}
+
+.ag-board-head .kit-live {
+  align-self: center; margin-left: auto;
+}
+
+.ag-wall {
+  list-style: none; margin: 20px 0 0; padding: 0; display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 20px;
+}
+
+.ag-board-small .ag-wall {
+  grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+}
+
+/* A tile: a note pinned to the wall. */
+.ag-tile {
+  position: relative; display: flex; flex-direction: column; gap: 14px; min-width: 0;
+  border: 1px solid var(--ag-edge, #dcdfd0); border-radius: 5px; background: var(--ag-bg, var(--white));
+  padding: 24px 18px 15px; text-align: left;
+  box-shadow: 0 0 0 0 #0000, 0 9px 16px -13px #57503a80;
+}
+
+.ag-tile::before {
+  content: ""; position: absolute; top: -6px; left: 50%; width: 11px; height: 11px; margin-left: -5.5px;
+  border-radius: 50%; background: radial-gradient(circle at 35% 30%, #dcbfa3, #a67c59 72%);
+  box-shadow: 0 2px 2px #57503a40;
+}
+
+.ag-tilt-a { rotate: -0.7deg; }
+.ag-tilt-b { rotate: 0.6deg; }
+.ag-tilt-c { rotate: 0.3deg; }
+.ag-tilt-d { rotate: -0.4deg; }
+
+.ag-who {
+  display: grid; gap: 5px; min-width: 0;
+}
+
+.ag-name {
+  margin: 0; font-family: var(--display-font); font-weight: 400; font-size: 26px; letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.ag-ask {
+  font-size: 14px; line-height: 1.45; color: var(--ag-soft, var(--muted));
+}
+
+.ag-inbox {
+  display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: 12px; line-height: 1.4;
+  color: var(--ag-soft, var(--muted));
+}
+
+.ag-inbox .kit-face + .kit-face {
+  margin-left: -11px; box-shadow: 0 0 0 1.5px var(--ag-bg, var(--white));
+}
+
+.ag-wait {
+  margin-top: auto;
+}
+
+.ag-wait p {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+}
+
+.ag-wait p b {
+  font-size: 12.5px; font-weight: 600; line-height: 1.4;
+}
+
+.ag-wait p span {
+  font-family: var(--display-font); font-size: 22px; line-height: 1; letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* The wait meter: one more part fills, and warms, with each step of waiting. */
+.ag-meter {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 9px;
+}
+
+.ag-meter b {
+  height: 6px; border-radius: 3px; background: #3a3d2f17; transform-origin: left;
+}
+
+.ag-w0 .ag-meter b:nth-child(-n + 1),
+.ag-w1 .ag-meter b:nth-child(-n + 2),
+.ag-w2 .ag-meter b:nth-child(-n + 3),
+.ag-w3 .ag-meter b {
+  background: var(--ag-fill);
+}
+
+.ag-chase {
+  position: absolute; top: 13px; right: 12px; border-radius: 999px; background: #9c4b26; padding: 2px 9px;
+  font-size: 11.5px; font-style: normal; font-weight: 600; line-height: 1.5; color: #fff9f3;
+}
+
+/* Waiting on them: a quiet, dashed tile. */
+.ag-tile.ag-them {
+  border-style: dashed; box-shadow: 0 0 0 0 #0000, 0 9px 16px -15px #57503a59;
+}
+
+.ag-them .ag-name {
+  color: #575d4e;
+}
+
+.ag-them .ag-wait p b,
+.ag-square .ag-wait p b {
+  color: var(--muted);
+}
+
+.ag-them .ag-wait p span,
+.ag-square .ag-wait p span {
+  font-family: var(--body); font-size: 12.5px; letter-spacing: 0; color: var(--muted);
+}
+
+/* All square: the tile cools into the wall. */
+.ag-tile.ag-square {
+  box-shadow: none;
+}
+
+.ag-square .ag-name {
+  color: #6b705f;
+}
+
+.ag-square .ag-wait p b {
+  display: inline-flex; align-items: center; gap: 6px;
+}
+
+.ag-square .ag-wait p b::before {
+  content: ""; width: 5px; height: 9px; margin: 0 3px 3px 2px; border: solid #7e906a;
+  border-width: 0 1.8px 1.8px 0; rotate: 40deg;
+}
+
+/* A tile that only shuffled along lifts a little as it goes. */
+.ag-tile.is-new {
+  animation: ag-shuffle 0.9s ease-out both;
+}
+
+@keyframes ag-shuffle {
+  0%, 35% { box-shadow: 0 0 0 0 #0000, 0 18px 22px -14px #57503a99; }
+}
+
+/* The tile an email was about flies above the rest, lands, then warms or cools
+   from what it was into what it is. */
+.ag-tile.ag-jump.is-new {
+  z-index: 4; animation: ag-land 1.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes ag-land {
+  0% {
+    background-color: var(--ag-was-bg); border-color: var(--ag-was-edge);
+    box-shadow: 0 0 0 0 #0000, 0 28px 30px -16px #57503ab3;
+  }
+
+  38% {
+    background-color: var(--ag-was-bg); border-color: var(--ag-was-edge);
+    box-shadow: 0 0 0 4px var(--ag-edge), 0 28px 30px -16px #57503ab3;
+  }
+
+  70% {
+    box-shadow: 0 0 0 4px var(--ag-edge), 0 9px 16px -13px #57503a80;
+  }
+}
+
+.ag-tile.ag-jump.is-new .ag-meter b {
+  animation: ag-fill 0.4s ease-out both;
+}
+
+.ag-tile.ag-jump.is-new .ag-meter b:nth-child(1) { animation-delay: 0.7s; }
+.ag-tile.ag-jump.is-new .ag-meter b:nth-child(2) { animation-delay: 0.82s; }
+.ag-tile.ag-jump.is-new .ag-meter b:nth-child(3) { animation-delay: 0.94s; }
+.ag-tile.ag-jump.is-new .ag-meter b:nth-child(4) { animation-delay: 1.06s; }
+
+@keyframes ag-fill {
+  from { background-color: #3a3d2f17; transform: scaleX(0.15); }
+}
+
+.ag-tile.is-new .ag-chase {
+  animation: ag-stamp 0.45s 0.75s cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
+}
+
+@keyframes ag-stamp {
+  from { opacity: 0; transform: scale(1.5) rotate(-6deg); }
+}
+
+.ag-legend {
+  list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 6px 22px; font-size: 12.5px; line-height: 1.5; color: var(--muted);
+}
+
+.ag-legend li {
+  display: flex; align-items: center; gap: 8px;
+}
+
+.ag-legend i {
+  width: 34px; height: 12px; border-radius: 3px; border: 1px solid #cdd1c0; background: #fdfcf8;
+}
+
+.ag-legend-you i {
+  border-color: #dcc4a0; background: linear-gradient(90deg, #edf1e2, #f2f0d6 34%, #f7e8cb 62%, #f3c9b0);
+}
+
+.ag-legend-them i {
+  border-style: dashed;
+}
+
+.ag-legend-square i {
+  border-color: #e3dfce; background: #f3f0e4;
+}
+
+.ag-hero-note,
+.ag-studio-note {
+  margin: 18px auto 0; max-width: 620px; font-size: 15px; line-height: 1.7; color: var(--muted);
+  text-align: center;
+}
+
+/* ---- Monday's note: one tile over four mornings ---- */
+
+.ag-monday {
+  display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr); gap: 76px; align-items: center;
+}
+
+.ag-week {
+  order: -1; margin: 0; min-width: 0;
+}
+
+.ag-week-page {
+  border: 1px solid #d4d9c8; border-radius: 12px; background: var(--white); padding: 20px;
+  box-shadow: 0 12px 44px -28px #5762482b;
+}
+
+.ag-week-head {
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 14px;
+}
+
+.ag-week-head .ag-ask {
+  margin-top: 4px;
+}
+
+.ag-mornings {
+  list-style: none; margin: 18px 0 0; padding: 0; display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+}
+
+.ag-morning {
+  position: relative; display: grid; gap: 2px; align-content: start; min-width: 0;
+  border: 1px solid var(--ag-edge); border-radius: 5px; background: var(--ag-bg); padding: 12px 11px 11px;
+}
+
+/* A pencil arrow from one morning to the next. */
+.ag-morning + .ag-morning::before {
+  content: "→"; position: absolute; left: -11px; top: 11px; width: 12px; font-size: 12px; line-height: 1;
+  color: #9a9f8a; text-align: center;
+}
+
+.ag-day {
+  font-family: var(--display-font); font-style: italic; font-size: 22px; line-height: 1.1;
+}
+
+.ag-morning > b {
+  margin-top: 8px; font-size: 11.5px; font-weight: 600; line-height: 1.35; color: var(--ag-soft);
+}
+
+.ag-since {
+  font-family: var(--display-font); font-size: 22px; line-height: 1.05; letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.ag-week figcaption {
+  margin: 12px 4px 0; font-family: var(--note); font-style: italic; font-size: 20px; line-height: 1.3;
+  color: #6d745f;
+}
+
+.ag-week-mail {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px;
+  align-items: start;
+}
+
+.ag-ghost,
+.ag-draft {
+  border-radius: 10px; padding: 12px 15px; min-width: 0;
+}
+
+/* The follow-up that never got written. */
+.ag-ghost {
+  border: 1px dashed #c3c7b5; color: var(--muted);
+}
+
+.ag-ghost .story-from {
+  color: #6b705f;
+}
+
+.ag-ghost .story-subject {
+  color: var(--muted);
+}
+
+.ag-ghost s {
+  text-decoration-color: #b9755199; text-decoration-thickness: 1.5px;
+}
+
+.ag-draft {
+  border: 1px solid #d4d9c8; background: var(--white); box-shadow: 0 14px 26px -20px #57503a99;
+}
+
+.ag-draft .story-label svg {
+  color: #c5463a;
+}
+
+.ag-draft .story-subject {
+  font-family: var(--display-font); font-style: italic; font-size: 17px; line-height: 1.3; color: #4c5540;
+  margin-top: 2px;
+}
+
+/* ---- Solo or studio ---- */
+
+.ag-studio-story {
+  max-width: 1060px; margin: 38px auto 0;
+}
+
+.ag-studio-story .story-bar {
+  display: grid; grid-template-columns: 1fr auto 1fr; margin-bottom: 20px;
+}
+
+/* The two-option switch: the story's tabs, drawn as one control. */
+.ag-switch {
+  grid-column: 2; flex: none; gap: 2px; padding: 4px; border: 1px solid #d4d9c8; border-radius: 999px;
+  background: #f3f3ea; overflow: visible;
+}
+
+.ag-page .ag-switch [role="tab"] {
+  border: 0; border-radius: 999px; padding: 9px 24px; font-size: 15px; font-weight: 500;
+  color: var(--muted);
+}
+
+.ag-page .ag-switch [role="tab"]:hover {
+  background: #e9e9dd;
+}
+
+.ag-page .ag-switch [role="tab"][aria-selected="true"] {
+  background: var(--green); color: var(--paper);
+}
+
+.ag-switch .story-progress {
+  height: 3px; background: var(--paper); opacity: 0.5;
+}
+
+.ag-studio-story .story-pause {
+  grid-column: 3; justify-self: end;
+}
+
+/* The email and whose inboxes feed the wall on the left, the wall on the right.
+   Both slides' walls fill the stage, so the switch never changes its height. */
+.ag-studio-story .story-slide {
+  display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); grid-template-rows: auto 1fr;
+  gap: 16px 22px; align-items: start;
+}
+
+.ag-studio-story .ag-board {
+  grid-area: 1 / 2 / span 2; align-self: stretch; display: flex; flex-direction: column;
+}
+
+.ag-studio-story .ag-wall {
+  flex: 1;
+}
+
+/* A burst: the client's email, and under it what the other two inboxes got in
+   the same minute. Those two are only traffic, so they are smaller and say less.
+   They sit in their own row so a burst is as tall hidden as it is shown. */
+.ag-studio-story .story-burst {
+  flex-flow: column nowrap; align-items: stretch; gap: 0;
+}
+
+.ag-studio-story .story-burst > .story-email:not(.is-small) {
+  flex: 0 0 auto; width: auto; max-width: none;
+}
+
+.ag-also {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px;
+}
+
+.ag-also > .story-email {
+  justify-self: stretch; width: auto; padding: 8px 11px 9px; opacity: 0.9;
+}
+
+.ag-also .story-from,
+.ag-also .story-subject {
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px;
+}
+
+.ag-also .story-from {
+  margin-top: 3px;
+}
+
+.ag-also > .story-email:nth-child(1) { animation-delay: 0.14s; }
+.ag-also > .story-email:nth-child(2) { animation-delay: 0.28s; }
+
+/* Mail leaves toward the wall on its right, and stops short of the first tile. */
+.ag-studio-story .story-mail[data-flow="across"] .is-leaving.story-email,
+.ag-studio-story .story-mail[data-flow="across"] .is-leaving .story-email {
+  animation-name: ag-across-out;
+}
+
+@keyframes ag-across-out {
+  to { opacity: 0; transform: translateX(40px) scale(0.97); filter: blur(3px); }
+}
+
+.ag-feeds {
+  grid-column: 1; padding: 0 4px; font-size: 15px; line-height: 1.7; color: var(--muted);
+}
+
+.ag-feeds b {
+  display: block; margin-bottom: 4px; font-family: var(--display-font); font-weight: 400; font-size: 24px;
+  letter-spacing: -0.02em; line-height: 1.15; color: var(--ink);
+}
+
+.ag-feeds-who {
+  margin-right: 6px; font-weight: 500; color: var(--ink); white-space: nowrap;
+}
+
+.ag-feeds-who .kit-face {
+  margin-right: 5px; vertical-align: -4px;
+}
+
+/* ---- Requests by client: every ask in one list ---- */
+
+.ag-scope {
+  display: grid; grid-template-columns: minmax(0, 0.84fr) minmax(0, 1fr); gap: 76px; align-items: start;
+}
+
+.ag-scope-story .story-bar {
+  justify-content: space-between;
+}
+
+/* An email is posted into the top of the list: it slides down and the list's
+   top edge takes it in, a line at a time. */
+.ag-scope-story .story-mail .is-new.story-email {
+  animation: ag-post-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.ag-scope-story .story-mail .is-leaving.story-email {
+  animation: ag-post-out 0.95s cubic-bezier(0.5, 0, 0.6, 1) both;
+}
+
+@keyframes ag-post-in {
+  from { opacity: 0; transform: translateY(-34px); }
+}
+
+/* The clip's lower edge stays level with the top of the list while the card slides down behind it. */
+@keyframes ag-post-out {
+  0% { opacity: 1; transform: none; clip-path: inset(-30px -30px -12px -30px); }
+  75% { opacity: 1; }
+  100% { opacity: 0.4; transform: translateY(calc(100% + 10px)); clip-path: inset(-30px -30px 100% -30px); }
+}
+
+.ag-page .ag-slip {
+  padding: 20px 22px 22px;
+}
+
+.ag-slip .kit-head {
+  margin-bottom: 8px;
+}
+
+.ag-brief {
+  font-size: 13.5px; line-height: 1.5; color: var(--muted);
+}
+
+.ag-brief b {
+  margin-right: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink);
+}
+
+.ag-asks {
+  list-style: none; margin: 14px 0 0; padding: 0; border-bottom: 1px dashed #dcdfd0;
+}
+
+.ag-asks > li {
+  display: grid; grid-template-columns: 50px minmax(0, 1fr) auto; align-items: center; gap: 2px 12px;
+  border-top: 1px dashed #dcdfd0; padding: 9px 8px 9px 6px;
+}
+
+.ag-asks time {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.4; color: var(--muted); white-space: nowrap;
+}
+
+.ag-asks > li > div {
+  display: grid; gap: 1px; min-width: 0;
+}
+
+.ag-asks strong {
+  font-size: 14px; font-weight: 600; line-height: 1.35;
+}
+
+.ag-asks div span {
+  font-size: 12px; line-height: 1.4; color: var(--muted);
+}
+
+.ag-tag {
+  border-radius: 999px; background: var(--sage); padding: 3px 10px; font-size: 11.5px; font-style: normal;
+  font-weight: 500; line-height: 1.4; color: var(--green); white-space: nowrap;
+}
+
+/* An ask from outside the brief stands out. */
+.ag-asks > .ag-extra {
+  background: #fbefe6; box-shadow: inset 3px 0 0 #dd9a6c;
+}
+
+.ag-extra .ag-tag {
+  background: #f1d3bf; color: #7d4120;
+}
+
+/* A new ask opens at the top of the list and nudges the rest down. */
+.ag-page .ag-slip .ag-asks > li.is-new {
+  overflow: hidden; animation: ag-line 1s ease-out both;
+}
+
+@keyframes ag-line {
+  0% { max-height: 0; padding-block: 0; opacity: 0; background-color: #e3ead2; }
+  40% { max-height: 120px; opacity: 1; background-color: #e3ead2; }
+  100% { max-height: 120px; }
+}
+
+.ag-page .ag-slip .ag-asks > .ag-extra.is-new {
+  animation-name: ag-line-extra;
+}
+
+@keyframes ag-line-extra {
+  0% { max-height: 0; padding-block: 0; opacity: 0; background-color: #f3c9b0; }
+  40% { max-height: 120px; opacity: 1; background-color: #f3c9b0; }
+  100% { max-height: 120px; }
+}
+
+.ag-tally {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px;
+}
+
+.ag-tally > div {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 2px 12px;
+  border-radius: 8px; background: #eef2e3; padding: 11px 14px;
+}
+
+.ag-tally > .ag-tally-out {
+  background: #f8e3d4;
+}
+
+/* The count an email changed gets a ring in its own colour. */
+.ag-page .ag-tally > .is-touched {
+  animation: ag-count 1.4s ease-out both;
+}
+
+@keyframes ag-count {
+  0%, 40% { box-shadow: 0 0 0 2px #91a577, 0 0 0 6px #91a57733; }
+  100% { box-shadow: 0 0 0 2px #91a57700, 0 0 0 6px #91a57700; }
+}
+
+.ag-page .ag-tally > .ag-tally-out.is-touched {
+  animation-name: ag-count-out;
+}
+
+@keyframes ag-count-out {
+  0%, 40% { box-shadow: 0 0 0 2px #d78450, 0 0 0 6px #d7845033; }
+  100% { box-shadow: 0 0 0 2px #d7845000, 0 0 0 6px #d7845000; }
+}
+
+.ag-tally strong {
+  grid-row: span 2; font-family: var(--display-font); font-weight: 400; font-size: 46px; line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.ag-tally small {
+  font-size: 12.5px; font-weight: 500; line-height: 1.4;
+}
+
+.ag-marks {
+  display: flex; gap: 4px; min-height: 12px;
+}
+
+.ag-marks b {
+  width: 12px; height: 12px; border-radius: 3px; background: #8fa173;
+}
+
+.ag-tally-out .ag-marks b {
+  background: #d78450;
+}
+
+.ag-page .ag-slip .ag-marks b.is-new {
+  animation: ag-mark 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.5) both;
+}
+
+@keyframes ag-mark {
+  from { opacity: 0; transform: scale(0.2); }
+}
+
+/* ---- Nothing new to keep up: three pinned notes ---- */
+
+.ag-notes {
+  list-style: none; margin: 52px 0 0; padding: 0; display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px;
+}
+
+.ag-notes li {
+  position: relative; border: 1px solid #e0dccb; border-radius: 5px; background: var(--white);
+  padding: 30px 26px 28px; box-shadow: 0 12px 20px -16px #57503a80; rotate: -0.8deg;
+}
+
+.ag-notes li:nth-child(2) {
+  background: #f4f6ec; border-color: #d6dcc8; rotate: 0.7deg;
+}
+
+.ag-notes li:nth-child(3) {
+  rotate: -0.3deg;
+}
+
+.ag-notes li::before {
+  content: ""; position: absolute; top: -6px; left: 50%; width: 11px; height: 11px; margin-left: -5.5px;
+  border-radius: 50%; background: radial-gradient(circle at 35% 30%, #dcbfa3, #a67c59 72%);
+  box-shadow: 0 2px 2px #57503a40;
+}
+
+.ag-notes h3 {
+  font-family: var(--display-font); font-weight: 400; font-size: 29px; letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.ag-notes p {
+  margin-top: 12px; font-size: 15.5px; line-height: 1.75; color: #595e53;
+}
+
+/* ---- How to start ---- */
+
+.ag-start {
+  display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 20px 76px;
+  align-items: start;
+}
+
+.ag-steps {
+  list-style: none; margin: 0; padding: 0;
+}
+
+.ag-steps > li {
+  display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 0 18px; border-top: 1px solid var(--line);
+  padding: 26px 0 28px;
+}
+
+.ag-steps > li:first-child {
+  border-top: 0; padding-top: 6px;
+}
+
+.ag-step-number {
+  font-family: var(--display-font); font-style: italic; font-size: 52px; line-height: 0.9; color: #a1a88e;
+}
+
+.ag-steps h3 {
+  font-family: var(--display-font); font-weight: 400; font-size: 32px; letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.ag-steps p {
+  margin-top: 10px; max-width: 560px; font-size: 16px; line-height: 1.75; color: #595e53;
+}
+
+/* Sentences a freelancer would type. */
+.ag-says {
+  list-style: none; margin: 14px 0 4px; padding: 0; display: grid; gap: 8px; max-width: 560px;
+}
+
+.ag-says li {
+  border: 1px solid var(--line); border-radius: 10px; background: #f8f8f1; padding: 10px 15px;
+  font-family: var(--display-font); font-style: italic; font-size: 20px; line-height: 1.25;
+  letter-spacing: -0.01em; color: #4c5540;
+}
+
+.ag-start-foot {
+  grid-column: 2; margin-top: -8px; padding-left: 72px; font-size: 15px; line-height: 1.7;
+  color: var(--muted); text-wrap: balance;
+}
+
+/* ---- The email-safety note ---- */
+
+.ag-safe-card {
+  display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 56px; align-items: start;
+  border-radius: 26px 14px 24px 16px; background: #eef0e1; padding: 48px 52px;
+}
+
+.ag-safe-card .ag-head h2 {
+  font-size: clamp(36px, 3.6vw, 48px);
+}
+
+.ag-safe-list {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: 14px;
+}
+
+.ag-safe-list li {
+  position: relative; padding-left: 30px; font-size: 16px; line-height: 1.65; color: #4a4f43;
+}
+
+.ag-safe-list li::before {
+  content: ""; position: absolute; left: 6px; top: 6px; width: 6px; height: 11px; border: solid var(--green);
+  border-width: 0 2px 2px 0; rotate: 40deg;
+}
+
+/* What it cannot do gets a cross, not a tick. */
+.ag-safe-list .ag-cannot::before {
+  left: 2px; top: 12px; width: 14px; height: 0; border-width: 2px 0 0; rotate: 45deg;
+  box-shadow: none;
+}
+
+.ag-safe-list .ag-cannot::after {
+  content: ""; position: absolute; left: 2px; top: 12px; width: 14px; border-top: 2px solid var(--green);
+  rotate: -45deg;
+}
+
+.ag-safe-list a {
+  display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ---- Other audiences, and the closing call ---- */
+
+.ag-others {
+  padding-top: 96px;
+}
+
+.ag-others h2 {
+  font-family: var(--display-font); font-weight: 400; font-size: 36px; letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.ag-others > p {
+  margin: 8px 0 20px; font-size: 16px; line-height: 1.7; color: var(--muted);
+}
+
+.ag-closer {
+  padding-block: 110px 90px; text-align: center;
+}
+
+.ag-closer-tiles {
+  list-style: none; margin: 0 auto 30px; padding: 0; display: flex; justify-content: center; gap: 8px;
+}
+
+.ag-closer-tiles li {
+  width: 44px; height: 32px; border: 1px solid var(--ag-edge); border-radius: 4px; background: var(--ag-bg);
+  box-shadow: 0 6px 10px -8px #57503a80;
+}
+
+.ag-closer-tiles li:nth-child(odd) {
+  rotate: -2deg;
+}
+
+.ag-closer-tiles li:nth-child(even) {
+  rotate: 1.5deg;
+}
+
+.ag-closer-tiles .ag-them {
+  border-style: dashed; box-shadow: none;
+}
+
+.ag-closer-tiles .ag-square {
+  box-shadow: none;
+}
+
+.ag-closer .eyebrow {
+  color: var(--green); font-size: 13px;
+}
+
+.ag-closer h2 {
+  margin: 16px 0 30px; font-size: clamp(44px, 5.4vw, 74px);
+}
+
+/* ---- Narrower screens ---- */
+
+@media (max-width: 1150px) {
+  .ag-hero-story {
+    --ag-column: calc((100vw - 72px - 84px) / 3 + 16px);
+  }
+
+  .ag-hero-story .ag-bar-note {
+    display: none;
+  }
+
+  .ag-hero-story .story-bar {
+    justify-content: flex-end;
+  }
+
+  .ag-monday,
+  .ag-scope {
+    gap: 44px;
+  }
+
+  .ag-start {
+    column-gap: 44px;
+  }
+
+  .ag-wall {
+    gap: 16px;
+  }
+
+  .ag-name {
+    font-size: 24px;
+  }
+}
+
+@media (max-width: 900px) {
+  .ag-monday,
+  .ag-studio,
+  .ag-scope,
+  .ag-keep,
+  .ag-start,
+  .ag-safe {
+    padding-top: 84px;
+  }
+
+  /* Fewer than three columns: a card falls straight onto the top of the wall. */
+  .ag-to-row1,
+  .ag-to-row2 {
+    --ag-fall: 84px;
+  }
+
+  .ag-to-left,
+  .ag-to-right {
+    --ag-drift: 0px; --ag-lean: -3deg;
+  }
+
+  /* The bar becomes a row of its own: the note on the left, pause on the right. */
+  .ag-hero-story .story-bar {
+    position: static; margin-bottom: 10px; align-items: center; justify-content: space-between;
+  }
+
+  .ag-hero-story .ag-bar-note {
+    display: block; max-width: none; padding: 0; font-family: var(--body); font-style: normal;
+    font-size: 14px; line-height: 1.5; color: var(--muted); rotate: none;
+  }
+
+  .ag-wall {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ag-monday,
+  .ag-scope,
+  .ag-start {
+    grid-template-columns: minmax(0, 1fr); gap: 34px;
+  }
+
+  .ag-week {
+    order: 0;
+  }
+
+  .ag-studio-story .story-slide {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto; gap: 10px;
+  }
+
+  .ag-studio-story .ag-board {
+    grid-area: auto;
+  }
+
+  .ag-feeds {
+    padding-top: 4px;
+  }
+
+  .ag-notes {
+    grid-template-columns: minmax(0, 1fr); gap: 22px; max-width: 560px; margin-inline: auto;
+  }
+
+  .ag-start-foot {
+    grid-column: 1; padding-left: 0;
+  }
+
+  .ag-safe-card {
+    grid-template-columns: minmax(0, 1fr); gap: 28px; padding: 36px 32px;
+  }
+}
+
+/* Phones: the wall is one column, and a tile reads across: who on the left,
+   how long on the right. */
+@media (max-width: 650px) {
+  .ag-monday,
+  .ag-studio,
+  .ag-scope,
+  .ag-keep,
+  .ag-start,
+  .ag-safe {
+    padding-top: 68px;
+  }
+
+  /* The header's links hang below it on a phone, as on the homepage. */
+  .ag-hero {
+    padding-top: 78px;
+  }
+
+  .ag-lede {
+    margin-top: 22px; font-size: 16px;
+  }
+
+  .ag-head > p:not(.eyebrow) {
+    font-size: 16px;
+  }
+
+  .ag-hero-story {
+    margin-top: 30px;
+  }
+
+  .ag-hero-story .ag-bar-note {
+    text-align: left;
+  }
+
+  .ag-page .ag-board,
+  .ag-hero-story .ag-board {
+    padding: 14px 12px 14px;
+  }
+
+  .ag-hero-story .ag-board {
+    margin-top: -22px; padding-top: 36px;
+  }
+
+  .ag-board-head h2,
+  .ag-board-head h3 {
+    font-size: 26px;
+  }
+
+  .ag-sort {
+    order: 3; flex-basis: 100%; font-size: 13px;
+  }
+
+  .ag-wall,
+  .ag-board-small .ag-wall {
+    grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; gap: 9px; margin-top: 14px;
+  }
+
+  .ag-tile {
+    display: grid; grid-template-columns: minmax(0, 1fr) 104px; align-items: start; gap: 6px 12px;
+    padding: 12px 12px 11px 14px;
+  }
+
+  .ag-tile::before {
+    display: none;
+  }
+
+  .ag-tilt-a,
+  .ag-tilt-b,
+  .ag-tilt-c,
+  .ag-tilt-d {
+    rotate: none;
+  }
+
+  .ag-who {
+    gap: 3px;
+  }
+
+  .ag-name {
+    font-size: 21px;
+  }
+
+  .ag-ask {
+    font-size: 13px; line-height: 1.4;
+  }
+
+  .ag-wait {
+    margin-top: 2px; text-align: right;
+  }
+
+  .ag-wait p {
+    flex-direction: column-reverse; align-items: flex-end; gap: 3px;
+  }
+
+  .ag-wait p b {
+    font-size: 11.5px;
+  }
+
+  .ag-wait p span {
+    font-size: 20px;
+  }
+
+  .ag-them .ag-wait p span,
+  .ag-square .ag-wait p span {
+    font-size: 12px;
+  }
+
+  .ag-meter {
+    margin-top: 6px; gap: 3px;
+  }
+
+  .ag-meter b {
+    height: 5px; transform-origin: left;
+  }
+
+  .ag-chase {
+    position: static; grid-column: 1; justify-self: start; margin-top: -1px;
+  }
+
+  .ag-legend {
+    justify-content: flex-start; gap: 5px 16px; margin-top: 12px; font-size: 12px;
+  }
+
+  .ag-legend i {
+    width: 24px;
+  }
+
+  /* Four mornings, one under the next. */
+  .ag-week-page {
+    padding: 14px;
+  }
+
+  .ag-mornings {
+    grid-template-columns: minmax(0, 1fr); gap: 7px; margin-top: 14px;
+  }
+
+  .ag-morning {
+    grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 0 10px;
+    padding: 9px 12px 9px 11px;
+  }
+
+  .ag-morning + .ag-morning::before {
+    content: "↓"; left: 24px; top: -11px;
+  }
+
+  .ag-morning > b {
+    margin-top: 0; font-size: 12px;
+  }
+
+  .ag-since {
+    font-size: 20px;
+  }
+
+  .ag-morning .ag-meter {
+    grid-column: 2 / -1; margin-top: 6px;
+  }
+
+  .ag-week figcaption {
+    font-size: 19px;
+  }
+
+  .ag-week-mail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ag-studio-story {
+    margin-top: 28px;
+  }
+
+  /* One column: tiles keep their own height, with one floor so both slides come out about as tall. */
+  .ag-studio-story .story-slide {
+    grid-template-rows: auto auto auto; align-content: start;
+  }
+
+  .ag-studio-story .ag-board {
+    display: block;
+  }
+
+  .ag-studio-story .ag-tile {
+    min-height: 98px;
+  }
+
+  .ag-studio-story .story-bar {
+    grid-template-columns: auto 1fr; margin-bottom: 14px;
+  }
+
+  .ag-switch {
+    grid-column: 1;
+  }
+
+  .ag-page .ag-switch [role="tab"] {
+    padding: 9px 20px;
+  }
+
+  .ag-studio-story .story-pause {
+    grid-column: 2;
+  }
+
+  .ag-page .ag-slip {
+    padding: 14px 13px 14px;
+  }
+
+  .ag-asks > li {
+    grid-template-columns: 46px minmax(0, 1fr); padding: 9px 6px;
+  }
+
+  .ag-asks .ag-tag {
+    grid-column: 2; justify-self: start; margin-top: 4px;
+  }
+
+  .ag-tally {
+    gap: 8px;
+  }
+
+  .ag-tally > div {
+    gap: 2px 9px; padding: 10px 11px;
+  }
+
+  .ag-tally strong {
+    font-size: 38px;
+  }
+
+  .ag-tally small {
+    font-size: 12px;
+  }
+
+  .ag-notes {
+    margin-top: 36px;
+  }
+
+  .ag-notes li {
+    padding: 26px 22px 24px;
+  }
+
+  .ag-steps > li {
+    grid-template-columns: 40px minmax(0, 1fr); gap: 0 12px; padding: 22px 0 24px;
+  }
+
+  .ag-step-number {
+    font-size: 42px;
+  }
+
+  .ag-steps h3 {
+    font-size: 28px;
+  }
+
+  .ag-says li {
+    font-size: 18px;
+  }
+
+  .ag-safe-card {
+    padding: 30px 22px; width: calc(100% - 0px);
+  }
+
+  .ag-safe-list li {
+    font-size: 15.5px;
+  }
+
+  .ag-safe-list a {
+    white-space: normal;
+  }
+
+  .ag-others {
+    padding-top: 68px;
+  }
+
+  .ag-closer {
+    padding-block: 76px 60px;
+  }
+}
+
+/* With reduced motion the player rests every story at its end; nothing of this page's moves either. */
+@media (prefers-reduced-motion: reduce) {
+  .ag-page .story-mail .story-email,
+  .ag-page .story-mail .is-new.story-email,
+  .ag-page .story-mail .is-leaving.story-email,
+  .ag-page .story-mail[data-flow] .is-new .story-email,
+  .ag-page .story-mail[data-flow] .is-leaving .story-email,
+  .ag-tile.is-new,
+  .ag-tile.ag-jump.is-new,
+  .ag-tile.is-new .ag-meter b,
+  .ag-tile.is-new .ag-chase,
+  .ag-page .ag-slip .ag-asks > li.is-new,
+  .ag-page .ag-slip .ag-marks b.is-new,
+  .ag-page .ag-tally > .is-touched {
+    animation: none;
+  }
+}

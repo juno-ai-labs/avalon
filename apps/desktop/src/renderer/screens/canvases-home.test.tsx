@@ -287,12 +287,18 @@ describe('CanvasesHomeScreen', () => {
     expect(screen.queryByRole('button', { name: 'Marketplace' })).toBeNull();
     const templates = screen.getByRole('region', { name: 'Canvas templates' });
     const categories = within(templates).getByRole('group', { name: 'Template category' });
-    expect(within(categories).getByRole('button', { name: 'Developers', pressed: true })).toBeInTheDocument();
+    expect(within(categories).getByRole('button', { name: 'Wholesalers', pressed: true })).toBeInTheDocument();
     const countByCategory = [
+      ['Wholesalers', 1],
+      ['Agencies', 1],
+      ['Legal teams', 1],
+      ['Accountants', 1],
+      ['Recruiters', 2],
+      ['Brokers', 1],
+      ['Event planners', 1],
       ['Developers', 3],
       ['Product managers', 2],
       ['Parents', 3],
-      ['Recruiters', 1],
     ] as const;
     expect(within(categories).getAllByRole('button').map((button) => button.textContent))
       .toEqual(countByCategory.map(([label]) => label));
@@ -319,7 +325,7 @@ describe('CanvasesHomeScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Marketplace' }));
     fireEvent.click(screen.getByRole('button', { name: 'Recruiters' }));
     const cards = within(screen.getByRole('region', { name: 'Canvas templates' })).getByRole('list');
-    const template = within(cards).getByRole('button');
+    const template = within(cards).getByRole('button', { name: /^Recruiting market map/u });
     fireEvent.click(template);
     expect(screen.getByText('Opened canvas')).toBeInTheDocument();
     expect(createCanvas).toHaveBeenCalledExactlyOnceWith({

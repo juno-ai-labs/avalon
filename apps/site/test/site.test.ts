@@ -9,6 +9,7 @@ import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { handoffAppLink, handoffDevice, handoffHeading, handoffPlan } from '../src/link-handoff';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
+import { audiences, renderAudienceSitemap } from '../src/audiences';
 import { blogPosts, renderBlogSitemap, renderSiteChrome } from '../src/site-chrome';
 import { renderConnectorMark, renderPluginGlyph } from '../src/connector-marks';
 import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS } from '../../../packages/skills/marketplace-skills/connectors';
@@ -205,10 +206,70 @@ describe('public Rally site', () => {
       '/trust/subprocessors/', '/trust/cookies/', '/trust/acceptable-use/',
     ]);
     expect(column('Blog')).toEqual(['/blog/', `/blog/${blogPosts[0]?.slug ?? ''}/`]);
+    expect(column('Product')).toEqual(['/canvases/', '/sidekicks/', '/marketplace/', '/developer-mode/', '/#pricing']);
+    expect(column('Who it’s for')).toEqual([
+      '/for/wholesalers/', '/for/agencies/', '/for/legal/', '/for/accountants/', '/for/recruiters/', '/for/brokers/', '/for/event-planners/',
+    ]);
+  });
+
+  it('fills in each audience page’s sign-up link from its registry row, with a template the catalog holds', () => {
+    const start = (slug: string): string => renderSiteChrome(`<!-- rally:audience-start ${slug} -->`);
+    expect(audiences.map(({ slug }) => start(slug))).toEqual([
+      'https://app.rallywith.ai/app/templates/order-board',
+      'https://app.rallywith.ai/app/templates/client-wall',
+      'https://app.rallywith.ai/app/templates/legal-docket',
+      'https://app.rallywith.ai/app/templates/client-document-checklist',
+      'https://app.rallywith.ai/app/templates/recruiting-desk',
+      'https://app.rallywith.ai/app/templates/todays-follow-ups',
+      'https://app.rallywith.ai/app/templates/event-countdown',
+    ]);
+    // The marker sits inside an attribute on the page, and is filled in there too.
+    expect(renderSiteChrome('<a href="<!-- rally:audience-start legal -->">Connect</a>'))
+      .toBe('<a href="https://app.rallywith.ai/app/templates/legal-docket">Connect</a>');
+    expect(() => start('lawyers')).toThrow('Unknown audience: lawyers');
+    // A template that left the catalog would send every visitor to the Canvases home with nothing started.
+    const catalog = marketplaceTemplates().map(({ slug }) => slug);
+    for (const { template } of audiences) expect(catalog, template).toContain(template);
+  });
+
+  it('lists every audience in the homepage grid, ending on the page for everything else', () => {
+    const grid = renderSiteChrome('<!-- rally:audience-grid -->');
+    expect([...grid.matchAll(/<a href="([^"]+)"><strong>([^<]+)<\/strong>/gu)].map(([, href, name]) => `${name} ${href}`)).toEqual([
+      'Wholesalers and small sellers /for/wholesalers/', 'Agencies and freelancers /for/agencies/', 'In-house legal teams /for/legal/',
+      'Accountants and bookkeepers /for/accountants/', 'Recruiters and staffing shops /for/recruiters/',
+      'Real estate, mortgage and insurance brokers /for/brokers/', 'Wedding and event planners /for/event-planners/',
+      'Something else? /developer-mode/',
+    ]);
+  });
+
+  it('lists the other audiences at the foot of an audience page, leaving out its own', () => {
+    const hrefs = (html: string): string[] => [...html.matchAll(/href="([^"]+)"/gu)].flatMap(([, href]) => (href ? [href] : []));
+    expect(hrefs(renderSiteChrome('<!-- rally:audience-others legal -->'))).toEqual([
+      '/for/wholesalers/', '/for/agencies/', '/for/accountants/', '/for/recruiters/', '/for/brokers/', '/for/event-planners/',
+    ]);
+    expect(() => renderSiteChrome('<!-- rally:audience-others lawyers -->')).toThrow('Unknown audience: lawyers');
+  });
+
+  it('lists every audience page in its sitemap', () => {
+    expect([...renderAudienceSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc)).toEqual([
+      'https://rallywith.ai/for/wholesalers/', 'https://rallywith.ai/for/agencies/', 'https://rallywith.ai/for/legal/',
+      'https://rallywith.ai/for/accountants/', 'https://rallywith.ai/for/recruiters/', 'https://rallywith.ai/for/brokers/',
+      'https://rallywith.ai/for/event-planners/',
+    ]);
+  });
+
+  it('gives the pencil pages one header: the homepage sections, the marketplace, the manual and the web app', () => {
+    const links = (html: string): string[] => [...html.matchAll(/<a [^>]*href="([^"]+)"([^>]*)>(.*?)<\/a>/gu)]
+      .map(([, href, attrs, body]) => `${(body ?? '').replace(/<svg[\s\S]*?<\/svg>|<[^>]+>/gu, '').trim()} ${href}${/aria-current="([^"]+)"/u.exec(attrs ?? '')?.[0] ? ` (${/aria-current="([^"]+)"/u.exec(attrs ?? '')?.[1]})` : ''}`);
+    expect(links(renderSiteChrome('<!-- rally:home-header -->'))).toEqual([
+      'rally /', 'Who it’s for /#who', 'Marketplace /marketplace/', 'Pricing /#pricing', 'The manual /help/',
+      'GitHub https://github.com/juno-ai-labs/avalon', 'Open Rally https://app.rallywith.ai',
+    ]);
+    expect(links(renderSiteChrome('<!-- rally:market-header -->'))).toContain('Marketplace /marketplace/ (page)');
   });
 
   it('links the GitHub repository from every header marker', () => {
-    for (const marker of ['site-nav', 'reading-nav', 'market-header', 'github-link', 'github-header-link']) {
+    for (const marker of ['site-nav', 'reading-nav', 'home-header', 'market-header', 'github-link', 'github-header-link']) {
       const links = [...renderSiteChrome(`<!-- rally:${marker} -->`).matchAll(/<a [^>]*href="https:\/\/github\.com\/[^"]+"[^>]*>/gu)].map(([tag]) => tag);
       expect(links, marker).toHaveLength(1);
       expect(links[0], marker).toContain('href="https://github.com/juno-ai-labs/avalon"');
@@ -317,7 +378,7 @@ describe('public Rally site', () => {
     expect(renderSiteChrome(renderTemplatePage(template('recruiting-market-map'))))
       .toMatch(/<p>Built into Rally, so there is nothing to set up:<\/p><ul [^>]*aria-label="Rally plugins it uses"><li><a href="\/help\/working-with-rally\/research-and-the-web\/"><span class="connector-mark" aria-hidden="true"><svg [\s\S]*?<\/svg><\/span>Web search<\/a><\/li><\/ul>/u);
     expect([...renderMarketplaceSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc).slice(0, 2))
-      .toEqual(['https://rallywith.ai/marketplace/pr-dashboard/', 'https://rallywith.ai/marketplace/email-notification-screener/']);
+      .toEqual(['https://rallywith.ai/marketplace/order-board/', 'https://rallywith.ai/marketplace/client-wall/']);
   });
   it("draws every connector a template may recommend with the app's own mark, as static SVG", () => {
     for (const { mark, name } of TEMPLATE_CONNECTORS) {
@@ -340,10 +401,11 @@ describe('public Rally site', () => {
   it('builds the marketplace from the app Marketplace templates, in catalog order', () => {
     const cards = renderSiteChrome('<!-- rally:marketplace-cards -->');
     expect([...cards.matchAll(/<h3>([^<]+)<\/h3>/gu)].map(([, name]) => name)).toEqual([
+      'Order board', 'Client wall', 'Legal docket', 'Client document checklist',
+      'Recruiting desk', 'Recruiting market map', 'Today’s follow-ups', 'Event countdown',
       'PR dashboard', 'Email notification screener', 'Repository changes podcast',
       'Granola feature requests', 'Competitor change monitor',
       'School notifications and calendar', 'Shared grocery list', 'Family calendar feed',
-      'Recruiting market map',
     ]);
     expect(cards).toContain('<li class="market-card" data-categories="developers"><div class="market-card-body"><p class="market-kind">For developers</p><h3>PR dashboard</h3>');
     // Each card's links: its recommended connectors' help pages, Start from this, then More info.
@@ -372,6 +434,6 @@ describe('public Rally site', () => {
       ['/marketplace/shared-grocery-list/', 'More info'],
     ]);
     expect([...renderSiteChrome('<!-- rally:marketplace-filters -->').matchAll(/data-filter="([^"]+)"/gu)].map(([, tag]) => tag))
-      .toEqual(['all', 'developers', 'product-managers', 'parents', 'recruiters']);
+      .toEqual(['all', 'wholesalers', 'agencies', 'legal', 'accountants', 'recruiters', 'brokers', 'event-planners', 'developers', 'product-managers', 'parents']);
   });
 });

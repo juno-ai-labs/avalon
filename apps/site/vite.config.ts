@@ -3,6 +3,7 @@ import { addPageCard, pageCardFile, pageCardFor, pageCards, renderPageCard } fro
 import { helpCenter } from './build/help/plugin';
 import { renderBlogCard, renderBlogIndex, renderBlogPost } from './src/blog-pages';
 import { audience, connectorNames, marketplaceTemplates, renderMarketplaceSitemap, renderTemplateCard, renderTemplatePage, templatePagePath } from './src/marketplace-catalog';
+import { audiencePath, audiences, renderAudienceSitemap } from './src/audiences';
 import { blogPosts, renderBlogSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
 import { defineConfig, type Plugin } from 'vite';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +34,7 @@ const generatedFiles = new Map<string, { type: string; render: () => string | Pr
     { type: 'image/png', render: () => renderTemplateCard({ slug, name, description, audience: audience(tags), connectors: connectorNames(connectors) }) },
   ] as const),
   ['marketplace/sitemap.xml', { type: 'application/xml', render: renderMarketplaceSitemap }],
+  ['for/sitemap.xml', { type: 'application/xml', render: renderAudienceSitemap }],
   ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
   // The hand-written pages' link previews, from `src/page-cards.ts`.
   ...pageCards.map((card) => [pageCardFile(card), { type: 'image/png', render: () => renderPageCard(card) }] as const),
@@ -146,6 +148,9 @@ export default defineConfig({
         canvases: `${projectRoot}canvases/index.html`,
         sidekicks: `${projectRoot}sidekicks/index.html`,
         marketplace: `${projectRoot}marketplace/index.html`,
+        developerMode: `${projectRoot}developer-mode/index.html`,
+        // One hand-written page per audience, at `for/<slug>/index.html`.
+        ...Object.fromEntries(audiences.map(({ slug }) => [`for-${slug}`, `${projectRoot}${audiencePath(slug).slice(1)}index.html`])),
         technology: `${projectRoot}src/technology.ts`,
         posthog: `${projectRoot}src/posthog.ts`,
         help: `${projectRoot}src/help.ts`,

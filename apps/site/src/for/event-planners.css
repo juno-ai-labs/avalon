@@ -1,0 +1,1450 @@
+@import "../home.css";
+
+/*
+ * /for/event-planners/: "the countdown". One event, one date, everything due
+ * before it. The page's own motion is time passing toward a date: numerals
+ * roll as days pass between emails, a vendor's state fills in along a short
+ * path, and the 11pm story turns from night to morning. story.ts keeps time;
+ * every rule here hangs off the classes it sets. Contract:
+ * docs/site-audience-pages.md.
+ */
+
+.ev-page {
+  --ev-hair: #ecede3; --ev-soft: #f6f6ee; --ev-rule: #d4d9c8; --ev-night: #252a24;
+  --ev-night-card: #30372f; --ev-dawn: #f6eddf; --ev-ease: cubic-bezier(0.6, 0.05, 0.2, 1);
+}
+
+.ev-page h1,
+.ev-page h2,
+.ev-page h3,
+.ev-page h4 {
+  font-family: var(--display-font); font-weight: 400; letter-spacing: -0.025em;
+}
+
+.ev-page h1,
+.ev-page h2,
+.ev-page h3,
+.ev-page h4 {
+  text-wrap: balance;
+}
+
+.ev-page p,
+.ev-page dd,
+.ev-page li {
+  text-wrap: pretty;
+}
+
+.ev-page h2 {
+  font-size: 62px; line-height: 1.02; letter-spacing: -0.035em;
+}
+
+.ev-page .trial-note {
+  font-size: 12.5px;
+}
+
+.ev-page .text-link {
+  font-size: 14px; color: var(--green);
+}
+
+/* A section's eyebrow is a moment in the run-up, set like a note in the margin. */
+.ev-moment {
+  font-family: var(--display-font); font-style: italic; font-size: 23px; line-height: 1.2;
+  color: #6d7759; margin-bottom: 16px;
+}
+
+.ev-section {
+  padding-top: 132px;
+}
+
+.ev-intro p:not(.ev-moment),
+.ev-client-copy > p:not(.ev-moment),
+.ev-keep-head > p:not(.ev-moment) {
+  font-size: 17px; line-height: 1.8; color: #595e53;
+}
+
+.ev-intro-center {
+  max-width: 800px; margin-inline: auto; text-align: center;
+}
+
+.ev-intro-center > p:last-child {
+  max-width: 620px; margin: 26px auto 0;
+}
+
+.ev-intro-split {
+  display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 72px; align-items: end;
+}
+
+.ev-intro-split p + p {
+  margin-top: 14px;
+}
+
+.ev-page .ev-inbox-sum {
+  display: flex; align-items: center; gap: 8px; margin-top: 20px; font-size: 14px; color: var(--ink);
+}
+
+.ev-inbox-sum .kit-face + .kit-face {
+  margin-left: -13px; box-shadow: 0 0 0 1.5px var(--paper);
+}
+
+.ev-inbox-sum b {
+  font-weight: 400; color: #91a577;
+}
+
+/* ---- What every example on this page shares ---- */
+
+.ev-page .story-bar {
+  margin-bottom: 12px;
+}
+
+.ev-bar-note {
+  flex: 1; min-width: 0; font-size: 14px; line-height: 1.5; color: var(--muted);
+}
+
+.ev-page .story-page.ev-sheet {
+  margin-top: 12px; padding: 24px 28px 22px; border-radius: 14px;
+}
+
+.ev-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px;
+  margin-bottom: 14px;
+}
+
+.ev-page .ev-head h2,
+.ev-page .ev-head h3 {
+  font-size: 29px; line-height: 1.1; letter-spacing: -0.02em;
+}
+
+/* Nothing snaps: a new row settles, a touched row takes a wash of sage. How
+   each example's mail arrives and goes is written with that example, below. */
+.ev-page .story-page [data-at].is-new:not(.is-moved) {
+  animation: ev-settle 0.8s 0.25s ease both;
+}
+
+.ev-page .story-page .is-touched {
+  animation: ev-wash 2.6s ease-out both;
+}
+
+@keyframes ev-settle {
+  from { opacity: 0; transform: translateY(5px); }
+}
+
+/* A whole block that changed takes a lighter wash than a single row. */
+.ev-page .story-page .ev-req-event.is-touched,
+.ev-page .story-page .ev-card.is-touched {
+  animation-name: ev-wash-soft;
+}
+
+@keyframes ev-wash {
+  0%, 30% { background-color: #e3ead2; }
+}
+
+@keyframes ev-wash-soft {
+  0%, 30% { background-color: #f0f3e6; }
+}
+
+/* A numeral that turns over. The reel holds each value in turn; a step slides
+   it up one. With no script only the last value shows. */
+.ev-reel {
+  display: block; height: 1em; overflow: hidden;
+  mask-image: linear-gradient(#0000, #000 9%, #000 91%, #0000);
+}
+
+.ev-reel > span {
+  display: block; height: 1em; line-height: 1; text-align: right;
+  transition: transform 1.25s var(--ev-ease);
+}
+
+.ev-page .story:not(.is-live) .ev-reel > span:not(:last-child) {
+  display: none;
+}
+
+.ev-page .s1 .ev-reel[data-roll="1"] > span,
+.ev-page .s2 .ev-reel[data-roll="2"] > span {
+  transform: translateY(-100%);
+}
+
+/* ---- The hero: the headline, one event's countdown, its vendors ---- */
+
+.ev-hero {
+  padding-block: 30px 10px;
+}
+
+.ev-event-slide {
+  display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr); column-gap: 76px;
+  grid-template-areas: "copy count" "mail bar" "vend vend"; align-items: center;
+  align-content: start;
+}
+
+.ev-hero-copy {
+  grid-area: copy;
+}
+
+.ev-hero-copy .eyebrow {
+  font-size: 12.5px; letter-spacing: 0.02em; margin-bottom: 26px;
+}
+
+.ev-hero-copy h1 {
+  font-size: 88px; line-height: 0.97; letter-spacing: -0.035em;
+}
+
+.ev-hero-intro {
+  max-width: 520px; margin-top: 32px; font-size: 17px; line-height: 1.8; letter-spacing: -0.01em;
+  color: #595e53;
+}
+
+.ev-hero-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px; margin-top: 30px;
+}
+
+/* The countdown sits on the paper itself, not on a card. */
+.ev-page .story-page.ev-count {
+  grid-area: count; margin: 0; padding: 0; border: 0; border-radius: 0; background: none;
+  box-shadow: none;
+}
+
+.ev-count-event strong {
+  display: block; font-size: 12.5px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--green);
+}
+
+.ev-count-event span {
+  display: block; margin-top: 4px; font-family: var(--display-font); font-style: italic; font-size: 25px;
+  line-height: 1.2; color: #6d7759;
+}
+
+.ev-count-num {
+  display: flex; align-items: flex-end; gap: 22px; margin-top: 2px; font-family: var(--display-font);
+  font-size: 296px; line-height: 1; letter-spacing: -0.045em; color: var(--ink);
+}
+
+.ev-count-unit {
+  max-width: 2.3em; padding-bottom: 0.2em; font-size: 0.19em; font-style: italic; line-height: 0.98; letter-spacing: -0.02em;
+  color: var(--green);
+}
+
+.ev-page .story.is-live .ev-count .ev-reel > span { transform: none; }
+.ev-page .story.is-live .ev-count.s1 .ev-reel > span { transform: translateY(-100%); }
+.ev-page .story.is-live .ev-count.s2 .ev-reel > span { transform: translateY(-200%); }
+.ev-page .story.is-live .ev-count.s3 .ev-reel > span { transform: translateY(-300%); }
+.ev-page .story.is-live .ev-count.s4 .ev-reel > span { transform: translateY(-400%); }
+
+/* Today, moving along a line toward the date. */
+.ev-track {
+  display: flex; align-items: center; gap: 12px; margin-top: 4px;
+}
+
+.ev-track-line {
+  position: relative; flex: 1; height: 2px; border-radius: 1px; background: #dfe2d4;
+}
+
+.ev-track-fill {
+  position: absolute; inset: 0; border-radius: 1px; background: #91a577; transform-origin: left;
+  transform: scaleX(0.739); transition: transform 1.25s var(--ev-ease);
+}
+
+.ev-track-now {
+  position: absolute; top: -5px; left: 73.9%; width: 12px; height: 12px; margin-left: -6px;
+  border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--paper);
+  transition: left 1.25s var(--ev-ease);
+}
+
+.ev-track-date {
+  flex: none; border: 1px solid #cfd7c2; border-radius: 999px; padding: 2px 11px;
+  font-family: var(--display-font); font-style: italic; font-size: 17px; line-height: 1.4; color: var(--green);
+}
+
+.ev-page .story.is-live .ev-track-fill { transform: scaleX(0); }
+.ev-page .story.is-live .ev-track-now { left: 0; }
+.ev-page .story.is-live .s1 .ev-track-fill { transform: scaleX(0.087); }
+.ev-page .story.is-live .s1 .ev-track-now { left: 8.7%; }
+.ev-page .story.is-live .s2 .ev-track-fill { transform: scaleX(0.304); }
+.ev-page .story.is-live .s2 .ev-track-now { left: 30.4%; }
+.ev-page .story.is-live .s3 .ev-track-fill { transform: scaleX(0.609); }
+.ev-page .story.is-live .s3 .ev-track-now { left: 60.9%; }
+.ev-page .story.is-live .s4 .ev-track-fill { transform: scaleX(0.739); }
+.ev-page .story.is-live .s4 .ev-track-now { left: 73.9%; }
+
+.ev-count-sum {
+  display: inline-block; margin: 18px 0 0 -10px; border-radius: 999px; padding: 3px 10px; font-size: 14.5px;
+  line-height: 1.5; color: #595e53;
+}
+
+.ev-count-sum b {
+  font-weight: 600; color: var(--ink);
+}
+
+.ev-page .story-bar.ev-event-bar {
+  grid-area: bar; align-self: end; margin: 0 0 4px;
+}
+
+/* The hero's mail is a little Gmail card under the headline. It floats down
+   from above, rests, then sinks into the vendor list and dissolves as the
+   vendor's path fills. The slowest and calmest flow on the page. */
+.ev-event-mail {
+  grid-area: mail; margin-top: 44px;
+}
+
+.ev-event-mail .story-ask {
+  justify-self: start; align-self: start; width: min(100%, 26rem);
+}
+
+.ev-event .story-mail .is-new.story-email {
+  animation: ev-float-in 1.05s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.ev-event .story-mail .is-leaving.story-email {
+  animation: ev-float-out 1.7s cubic-bezier(0.4, 0, 0.7, 0.6) both;
+}
+
+@keyframes ev-float-in {
+  from { opacity: 0; transform: translateY(-28px); }
+}
+
+@keyframes ev-float-out {
+  to { opacity: 0; transform: translateY(74px) scale(0.97); filter: blur(4px); }
+}
+
+/* The vendor list: each vendor on a path of five states. */
+.ev-vendors {
+  grid-area: vend;
+}
+
+.ev-legend {
+  list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-wrap: wrap; align-items: center;
+  gap: 4px 10px; font-size: 12.5px; line-height: 1.5; color: var(--muted);
+}
+
+.ev-legend li {
+  display: flex; align-items: center; gap: 10px;
+}
+
+.ev-legend li + li::before {
+  content: ""; width: 22px; height: 1px; background: #c3c8b6;
+}
+
+.ev-legend li:last-child {
+  color: var(--green); font-weight: 500;
+}
+
+.ev-vendor-list {
+  list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(4, auto); grid-auto-flow: column; column-gap: 60px;
+}
+
+.ev-vendor-list > li {
+  display: grid; grid-template-columns: minmax(0, 1fr) 170px 178px; align-items: center; column-gap: 18px;
+  border-top: 1px solid var(--ev-hair); padding: 11px 8px;
+}
+
+.ev-who span {
+  display: block; font-size: 11.5px; letter-spacing: 0.07em; line-height: 1.5; text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ev-who strong {
+  display: block; font-size: 15px; font-weight: 600; line-height: 1.35;
+}
+
+.ev-path {
+  display: flex; align-items: center;
+}
+
+.ev-path i {
+  position: relative; flex: 1; height: 14px;
+}
+
+.ev-path i:first-child {
+  flex: none; width: 14px;
+}
+
+/* The stretch of path that leads to a state fills, then the state itself. */
+.ev-path i::before {
+  content: ""; position: absolute; left: 0; right: 14px; top: 6px; height: 2px;
+  background: linear-gradient(#91a577, #91a577) left / 0% 100% no-repeat #dfe2d4;
+  transition: background-size 0.8s var(--ev-ease);
+}
+
+.ev-path i:first-child::before {
+  content: none;
+}
+
+.ev-path i::after {
+  content: ""; position: absolute; right: 0; top: 0; width: 14px; height: 14px; border-radius: 50%;
+  border: 1.5px solid #c3c8b6; background: var(--white);
+  transition: background-color 0.5s 0.6s, border-color 0.5s 0.6s;
+}
+
+.ev-path i.done::before,
+.ev-path i.is-done::before,
+.story:not(.is-live) .ev-path i[data-done]::before {
+  background-size: 100% 100%;
+}
+
+.ev-path i.done::after,
+.ev-path i.is-done::after,
+.story:not(.is-live) .ev-path i[data-done]::after {
+  border-color: var(--green); background: var(--green);
+}
+
+.ev-path i.is-done::after {
+  animation: ev-reach 1.8s 0.7s ease-out both;
+}
+
+@keyframes ev-reach {
+  0% { box-shadow: 0 0 0 0 #91a57799; }
+  100% { box-shadow: 0 0 0 9px #91a57700; }
+}
+
+.ev-state {
+  justify-self: end; font-size: 13px; line-height: 1.4; color: var(--muted); text-align: right;
+}
+
+.ev-state.good {
+  border-radius: 999px; background: var(--sage); padding: 3px 10px; font-weight: 500; color: var(--green);
+}
+
+/* The new state waits for the path to reach it. */
+.ev-page .story-page .ev-state.is-new {
+  animation: ev-settle 0.7s 0.85s ease both;
+}
+
+/* ---- The 11pm email: night until the morning beat ---- */
+
+.ev-night {
+  margin-top: 52px;
+}
+
+.ev-night .story-slide {
+  position: relative; isolation: isolate; overflow: hidden; display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 48px; align-items: start;
+  border-radius: 30px 16px 28px 18px; padding: 52px 52px 48px; background-color: var(--ev-dawn);
+  transition: background-color 1.8s ease;
+}
+
+/* Dawn in one corner, stars across the top: one fades up as the other fades out. */
+.ev-night .story-slide::before,
+.ev-night .story-slide::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; transition: opacity 1.8s ease;
+}
+
+.ev-night .story-slide::before {
+  background: radial-gradient(90% 120% at 0% 0%, #f3d6b6 0%, #f6eddf00 62%);
+}
+
+.ev-night .story-slide::after {
+  opacity: 0;
+  background:
+    radial-gradient(1.5px 1.5px at 7% 12%, #e9e6da 98%, #0000),
+    radial-gradient(1px 1px at 16% 71%, #e9e6da 98%, #0000),
+    radial-gradient(1.5px 1.5px at 27% 9%, #e9e6da 98%, #0000),
+    radial-gradient(1px 1px at 36% 88%, #e9e6da 98%, #0000),
+    radial-gradient(1px 1px at 43% 6%, #e9e6da 98%, #0000),
+    radial-gradient(1.5px 1.5px at 58% 4%, #e9e6da 98%, #0000),
+    radial-gradient(1px 1px at 71% 95%, #e9e6da 98%, #0000),
+    radial-gradient(1.5px 1.5px at 84% 5%, #e9e6da 98%, #0000),
+    radial-gradient(1px 1px at 95% 62%, #e9e6da 98%, #0000);
+}
+
+.ev-night.is-live .story-slide:not([data-step="3"]) {
+  background-color: var(--ev-night); transition-duration: 1s;
+}
+
+.ev-night.is-live .story-slide:not([data-step="3"])::before {
+  opacity: 0; transition-duration: 1s;
+}
+
+.ev-night.is-live .story-slide:not([data-step="3"])::after {
+  opacity: 0.55; transition-duration: 1s;
+}
+
+/* A sliver of moon that fills into a low sun. */
+.ev-sky {
+  position: absolute; top: 60px; left: calc(40% - 78px); width: 36px; height: 36px; border-radius: 50%;
+  box-shadow: inset -36px 0 0 0 #ecbd8b, 0 0 0 10px #ecbd8b33;
+  transition: box-shadow 1.8s ease, transform 1.8s ease;
+}
+
+.ev-night.is-live .story-slide:not([data-step="3"]) .ev-sky {
+  box-shadow: inset -10px 3px 0 0 #e9e6da, 0 0 0 0 #ecbd8b00; transform: translateY(8px) rotate(-18deg);
+  transition-duration: 1s;
+}
+
+.ev-clock {
+  margin-bottom: 20px; font-family: var(--display-font); font-size: 84px; line-height: 1;
+  letter-spacing: -0.035em; color: var(--ink);
+}
+
+.ev-clock small {
+  font-size: 0.4em; font-style: italic; letter-spacing: 0;
+}
+
+.ev-beat-night .ev-clock {
+  color: #f1eee3;
+}
+
+/* The ask is part of the night. The emails are not: each is a white Gmail card, lit like a screen in a dark room. */
+.ev-beat-night .story-ask {
+  border-color: #485043; background: var(--ev-night-card); padding: 16px 18px;
+}
+
+.ev-beat-night .story-email {
+  border-color: #f1eee3; box-shadow: 0 0 0 5px #f1eee314, 0 14px 30px -14px #000000aa;
+}
+
+.ev-beat-night .story-ask .story-label {
+  color: #b9c0aa;
+}
+
+.ev-beat-night .story-quote {
+  color: #e1e6d2; font-size: 23px;
+}
+
+/* 11:48: three emails land together. The client's is the one the page acts on;
+   the newsletter and the receipt sit under it, smaller, and are plainly other mail. */
+.ev-night .ev-pile {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: min(100%, 26rem);
+}
+
+.ev-night .ev-pile > .story-email {
+  justify-self: stretch; width: auto; max-width: none;
+}
+
+.ev-night .ev-pile > .story-email:first-child {
+  position: relative; z-index: 1; grid-column: 1 / -1;
+}
+
+.ev-night .ev-pile > .story-email.is-small {
+  border-color: #cfd1c4; background: #e7e5da; box-shadow: none; opacity: 0.86;
+}
+
+/* Night mail lights up where it lands, like a notification. A client's request
+   then drifts across to the page and dissolves into it; other mail just fades where it is. */
+.ev-night .story-mail .is-new .story-email {
+  animation: ev-light-up 0.95s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.ev-night .story-mail .is-leaving .story-email {
+  animation: ev-to-page 1.6s cubic-bezier(0.4, 0, 0.7, 0.6) both;
+}
+
+.ev-night .story-mail .is-leaving .story-email.is-small {
+  animation: ev-fade-away 1.3s ease-in both;
+}
+
+.ev-night .story-mail .ev-pile > .story-email:nth-child(2) { animation-delay: 0.3s; }
+.ev-night .story-mail .ev-pile > .story-email:nth-child(3) { animation-delay: 0.55s; }
+
+.ev-night .story-mail .is-new .ev-clock {
+  animation: ev-fade 0.9s ease both;
+}
+
+@keyframes ev-light-up {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+}
+
+@keyframes ev-to-page {
+  to { opacity: 0; transform: translateX(92px) scale(0.97); filter: blur(4px); }
+}
+
+@keyframes ev-to-page-below {
+  to { opacity: 0; transform: translateY(64px) scale(0.97); filter: blur(4px); }
+}
+
+@keyframes ev-fade-away {
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+.ev-morning {
+  border: 1px solid #e6d5bf; border-radius: 10px; background: var(--white); padding: 16px 18px;
+  box-shadow: 0 8px 22px -18px #8a4a2666;
+}
+
+.ev-morning-line {
+  margin-top: 6px; font-family: var(--display-font); font-size: 26px; line-height: 1.18;
+  letter-spacing: -0.015em;
+}
+
+.ev-morning-note {
+  margin-top: 10px; border-top: 1px dashed #e6d5bf; padding-top: 10px; font-size: 14px; line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Morning waits for the light. The ask fades back in each time the night starts over. */
+.ev-page .ev-beat-morning.is-new {
+  animation: ev-rise 1.1s 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.ev-night .story-slide[data-step="0"] .ev-beat:first-child {
+  animation: ev-fade 1.1s 0.3s ease both;
+}
+
+@keyframes ev-fade {
+  from { opacity: 0; }
+}
+
+@keyframes ev-rise {
+  from { opacity: 0; transform: translateY(10px); }
+}
+
+/* The sheet fills the band at every step; requests arrive into the room it already has. */
+.ev-night .story-mail {
+  align-self: center; padding-top: 40px;
+}
+
+.ev-page .story-page.ev-requests {
+  margin-top: 0; align-self: stretch;
+}
+
+.ev-req-event {
+  border-top: 1px solid var(--ev-hair); border-radius: 0 0 8px 8px; padding: 14px 6px 6px;
+}
+
+.ev-req-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 14px;
+}
+
+.ev-page .ev-req-head h4 {
+  font-size: 23px; line-height: 1.15;
+}
+
+.ev-req-head p {
+  display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--muted);
+}
+
+.ev-headcount {
+  display: inline-flex; align-items: center; gap: 7px;
+}
+
+.ev-headcount .ev-reel {
+  font-family: var(--display-font); font-size: 27px; letter-spacing: -0.02em; color: var(--ink);
+}
+
+.ev-req-list {
+  list-style: none; margin: 6px 0 0; padding: 0;
+}
+
+.ev-req-list > li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px;
+  border-radius: 8px; padding: 9px 8px;
+}
+
+.ev-req-list strong {
+  display: block; font-size: 14.5px; font-weight: 600; line-height: 1.35;
+}
+
+.ev-req-list div > span {
+  font-size: 12.5px; line-height: 1.4; color: var(--muted);
+}
+
+.ev-req-change {
+  grid-column: 1 / -1; border-radius: 6px; background: #f4f0f6; padding: 7px 10px; font-size: 13.5px;
+  line-height: 1.5; color: #4f4459;
+}
+
+.ev-req-change b {
+  margin-right: 6px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+}
+
+/* ---- Every event at once ---- */
+
+.ev-all {
+  margin-top: 52px;
+}
+
+/* Three inboxes feed this page, so its mail crosses it: a card comes in from
+   the left, stops over the event it is about, then carries on to the right and thins out. */
+.ev-all-mail .story-ask {
+  align-self: start; justify-self: start; width: min(100%, 44rem);
+}
+
+.ev-all-mail .story-email {
+  width: min(100%, 20rem);
+}
+
+.ev-all-mail .story-label .kit-face {
+  margin-left: auto;
+}
+
+.ev-all-mail .ev-to-2 {
+  margin-left: calc(25% + 14px);
+}
+
+.ev-all-mail .ev-to-3 {
+  margin-left: 50%;
+}
+
+.ev-all .story-mail .is-new.story-email {
+  animation: ev-cross-in 1.05s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.ev-all .story-mail .is-leaving.story-email {
+  animation: ev-cross-out 1.6s cubic-bezier(0.4, 0, 0.7, 0.6) both;
+}
+
+@keyframes ev-cross-in {
+  from { opacity: 0; transform: translateX(-120px); }
+}
+
+@keyframes ev-cross-out {
+  to { opacity: 0; transform: translateX(150px) scale(0.97); filter: blur(4px); }
+}
+
+.ev-cards {
+  list-style: none; margin: 4px 0 0; padding: 0; display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ev-card {
+  border-left: 1px solid var(--ev-hair); padding: 8px 22px 12px;
+}
+
+.ev-card:first-child {
+  border-left: 0;
+}
+
+.ev-card-count {
+  display: flex; align-items: flex-end; gap: 9px; font-family: var(--display-font); font-size: 104px;
+  line-height: 1; letter-spacing: -0.04em;
+}
+
+.ev-card-count > span:last-child {
+  padding-bottom: 0.92em; font-size: 0.19em; font-style: italic; line-height: 1; letter-spacing: -0.01em;
+  color: var(--green);
+}
+
+.ev-page .ev-card h4 {
+  margin-top: 4px; font-size: 24px; line-height: 1.12;
+}
+
+.ev-card-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; margin-top: 7px; font-size: 13px;
+  line-height: 1.4; color: var(--muted);
+}
+
+.ev-card-meta .kit-face {
+  margin-left: 4px;
+}
+
+.ev-open-title {
+  margin-top: 16px; border-top: 1px dashed #d4d9c8; padding-top: 12px; font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+
+.ev-open {
+  list-style: none; margin: 7px 0 0; padding: 0; display: grid; gap: 7px;
+}
+
+.ev-open li {
+  position: relative; padding-left: 24px; font-size: 14px; line-height: 1.4;
+  transition: color 0.6s 0.4s;
+}
+
+.ev-open li::before {
+  content: ""; position: absolute; left: 0; top: 2px; width: 15px; height: 15px; border-radius: 50%;
+  border: 1.5px solid #c3c8b6; transition: background-color 0.5s 0.3s, border-color 0.5s 0.3s;
+}
+
+.ev-open li::after {
+  content: ""; position: absolute; left: 5.5px; top: 4.5px; width: 4px; height: 8px;
+  border: solid var(--paper); border-width: 0 1.8px 1.8px 0; transform: rotate(40deg); opacity: 0;
+  transition: opacity 0.4s 0.5s;
+}
+
+.ev-open li.is-done,
+.story:not(.is-live) .ev-open li[data-done] {
+  color: #8b917f; text-decoration: line-through;
+}
+
+.ev-open li.is-done::before,
+.story:not(.is-live) .ev-open li[data-done]::before {
+  border-color: var(--green); background: var(--green);
+}
+
+.ev-open li.is-done::after,
+.story:not(.is-live) .ev-open li[data-done]::after {
+  opacity: 1;
+}
+
+/* ---- A page for the client, and drafts ---- */
+
+.ev-client {
+  display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); grid-template-rows: auto 1fr;
+  grid-template-areas: "copy page" "drafts page"; column-gap: 76px; align-items: start;
+}
+
+.ev-client-copy {
+  grid-area: copy;
+}
+
+.ev-shared {
+  grid-area: page;
+}
+
+.ev-client-copy h2 {
+  margin-bottom: 26px;
+}
+
+.ev-client-copy > p + p {
+  margin-top: 14px;
+}
+
+.ev-drafts {
+  grid-area: drafts; margin-top: 44px; border-top: 1px solid var(--line); padding-top: 28px;
+}
+
+.ev-page .ev-drafts h3 {
+  font-size: 31px; line-height: 1.1;
+}
+
+.ev-drafts > p {
+  margin-top: 12px; font-size: 16px; line-height: 1.8; color: #595e53;
+}
+
+.ev-draft-box {
+  margin-top: 20px; border: 1px solid var(--ev-rule); border-radius: 12px; background: var(--white);
+  padding: 14px 16px 6px;
+}
+
+.ev-draft-head {
+  display: flex; align-items: center; gap: 8px; padding-bottom: 10px; font-size: 13px; font-weight: 600;
+}
+
+.ev-draft-head svg {
+  width: 15px; height: 15px; flex: none; fill: var(--muted);
+}
+
+.ev-draft-head span {
+  margin-left: auto; font-size: 12.5px; font-weight: 400; color: var(--muted);
+}
+
+.ev-draft-box ul {
+  list-style: none; margin: 0; padding: 0;
+}
+
+.ev-draft-box li {
+  display: grid; grid-template-columns: 116px minmax(0, 1fr) auto; align-items: baseline; gap: 2px 12px;
+  border-top: 1px solid var(--ev-hair); padding: 10px 0; font-size: 13.5px; line-height: 1.4;
+}
+
+.ev-draft-box li span {
+  color: var(--muted);
+}
+
+.ev-draft-box li strong {
+  font-weight: 500;
+}
+
+.ev-draft-box li em {
+  border-radius: 999px; background: var(--peach); padding: 2px 9px; font-size: 11.5px; font-style: normal;
+  font-weight: 500; color: #8a4a26;
+}
+
+/* The sheet keeps its final height, so it never grows as items arrive. */
+.ev-shared .story-slide {
+  display: grid; grid-template-rows: auto 1fr;
+}
+
+/* The client page's mail arrives at the top corner, then glides down and
+   across toward Settled, where what it said ends up. */
+.ev-shared .story-mail .is-new.story-email {
+  animation: ev-corner-in 1s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.ev-shared .story-mail .is-leaving.story-email {
+  animation: ev-glide-out 1.6s cubic-bezier(0.4, 0, 0.7, 0.6) both;
+}
+
+@keyframes ev-corner-in {
+  from { opacity: 0; transform: translate(-22px, -26px); }
+}
+
+@keyframes ev-glide-out {
+  to { opacity: 0; transform: translate(118px, 66px) scale(0.96); filter: blur(4px); }
+}
+
+@keyframes ev-glide-out-near {
+  to { opacity: 0; transform: translate(12px, 58px) scale(0.96); filter: blur(4px); }
+}
+
+.ev-guest-access {
+  margin: -6px -10px 18px; border-radius: 8px; background: var(--lilac); padding: 8px 12px; font-size: 13px;
+  line-height: 1.5; color: #5b4a68;
+}
+
+.ev-page .story-page.ev-guest {
+  display: flex; flex-direction: column;
+}
+
+.ev-guest-cols {
+  flex: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+}
+
+.ev-guest-col {
+  border-radius: 10px; background: var(--ev-soft); padding: 12px;
+}
+
+.ev-page .ev-guest-col h4 {
+  margin-bottom: 9px; font-family: var(--body); font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+
+.ev-guest-col ul {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: 6px;
+}
+
+.ev-guest-col li {
+  display: flex; align-items: flex-start; gap: 9px; border: 1px solid #e0e3d6; border-radius: 8px;
+  background: var(--white); padding: 9px 10px; font-size: 14px; line-height: 1.4;
+}
+
+.ev-guest-col .kit-tick {
+  margin-top: 1px;
+}
+
+/* ---- Nothing new to keep up ---- */
+
+.ev-keep {
+  display: grid; grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr); gap: 84px; align-items: start;
+}
+
+.ev-keep-head h2 {
+  margin-bottom: 26px;
+}
+
+.ev-ledger {
+  margin: 0; border-bottom: 1px solid var(--line);
+}
+
+.ev-ledger > div {
+  display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: baseline;
+  border-top: 1px solid var(--line); padding: 24px 4px;
+}
+
+.ev-ledger dt {
+  font-family: var(--display-font); font-size: 34px; line-height: 1.05; letter-spacing: -0.02em;
+}
+
+.ev-ledger dd {
+  margin: 0; font-size: 17px; line-height: 1.7; color: #595e53;
+}
+
+.ev-ledger .ev-ledger-rally dt {
+  color: var(--green); font-style: italic;
+}
+
+.ev-ledger .ev-ledger-rally dd {
+  color: var(--ink);
+}
+
+/* ---- How to start, as a run of show ---- */
+
+.ev-run {
+  list-style: none; margin: 52px 0 0; padding: 0; border-bottom: 1px solid var(--line);
+}
+
+.ev-run > li {
+  display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; border-top: 1px solid var(--line);
+  padding: 30px 4px 32px;
+}
+
+.ev-run-time {
+  font-family: var(--display-font); font-size: 64px; line-height: 0.9; letter-spacing: -0.03em;
+  color: #91a577;
+}
+
+.ev-page .ev-run h3 {
+  font-size: 34px; line-height: 1.1;
+}
+
+.ev-run li > div > p {
+  max-width: 620px; margin-top: 10px; font-size: 16.5px; line-height: 1.8; color: #595e53;
+}
+
+.ev-asks {
+  list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 10px; max-width: 760px;
+}
+
+.ev-asks li {
+  border-left: 2px solid #b9c5a4; padding: 2px 0 2px 18px; font-family: var(--display-font);
+  font-style: italic; font-size: 24px; line-height: 1.25; letter-spacing: -0.01em; color: #4c5540;
+}
+
+/* ---- The safety note, the other audiences, the close ---- */
+
+.ev-safe-box {
+  display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 64px; align-items: start;
+  border-radius: 26px 14px 24px 16px; background: #eef0e1; padding: 46px 50px;
+}
+
+.ev-page .ev-safe-box h2 {
+  font-size: 46px; line-height: 1.04;
+}
+
+.ev-safe-box p:not(.ev-moment) {
+  font-size: 16px; line-height: 1.8; color: #50554a;
+}
+
+.ev-safe-box p + p {
+  margin-top: 12px;
+}
+
+.ev-safe-box .text-link {
+  margin-top: 18px;
+}
+
+.ev-page .ev-others {
+  padding-top: 104px;
+}
+
+.ev-page .ev-others h2 {
+  font-size: 40px;
+}
+
+.ev-others > p {
+  margin: 10px 0 22px; font-size: 16px; color: var(--muted);
+}
+
+.ev-closer {
+  padding-block: 150px 120px; text-align: center;
+}
+
+.ev-page .ev-closer h2 {
+  max-width: 8.6em; margin: 0 auto 40px; font-size: 84px; line-height: 0.98;
+}
+
+.ev-closer .ev-moment {
+  margin-bottom: 20px;
+}
+
+@media (max-width: 1150px) {
+  .ev-page h2 {
+    font-size: 54px;
+  }
+
+  .ev-event-slide {
+    column-gap: 44px;
+  }
+
+  .ev-hero-copy h1 {
+    font-size: 74px;
+  }
+
+  .ev-count-num {
+    font-size: 230px;
+  }
+
+  .ev-vendor-list {
+    column-gap: 36px;
+  }
+
+  .ev-vendor-list > li {
+    grid-template-columns: minmax(0, 1fr) 120px 172px; column-gap: 14px;
+  }
+
+  .ev-night .story-slide {
+    gap: 34px; padding: 40px 36px;
+  }
+
+  .ev-sky {
+    top: 48px;
+  }
+
+  .ev-clock {
+    font-size: 72px;
+  }
+
+  .ev-card {
+    padding-inline: 16px;
+  }
+
+  .ev-card-count {
+    font-size: 88px;
+  }
+
+  .ev-client {
+    column-gap: 48px;
+  }
+
+  .ev-keep {
+    gap: 48px;
+  }
+
+  .ev-page .ev-closer h2 {
+    font-size: 70px;
+  }
+}
+
+@media (max-width: 980px) {
+  .ev-section {
+    padding-top: 100px;
+  }
+
+  .ev-intro-split {
+    grid-template-columns: minmax(0, 1fr); gap: 24px;
+  }
+
+  /* One column: the headline, then the date, then the mail, then the vendors. */
+  .ev-event-slide {
+    grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "count" "bar" "mail" "vend";
+  }
+
+  .ev-page .story-page.ev-count {
+    margin-top: 56px;
+  }
+
+  .ev-page .story-bar.ev-event-bar {
+    margin: 36px 0 0;
+  }
+
+  .ev-event-mail {
+    margin-top: 12px;
+  }
+
+  .ev-vendor-list {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-flow: row;
+  }
+
+  .ev-vendor-list > li {
+    grid-template-columns: minmax(0, 1fr) 170px 178px;
+  }
+
+  .ev-night .story-slide {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; gap: 26px;
+  }
+
+  .ev-sky {
+    left: auto; right: 44px;
+  }
+
+  .ev-night .story-mail {
+    align-self: start; padding-top: 0;
+  }
+
+  /* The page is below now, so a request sinks to it. */
+  .ev-night .story-mail .is-leaving .story-email:not(.is-small) {
+    animation-name: ev-to-page-below;
+  }
+
+  /* The events no longer sit in a row under the mail, so every card starts from the left. */
+  .ev-all-mail .ev-to-2,
+  .ev-all-mail .ev-to-3 {
+    margin-left: 0;
+  }
+
+  .ev-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 8px;
+  }
+
+  .ev-card:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .ev-card:nth-child(n + 3) {
+    border-top: 1px solid var(--ev-hair); padding-top: 18px;
+  }
+
+  /* One column: the client's page sits right under its words, the drafts after. */
+  .ev-client {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: none;
+    grid-template-areas: "copy" "page" "drafts";
+  }
+
+  .ev-shared {
+    margin-top: 36px;
+  }
+
+  .ev-keep,
+  .ev-safe-box {
+    grid-template-columns: minmax(0, 1fr); gap: 36px;
+  }
+}
+
+@media (max-width: 650px) {
+  .ev-page h2 {
+    font-size: 42px; line-height: 1.04;
+  }
+
+  .ev-moment {
+    font-size: 21px; margin-bottom: 12px;
+  }
+
+  .ev-section {
+    padding-top: 84px;
+  }
+
+  .ev-intro p:not(.ev-moment),
+  .ev-client-copy > p:not(.ev-moment),
+  .ev-keep-head > p:not(.ev-moment) {
+    font-size: 16px; line-height: 1.75;
+  }
+
+  .ev-intro-center {
+    text-align: left;
+  }
+
+  .ev-intro-center > p:last-child {
+    margin-top: 20px;
+  }
+
+  .ev-page .story-page.ev-sheet {
+    padding: 18px 14px 14px;
+  }
+
+  .ev-page .ev-head h2,
+  .ev-page .ev-head h3 {
+    font-size: 26px;
+  }
+
+  .ev-hero {
+    padding-top: 84px;
+  }
+
+  .ev-hero-copy .eyebrow {
+    margin-bottom: 20px;
+  }
+
+  .ev-hero-copy h1 {
+    font-size: clamp(50px, 14.4vw, 64px);
+  }
+
+  .ev-hero-intro {
+    margin-top: 24px; font-size: 16px; line-height: 1.75;
+  }
+
+  .ev-hero-actions {
+    margin-top: 26px;
+  }
+
+  .ev-page .story-page.ev-count {
+    margin-top: 52px;
+  }
+
+  .ev-count-event span {
+    font-size: 23px;
+  }
+
+  /* The number stays big on a phone. */
+  .ev-count-num {
+    gap: 16px; font-size: clamp(184px, 54vw, 230px);
+  }
+
+  .ev-count-unit {
+    font-size: 0.2em;
+  }
+
+  .ev-page .story-bar.ev-event-bar {
+    margin-top: 30px;
+  }
+
+  /* On a phone a card keeps clear of the screen's edge as it travels, so nothing scrolls sideways. */
+  .ev-all-mail .story-email {
+    width: min(84%, 20rem);
+  }
+
+  .ev-all .story-mail .is-new.story-email {
+    animation-name: ev-cross-in-near;
+  }
+
+  .ev-all .story-mail .is-leaving.story-email {
+    animation-name: ev-cross-out-near;
+  }
+
+  .ev-shared .story-mail .is-leaving.story-email {
+    animation-name: ev-glide-out-near;
+  }
+
+  .ev-legend {
+    gap: 2px 7px; font-size: 12px;
+  }
+
+  .ev-legend li {
+    gap: 7px;
+  }
+
+  .ev-legend li + li::before {
+    width: 10px;
+  }
+
+  /* A vendor is two lines: who and where they stand, then the path, full width. */
+  .ev-vendor-list > li {
+    grid-template-columns: minmax(0, 1fr) auto; row-gap: 9px; padding: 12px 4px 13px;
+  }
+
+  .ev-path {
+    grid-column: 1 / -1; grid-row: 2;
+  }
+
+  .ev-state {
+    grid-column: 2; grid-row: 1;
+  }
+
+  .ev-night {
+    margin-top: 34px;
+  }
+
+  .ev-night .story-slide {
+    border-radius: 22px 12px 20px 14px; padding: 26px 14px 14px; gap: 22px;
+  }
+
+  .ev-sky {
+    top: 30px; right: 26px; width: 30px; height: 30px;
+  }
+
+  .ev-clock {
+    margin: 0 0 14px 6px; font-size: 64px;
+  }
+
+  .ev-morning-line {
+    font-size: 23px;
+  }
+
+  .ev-page .ev-req-head h4 {
+    font-size: 22px;
+  }
+
+  .ev-req-event {
+    padding-inline: 2px;
+  }
+
+  .ev-req-list > li {
+    padding-inline: 4px;
+  }
+
+  .ev-all {
+    margin-top: 34px;
+  }
+
+  /* On a phone the events stack, nearest first, each with its number at the side. */
+  .ev-cards {
+    grid-template-columns: minmax(0, 1fr); row-gap: 0;
+  }
+
+  .ev-page .ev-card {
+    display: grid; grid-template-columns: 92px minmax(0, 1fr); column-gap: 12px; align-items: start;
+    border-left: 0; border-top: 1px solid var(--ev-hair); padding: 16px 2px;
+  }
+
+  .ev-card-count {
+    display: block; font-size: 76px; text-align: right;
+  }
+
+  .ev-card-count > span:last-child {
+    display: block; padding: 2px 0 0; font-size: 15px;
+  }
+
+  .ev-page .ev-card h4 {
+    margin-top: 6px; font-size: 23px;
+  }
+
+  .ev-open-title {
+    margin-top: 12px; padding-top: 10px;
+  }
+
+  .ev-drafts {
+    margin-top: 34px;
+  }
+
+  .ev-page .ev-drafts h3 {
+    font-size: 28px;
+  }
+
+  .ev-draft-box li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .ev-draft-box li strong {
+    grid-column: 1; grid-row: 2;
+  }
+
+  .ev-draft-box li em {
+    grid-column: 2; grid-row: 1 / span 2; align-self: center;
+  }
+
+  .ev-guest-access {
+    margin: -4px -2px 16px;
+  }
+
+  .ev-guest-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ev-keep {
+    gap: 28px;
+  }
+
+  .ev-ledger > div {
+    grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 20px 2px;
+  }
+
+  .ev-ledger dt {
+    font-size: 30px;
+  }
+
+  .ev-ledger dd {
+    font-size: 16px;
+  }
+
+  .ev-run {
+    margin-top: 36px;
+  }
+
+  .ev-run > li {
+    grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 24px 2px 26px;
+  }
+
+  .ev-run-time {
+    font-size: 52px;
+  }
+
+  .ev-page .ev-run h3 {
+    font-size: 30px;
+  }
+
+  .ev-run li > div > p {
+    font-size: 16px; line-height: 1.75;
+  }
+
+  .ev-asks li {
+    padding-left: 14px; font-size: 21px;
+  }
+
+  .ev-safe-box {
+    width: calc(100% + 12px); margin-inline: -6px; padding: 30px 22px; gap: 22px;
+  }
+
+  .ev-page .ev-safe-box h2 {
+    font-size: 36px;
+  }
+
+  .ev-page .ev-others {
+    padding-top: 76px;
+  }
+
+  .ev-page .ev-others h2 {
+    font-size: 34px;
+  }
+
+  .ev-closer {
+    padding-block: 96px 76px;
+  }
+
+  .ev-page .ev-closer h2 {
+    margin-bottom: 32px; font-size: clamp(46px, 13vw, 58px);
+  }
+}
+
+@keyframes ev-cross-in-near {
+  from { opacity: 0; transform: translateX(-18px); }
+}
+
+@keyframes ev-cross-out-near {
+  to { opacity: 0; transform: translateX(46px) scale(0.97); filter: blur(3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ev-page *,
+  .ev-page *::before,
+  .ev-page *::after {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,170 @@
+<!-- The homepage's hero story: one example page per audience, each a different
+     kind of page. Hand-written, drawn at its last step; story.ts plays it and
+     word-swap.ts writes each slide's data-kind and data-word into the headline.
+     Mail flows three ways across the slides: down (the default), across, and
+     one burst, where two of the three emails change nothing because they are
+     not client mail. Contract: docs/site-audience-pages.md. -->
+<div class="story home-story" id="home-story" data-story>
+  <div class="story-bar">
+    <div class="story-tabs" role="tablist" aria-label="Example pages, by who they are for">
+      <button type="button" role="tab" id="home-story-tab-brokers" aria-controls="home-story-brokers" aria-selected="true">Brokers<i class="story-progress" aria-hidden="true"></i></button>
+      <button type="button" role="tab" id="home-story-tab-wholesalers" aria-controls="home-story-wholesalers" aria-selected="false" tabindex="-1">Wholesalers<i class="story-progress" aria-hidden="true"></i></button>
+      <button type="button" role="tab" id="home-story-tab-recruiters" aria-controls="home-story-recruiters" aria-selected="false" tabindex="-1">Recruiters<i class="story-progress" aria-hidden="true"></i></button>
+      <button type="button" role="tab" id="home-story-tab-agencies" aria-controls="home-story-agencies" aria-selected="false" tabindex="-1">Agencies<i class="story-progress" aria-hidden="true"></i></button>
+      <button type="button" role="tab" id="home-story-tab-legal" aria-controls="home-story-legal" aria-selected="false" tabindex="-1">Legal teams<i class="story-progress" aria-hidden="true"></i></button>
+      <button type="button" role="tab" id="home-story-tab-accountants" aria-controls="home-story-accountants" aria-selected="false" tabindex="-1">Accountants<i class="story-progress" aria-hidden="true"></i></button>
+      <button type="button" role="tab" id="home-story-tab-event-planners" aria-controls="home-story-event-planners" aria-selected="false" tabindex="-1">Event planners<i class="story-progress" aria-hidden="true"></i></button>
+    </div>
+    <button class="story-pause" type="button" data-story-pause hidden aria-label="Pause the example" aria-pressed="false"></button>
+  </div>
+  <div class="story-stage">
+  <article class="story-slide" data-slide data-kind="dashboard" data-word="leads" role="tabpanel" id="home-story-brokers" aria-labelledby="home-story-tab-brokers">
+    <div class="story-mail">
+      <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Make a dashboard of every new lead in my inbox and who I have not answered.”</p></div>
+      <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Website form</p><p class="story-subject">Nora Shah asked about 14 Oak Lane</p><p class="story-did">Added Nora Shah as a new lead.</p></div>
+      <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Jamal Reed</p><p class="story-subject">Saturday at 11 works for the showing</p><p class="story-did">Booked Jamal Reed’s showing.</p></div>
+      <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Elena Cruz</p><p class="story-subject">Just checking you got my message</p><p class="story-did">Elena Cruz asked twice. Answer her today.</p></div>
+    </div>
+    <div class="story-page">
+      <div class="kit-head"><h3>Leads</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+      <div class="kit-stats">
+        <div class="kit-stat" data-touch="1"><strong><span data-until="1">6</span><span data-at="1">7</span></strong><small>New this week</small></div>
+        <div class="kit-stat" data-touch="2"><strong><span data-until="2">3</span><span data-at="2">4</span></strong><small>Showings booked</small></div>
+        <div class="kit-stat" data-touch="3"><strong><span data-until="3">1</span><span data-at="3">2</span></strong><small>Answer today</small></div>
+      </div>
+      <ul class="kit-rows">
+        <li data-at="1" data-touch="1"><div><strong>Nora Shah</strong><span>Buying, 14 Oak Lane</span></div><span class="kit-pill new">New</span></li>
+        <li data-touch="3"><div><strong>Elena Cruz</strong><span>Selling, 3-bed on Pine St</span></div><span class="kit-pill wait" data-until="3">Waiting 2 days</span><span class="kit-pill late" data-at="3">Asked twice</span></li>
+        <li data-touch="2"><div><strong>Jamal Reed</strong><span>Maple Court condo</span></div><span class="kit-pill wait" data-until="2">Wants a showing</span><span class="kit-pill good" data-at="2">Showing Sat 11am</span></li>
+        <li><div><strong>Tom Baker</strong><span>Pre-approved, $450k</span></div><span class="kit-pill plain">Sent listings</span></li>
+      </ul>
+    </div>
+    <a class="story-more" href="/for/brokers/">See Rally for brokers <!-- rally:arrow --></a>
+  </article>
+  <article class="story-slide" data-slide data-kind="board" data-word="orders" role="tabpanel" id="home-story-wholesalers" aria-labelledby="home-story-tab-wholesalers">
+    <div class="story-mail" data-flow="across">
+      <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show me every order in my inbox on a board: new, quoted, confirmed.”</p></div>
+      <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Harbor Cafe</p><p class="story-subject">Can you do 40 cases by Friday?</p><p class="story-did">Added Harbor Cafe to New.</p></div>
+      <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Bell &amp; Co</p><p class="story-subject">Re: Quote. Approved, go ahead</p><p class="story-did">Moved Bell &amp; Co to Confirmed.</p></div>
+      <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Lee, Greenleaf</p><p class="story-subject">PO 2207 attached</p><p class="story-did">Moved Greenleaf to Confirmed.</p></div>
+    </div>
+    <div class="story-page">
+      <div class="kit-head"><h3>Orders</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+      <div class="kit-board">
+        <div class="kit-col"><h4>New</h4>
+          <div class="kit-card" data-at="1" data-touch="1"><strong>Harbor Cafe</strong><span>40 cases by Friday</span></div>
+          <div class="kit-card"><strong>Corner Bakery</strong><span>6 cases, first order</span></div>
+        </div>
+        <div class="kit-col"><h4>Quoted</h4>
+          <div class="kit-card" data-key="bell" data-until="2"><strong>Bell &amp; Co</strong><span>Quote sent, $2,150</span></div>
+          <div class="kit-card" data-key="greenleaf" data-until="3"><strong>Greenleaf</strong><span>Quote sent, $1,480</span></div>
+        </div>
+        <div class="kit-col"><h4>Confirmed</h4>
+          <div class="kit-card" data-key="greenleaf" data-at="3" data-touch="3"><strong>Greenleaf</strong><span>PO 2207, $1,480</span></div>
+          <div class="kit-card" data-key="bell" data-at="2" data-touch="2"><strong>Bell &amp; Co</strong><span>Approved, $2,150</span></div>
+          <div class="kit-card"><strong>Osteria Nove</strong><span>12 cases, $640</span></div>
+        </div>
+      </div>
+    </div>
+    <a class="story-more" href="/for/wholesalers/">See Rally for wholesalers <!-- rally:arrow --></a>
+  </article>
+  <article class="story-slide" data-slide data-kind="pipeline" data-word="candidates" role="tabpanel" id="home-story-recruiters" aria-labelledby="home-story-tab-recruiters">
+    <div class="story-mail">
+      <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show the pipeline of every candidate the three of us have sent to a client.”</p></div>
+      <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Maya’s inbox</b></p><p class="story-from">Mia, Brightline</p><p class="story-subject">We’d like to meet Ana</p><p class="story-did">Brightline wants to meet Ana Ruiz.</p></div>
+      <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Ravi, Acme Health</p><p class="story-subject">Sorry for the delay. Can Lena do Tuesday?</p><p class="story-did">Acme Health answered. Interview Tuesday.</p></div>
+      <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priya’s inbox</b></p><p class="story-from">Jen, Kestrel Labs</p><p class="story-subject">We’d like to make Ben an offer</p><p class="story-did">Kestrel Labs is making Ben Cho an offer.</p></div>
+    </div>
+    <div class="story-page">
+      <div class="kit-head"><h3>Candidates</h3><span class="kit-live">Updates itself from 3 inboxes <i class="kit-face maya" aria-hidden="true">M</i><i class="kit-face theo" aria-hidden="true">T</i><i class="kit-face priya" aria-hidden="true">P</i></span></div>
+      <p class="kit-rows-head"><span>Candidate</span><span>Sent · Screen · Interview · Offer</span></p>
+      <ul class="kit-rows">
+        <li data-touch="3"><div><strong><i class="kit-face priya" aria-hidden="true">P</i><span class="kit-sr">Priya’s inbox</span>Ben Cho</strong><span>Engineer, Kestrel Labs</span></div><div class="kit-stage" data-until="3"><span class="kit-steps" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="kit-pill plain">Interviewed</span></div><div class="kit-stage" data-at="3"><span class="kit-steps" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span><span class="kit-pill good">Offer coming</span></div></li>
+        <li data-touch="2"><div><strong><i class="kit-face theo" aria-hidden="true">T</i><span class="kit-sr">Theo’s inbox</span>Lena Fox</strong><span>Nurse manager, Acme Health</span></div><div class="kit-stage" data-until="2"><span class="kit-steps" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></span><span class="kit-pill late">No reply, 6 days</span></div><div class="kit-stage" data-at="2"><span class="kit-steps" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="kit-pill good">Interview Tuesday</span></div></li>
+        <li data-touch="1"><div><strong><i class="kit-face maya" aria-hidden="true">M</i><span class="kit-sr">Maya’s inbox</span>Ana Ruiz</strong><span>Designer, Brightline</span></div><div class="kit-stage" data-until="1"><span class="kit-steps" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></span><span class="kit-pill plain">Sent 3 days ago</span></div><div class="kit-stage" data-at="1"><span class="kit-steps" aria-hidden="true"><i class="on"></i><i class="on"></i><i></i><i></i></span><span class="kit-pill good">Client wants to meet</span></div></li>
+        <li><div><strong><i class="kit-face maya" aria-hidden="true">M</i><span class="kit-sr">Maya’s inbox</span>Kai Moss</strong><span>Product manager, Orbit Foods</span></div><div class="kit-stage"><span class="kit-steps" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></span><span class="kit-pill plain">Sent today</span></div></li>
+      </ul>
+    </div>
+    <a class="story-more" href="/for/recruiters/">See Rally for recruiters <!-- rally:arrow --></a>
+  </article>
+  <article class="story-slide" data-slide data-kind="table" data-word="client requests" role="tabpanel" id="home-story-agencies" aria-labelledby="home-story-tab-agencies">
+    <div class="story-mail">
+      <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Make a table of what each client has asked the three of us for, and where it stands.”</p></div>
+      <div class="story-burst" data-at="1" data-until="2"><div class="story-email"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Jen, Kestrel Labs</p><p class="story-subject">Can we move the launch video up a week?</p><p class="story-did">Added a new request from Kestrel Labs.</p></div><div class="story-email is-small" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Design Weekly</p><p class="story-subject">This week in type</p></div><div class="story-email is-small" aria-hidden="true"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Calendar</p><p class="story-subject">Invitation: Monday standup</p></div></div>
+      <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Priya’s inbox</b></p><p class="story-from">Ravi, Acme Health</p><p class="story-subject">Following up on my invoice question</p><p class="story-did">Acme Health asked twice. Marked it overdue.</p></div>
+      <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email <b>in Theo’s inbox</b></p><p class="story-from">Mia, Brightline</p><p class="story-subject">Round 2 looks great. Approved</p><p class="story-did">Marked the Brightline copy approved.</p></div>
+    </div>
+    <div class="story-page">
+      <div class="kit-head"><h3>Client requests</h3><span class="kit-live">Updates itself from 3 inboxes <i class="kit-face maya" aria-hidden="true">M</i><i class="kit-face theo" aria-hidden="true">T</i><i class="kit-face priya" aria-hidden="true">P</i></span></div>
+      <table class="kit-table">
+        <thead><tr><th scope="col">Client</th><th scope="col">Request</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          <tr data-at="1" data-touch="1"><td><strong><i class="kit-face theo" aria-hidden="true">T</i><span class="kit-sr">Theo’s inbox</span>Kestrel Labs</strong></td><td>Launch video, a week sooner</td><td><span class="kit-pill new">New</span></td></tr>
+          <tr data-touch="2"><td><strong><i class="kit-face priya" aria-hidden="true">P</i><span class="kit-sr">Priya’s inbox</span>Acme Health</strong></td><td>Invoice question</td><td><span class="kit-pill wait" data-until="2">Waiting 2 days</span><span class="kit-pill late" data-at="2">Overdue, asked twice</span></td></tr>
+          <tr data-touch="3"><td><strong><i class="kit-face theo" aria-hidden="true">T</i><span class="kit-sr">Theo’s inbox</span>Brightline</strong></td><td>Homepage copy, round 2</td><td><span class="kit-pill wait" data-until="3">In review</span><span class="kit-pill good" data-at="3">Approved</span></td></tr>
+          <tr><td><strong><i class="kit-face maya" aria-hidden="true">M</i><span class="kit-sr">Maya’s inbox</span>Orbit Foods</strong></td><td>Logo files for print</td><td><span class="kit-pill plain">Sent Tuesday</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <a class="story-more" href="/for/agencies/">See Rally for agencies <!-- rally:arrow --></a>
+  </article>
+  <article class="story-slide" data-slide data-kind="tracker" data-word="contracts" role="tabpanel" id="home-story-legal" aria-labelledby="home-story-tab-legal">
+    <div class="story-mail" data-flow="across">
+      <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Track every open legal request and who it is waiting on.”</p></div>
+      <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Dana, Finance</p><p class="story-subject">Vendor agreement for review</p><p class="story-did">Added it. It is waiting on legal.</p></div>
+      <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Sam, Sales</p><p class="story-subject">Answers to your questions on the MSA</p><p class="story-did">Sales answered. The MSA is back with legal.</p></div>
+      <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Kestrel Labs counsel</p><p class="story-subject">Changes accepted</p><p class="story-did">Kestrel agreed. The DPA is ready to sign.</p></div>
+    </div>
+    <div class="story-page">
+      <div class="kit-head"><h3>Who’s waiting on whom</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+      <p class="kit-rows-head"><span>Request</span><span>Waiting on</span></p>
+      <ul class="kit-rows">
+        <li data-at="1" data-touch="1"><div><strong>Vendor agreement</strong><span>From Finance</span></div><span class="kit-pill new">Legal</span></li>
+        <li><div><strong>Lease renewal</strong><span>Office, 2nd floor</span></div><span class="kit-pill late">Legal, 6 days</span></li>
+        <li data-touch="2"><div><strong>Northwind MSA</strong><span>Asked Sales 3 questions</span></div><span class="kit-pill wait" data-until="2">Sales</span><span class="kit-pill plain" data-at="2">Legal</span></li>
+        <li data-touch="3"><div><strong>Kestrel DPA</strong><span>Changes sent Nov 10</span></div><span class="kit-pill wait" data-until="3">Kestrel Labs</span><span class="kit-pill good" data-at="3">Ready to sign</span></li>
+      </ul>
+    </div>
+    <a class="story-more" href="/for/legal/">See Rally for legal teams <!-- rally:arrow --></a>
+  </article>
+  <article class="story-slide" data-slide data-kind="checklist" data-word="documents" role="tabpanel" id="home-story-accountants" aria-labelledby="home-story-tab-accountants">
+    <div class="story-mail">
+      <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Make a checklist of the documents each client owes me, and tick them off as they arrive.”</p></div>
+      <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Elena Garcia</p><p class="story-subject">W-2s and bank form attached</p><p class="story-did">Ticked both for the Garcia family.</p></div>
+      <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Rivera Plumbing</p><p class="story-subject">Sorry for the delay, statement attached</p><p class="story-did">Ticked Rivera Plumbing’s statement.</p></div>
+      <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Chen Design</p><p class="story-subject">Q3 payroll report attached</p><p class="story-did">Chen Design has sent everything.</p></div>
+    </div>
+    <div class="story-page">
+      <div class="kit-head"><h3>Documents we’re waiting on</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+      <table class="kit-matrix">
+        <thead><tr><th scope="col">Client</th><th scope="col">Bank</th><th scope="col">Payroll</th><th scope="col">Tax forms</th></tr></thead>
+        <tbody>
+          <tr><td>Garcia family</td><td><i class="kit-tick" data-done="1" data-touch="1"><span class="kit-sr" data-until="1">Not in yet</span><span class="kit-sr" data-at="1">In</span></i></td><td><i class="kit-tick done"><span class="kit-sr">In</span></i></td><td><i class="kit-tick" data-done="1" data-touch="1"><span class="kit-sr" data-until="1">Not in yet</span><span class="kit-sr" data-at="1">In</span></i></td></tr>
+          <tr><td>Rivera Plumbing</td><td><i class="kit-tick" data-done="2" data-touch="2"><span class="kit-sr" data-until="2">Not in yet</span><span class="kit-sr" data-at="2">In</span></i></td><td><i class="kit-tick done"><span class="kit-sr">In</span></i></td><td><i class="kit-tick"><span class="kit-sr">Not in yet</span></i></td></tr>
+          <tr><td>Chen Design</td><td><i class="kit-tick done"><span class="kit-sr">In</span></i></td><td><i class="kit-tick" data-done="3" data-touch="3"><span class="kit-sr" data-until="3">Not in yet</span><span class="kit-sr" data-at="3">In</span></i></td><td><i class="kit-tick done"><span class="kit-sr">In</span></i></td></tr>
+          <tr><td>Bluebird Bakery</td><td><i class="kit-tick"><span class="kit-sr">Not in yet</span></i></td><td><i class="kit-tick"><span class="kit-sr">Not in yet</span></i></td><td><i class="kit-tick done"><span class="kit-sr">In</span></i></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <a class="story-more" href="/for/accountants/">See Rally for accountants <!-- rally:arrow --></a>
+  </article>
+  <article class="story-slide" data-slide data-kind="timeline" data-word="events" role="tabpanel" id="home-story-event-planners" aria-labelledby="home-story-tab-event-planners">
+    <div class="story-mail">
+      <div class="story-ask" data-until="1"><p class="story-label">You ask Rally</p><p class="story-quote">“Show me a timeline of what is due before the Lee and Park wedding.”</p></div>
+      <div class="story-email" data-at="1" data-until="2"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">June Studio</p><p class="story-subject">Confirming June 14, arriving 2pm</p><p class="story-did">The photographer is confirmed.</p></div>
+      <div class="story-email" data-at="2" data-until="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Table &amp; Thyme</p><p class="story-subject">Final payment received, thank you</p><p class="story-did">Marked the caterer paid.</p></div>
+      <div class="story-email" data-at="3"><p class="story-label"><!-- rally:gmail-mark -->New email</p><p class="story-from">Jess Lee</p><p class="story-subject">What time should the shuttle leave?</p><p class="story-did">Added Jess’s question.</p></div>
+    </div>
+    <div class="story-page">
+      <div class="kit-head"><h3>Lee &amp; Park, June 14</h3><span class="kit-live">Updates itself from your Gmail</span></div>
+      <ul class="kit-timeline">
+        <li data-at="3" data-touch="3"><time>Today</time><div><strong>Shuttle time</strong><span>Jess asked this morning</span></div><span class="kit-pill new">New</span></li>
+        <li data-touch="1" data-done="1"><time>Today</time><div><strong>Confirm photographer</strong><span>June Studio</span></div><span class="kit-pill late" data-until="1">Due today</span><span class="kit-pill good" data-at="1">Confirmed</span></li>
+        <li data-touch="2" data-done="2"><time>Fri</time><div><strong>Caterer final payment</strong><span>Table &amp; Thyme</span></div><span class="kit-pill wait" data-until="2">Due Friday</span><span class="kit-pill good" data-at="2">Paid</span></li>
+        <li><time>Jun 2</time><div><strong>Send seating chart</strong><span>To the venue</span></div><span class="kit-pill plain">On track</span></li>
+      </ul>
+    </div>
+    <a class="story-more" href="/for/event-planners/">See Rally for event planners <!-- rally:arrow --></a>
+  </article>
+  </div>
+</div>

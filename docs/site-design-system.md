@@ -21,7 +21,8 @@ the three.js figure to [`landing-technology-schematic.md`](landing-technology-sc
 The migrated pages stay light in either system appearance. Shared type and
 palette belong in `site-theme.css`; normal secondary text must remain readable
 on paper, sunken surfaces and sage. The homepage owns its composition in
-`home.css` and its illustrative examples in `home.ts`. Reading pages use
+`home.css`; the illustrative Canvas on `/developer-mode/` is played by
+`canvas-example.ts`. Reading pages use
 `reading.css`, with `trust.css` and `help.css` retaining their own layouts.
 
 - **One artwork source:** `home-illustrations.ts` owns the 1448 × 1086 master
@@ -29,21 +30,29 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   and raster preview crops. Update that geometry when replacing the master;
   browser and card code must not keep separate coordinates. Retain the distinct
   blue hexagonal Sidekick and compare the drawings as a set.
-- **Illustrative actions:** The homepage's example Canvas is a chat beside one
-  artifact, with no app sidebar, window bar or artifact toolbar. Its three examples (a Gmail pipeline dashboard,
-  a Granola feature-request board with voting, a podcast feed) each draw their
-  own artifact in `index.html`. The GTM example's chat also shows the Sidekick's
-  delegation card, in the app's own words, with Theo and Priya allowing it to act
-  as them (Maya, its creator, is enrolled already), then Theo asking it to send a push
-  notification when a new deal opens and Rally showing the instruction it added; "Run the Sidekick" only swaps local markup to
-  version 2 (`data-new` rows appear, `data-v2` text replaces the original).
-  They do not run jobs or connect to tools. Preserve that distinction
-  and the acquisition action IDs. The historical offer action is now an inline
-  browser-entry link; the timed offer card was removed.
-- **What a reactive artifact can do:** Section 02 of the homepage, after the
-  example Canvas, lists reactive artifact capabilities as a numbered list
-  (`.reactive-list` in `home.css`). Each item names a capability the product
-  ships today, not an outcome.
+- **Gmail first:** The homepage sells one use, connect Gmail and get a
+  dashboard in five minutes, in plain words with no product vocabulary. Its
+  hero is a story of example pages, one per audience, and each audience has
+  its own page under `/for/`. The story player, the kit and those pages belong
+  to [`site-audience-pages.md`](site-audience-pages.md); their claims and the
+  rule that every example says it updates itself are that document's
+  invariants.
+- **Illustrative actions:** The example Canvas, a chat beside one artifact with
+  no app sidebar, window bar or artifact toolbar, lives on
+  `/developer-mode/`, with its capability list and prompt list. Its three
+  examples (a Gmail pipeline dashboard, a Granola feature-request board with
+  voting, a podcast feed) each draw their own artifact in that page's HTML. The
+  GTM example's chat also shows the Sidekick's delegation card, in the app's own
+  words, with Theo and Priya allowing it to act as them (Maya, its creator, is
+  enrolled already), then Theo asking it to send a push notification when a new
+  deal opens and Rally showing the instruction it added; "Run the Sidekick" only
+  swaps local markup to version 2 (`data-new` rows appear, `data-v2` text
+  replaces the original). They do not run jobs or connect to tools. Preserve
+  that distinction and the acquisition action IDs.
+- **What a reactive artifact can do:** `/developer-mode/` lists reactive
+  artifact capabilities as a numbered list (`.step-list` in `home.css`, which
+  the homepage's "How it works" steps share). Each item names a capability the
+  product ships today, not an outcome.
 - **One plan catalog:** Homepage pricing reads `@rally/contracts/plans`, also
   re-exported by the usage module. The separate, dependency-free entry lets
   native Node site builds consume the catalog without traversing the runtime
@@ -52,8 +61,8 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
 - **One preview renderer:** Every link preview on the site is drawn at build
   time by `reading-card.ts` from local static TTF derivatives, avoiding
   network/system font dependencies. Help, blog posts and marketplace templates
-  draw theirs from their own front matter. Every hand-written page (home,
-  Canvases, Sidekicks, `/start-fast/`, the marketplace and blog indexes, and the
+  draw theirs from their own front matter. Every hand-written page (home, the
+  audience pages, `/developer-mode/`, Canvases, Sidekicks, `/start-fast/`, the marketplace and blog indexes, and the
   Trust Center) has an entry in `page-cards.ts`, which the `rally-page-cards`
   plugin draws to `<page>/social.png` and tags into the page's head. The build
   fails if a card's title is not its page's `<h1>`, or if a page names its own
@@ -97,6 +106,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/landing.css` | The earlier product and start-fast system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
+| `apps/site/for/`, `apps/site/src/for/`, `apps/site/src/story.ts`, `apps/site/src/story.css`, `apps/site/developer-mode/index.html` | The audience pages, the story player and kit, and the page for everything else: [`site-audience-pages.md`](site-audience-pages.md) |
 | `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace and one page per template at `/marketplace/<slug>/`, rendered at build time from `packages/skills/marketplace-skills/` (`loadCanvasTemplates`), with a client-side category filter. Styles build on `home.css` |
 | `apps/site/src/connector-marks.ts` | Connector marks and Rally plugin glyphs for the marketplace's chips, rendered from the app's components to static SVG at build time |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
@@ -258,17 +268,21 @@ and nothing reveals or drifts.
   person's colour.
 - **Both themes, from tokens.** A colour written into a rule instead of a
   token breaks one of the two themes; check both before shipping.
-- **Live first, then multiplayer.** Every page that sells Rally leads with
+- **Live first, then multiplayer.** Every page that sells Rally in its own
+  words (the `landing.css` pages and `/developer-mode/`) leads with
   artifacts that update from activity in connected tools, and follows with
   the team working from them, from one person to the whole organization.
   Copy that leads with chat, or with collaboration alone, breaks the
   positioning.
-- **Every live claim names its mechanism.** A Canvas changes because a
-  Sidekick, triggered by a schedule or an event in a connected tool,
-  publishes a new version. Do not show a Canvas changing by itself, or a
-  connector the product does not have.
+- **Every live claim names its mechanism.** On those same pages, a Canvas
+  changes because a Sidekick, triggered by a schedule or an event in a
+  connected tool, publishes a new version. Do not show a Canvas changing by
+  itself, or a connector the product does not have. The homepage and the
+  audience pages say the same thing without the product's nouns
+  ([`site-audience-pages.md`](site-audience-pages.md)): an email arrives and
+  the page changes.
 - **Product truth.** Every claim on these pages must be something the
-  product does, in the product's words. The demo shows people present, a
+  product does, in the product's words where the page uses them. The demo shows people present, a
   comment on a line and a published version, all of which ship; it does not
   show live co-editing or a cursor for Rally, which do not. A badge such as
   "Most teams" needs a source before it ships.
@@ -308,6 +322,28 @@ automated test: it is checked in a real browser at desktop and phone widths,
 in light and dark, before a change ships, as the repository's rule on visible changes requires.
 
 ## Changelog
+
+### 2026-11-19 — The homepage's general pitch moves to its own page
+
+**What changed:** The homepage now leads with Gmail
+([`site-audience-pages.md`](site-audience-pages.md) owns that change and its
+reasons). What this document described on the homepage moved with it: the
+three-example Canvas, the capability list and the prompt list are on
+`/developer-mode/`, `home.ts` became `canvas-example.ts`, and
+`.reactive-list` became `.step-list` because the homepage's "How it works" now
+shares it. Every link preview's sign-off changed from "Reactive artifacts,
+shared with your team." to "Your inbox, as one page that updates itself.", and
+the pencil footer gained a sixth column.
+
+**Why:** The homepage's readers are now people who have never met the product,
+so its vocabulary had to leave the page. The general-purpose story is still
+true and still sells to the earlier audience, so it was moved rather than
+deleted.
+
+**Consequences:** The pencil-site boundaries above apply to
+`/developer-mode/` exactly as they did to the homepage. The help card
+design version was bumped for the new sign-off, so every help card has a new
+URL.
 
 ### 2026-11-17 — Every page's link preview is drawn from the page
 
