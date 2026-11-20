@@ -1905,12 +1905,14 @@ minutes. That made the warning the largest in production, about 5,800 a day,
 all from a room working correctly. The 2026-09-19 entry wants this line read as
 evidence of a wedge, never as a heartbeat. This change makes that true again.
 
-**Rejected:** A once-per-isolate guard. The object is evicted between these
-alarms, so the guard would still log on every wake.
+**Considered and rejected:** A once-per-isolate guard. The object is evicted
+between these alarms, so the guard would still log on every wake.
 
-**What a future change has to respect:** the exemption is for a batch made up of
-questions only. A withheld batch with any non-question call is the
-unrecoverable wedge this warning exists for, and must keep reporting.
+**Consequences:** The exemption is for a batch made up of questions only. A
+withheld batch with any non-question call is the unrecoverable wedge this
+warning exists for, and must keep reporting.
+
+PR: [#1685](https://github.com/juno-ai-labs/avalon/pull/1685).
 
 ### 2026-11-18 — A refused queue batch backs off instead of throwing
 
