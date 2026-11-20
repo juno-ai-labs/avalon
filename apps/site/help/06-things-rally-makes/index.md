@@ -3,7 +3,7 @@ title: Things Rally makes
 description: Documents, spreadsheets, images, recordings, PDFs and reactive web pages that Rally creates in a Canvas, plus the files and items you bring in.
 ---
 
-Chapter 2 treated a Canvas mostly as a conversation. You write, Rally answers, teammates join in, and the whole thing scrolls upward like an unusually polite group chat. This chapter is about the other half of the page: the panel on the right, where the things Rally makes appear.
+Chapter 2 treated a Canvas mostly as a conversation. You write, Rally answers, teammates join in, and the whole thing scrolls upward like an unusually polite group chat. This chapter is about the other half of the page: the panel on the left, where the things Rally makes appear.
 
 Ask Rally for a one-page plan and you do not get a plan pasted into the chat, wedged between "sounds good" and somebody's lunch order. You get a document: a real file with a title, sitting in the panel, that you can read beside the conversation, pop out onto a second screen or save to your computer. Ask for a budget and you get a spreadsheet. Ask for a picture and you get an image file. Ask for a voice recording and you get audio. Ask for a sign-up sheet for the team offsite and Rally builds a small working web page, puts it on the internet and hands you its address. These are **artifacts**, Rally's word for anything it made for you, and every one of them lives in a Canvas.
 

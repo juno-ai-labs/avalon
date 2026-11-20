@@ -45,7 +45,7 @@ You do not have to watch. Go and do something else. The Canvas's row in the side
 
 ## The thing Rally made
 
-When Rally has made something, a card for it appears in the conversation, and the thing itself opens in the panel on the right of the window. A document reads as a document, a spreadsheet as a table, an image as an image, and a website as a live page you can click through. Above it is its version and who made it, such as **version 1 · Rally**.
+When Rally has made something, a card for it appears in the conversation, and the thing itself slides in on the left of the Canvas, and the conversation moves to the right. A document reads as a document, a spreadsheet as a table, an image as an image, and a website as a live page you can click through. Above it is its version and who made it, such as **version 1 · Rally**.
 
 Ask for a change in the conversation ("make the second section shorter", "add a column for annual pricing") and Rally publishes a new version. The panel moves to it, and the earlier ones are kept. [What a Canvas is](../02-canvases/01-what-a-canvas-is.md) explains versions, and [Things Rally makes](../06-things-rally-makes/index.md) covers every kind of thing Rally can make.
 

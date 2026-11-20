@@ -108,14 +108,14 @@ function renderSidekick(viewerId: string, search = '', inCanvas = false): QueryC
   queryClient.setQueryData(['ordered-transcript', SIDEKICK], conversation.transcript);
   queryClient.setQueryData(['substream-workstream', SIDEKICK, 'run-1'], conversation);
   queryClient.setQueryData(['substream-ordered-transcript', SIDEKICK, 'run-1'], conversation.transcript);
-  const canvasId = '00000000-0000-7000-8000-000000000c51';
+  const canvasId = CANVAS;
   queryClient.setQueryData(['workstream', canvasId], { ...conversation, id: canvasId, title: 'Launch plan' });
   queryClient.setQueryData(['ordered-transcript', canvasId], conversation.transcript);
   render(<Tooltip.Provider><QueryClientProvider client={queryClient}>
     <MemoryRouter initialEntries={[inCanvas ? `/canvases/${canvasId}${search}` : `/sidekicks/${SIDEKICK}${search}`]}>
       <CurrentLocation />
       <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" />
-        <Route path="/canvases/:id" element={<ConversationSurface parentId={canvasId} parentKind="canvas" substreamId="0" renderHeader={({ openPanel }) => <button onClick={() => openPanel({
+        <Route path="/canvases/:id" element={<ConversationSurface panelSide="leading" parentId={canvasId} parentKind="canvas" substreamId="0" renderHeader={({ openPanel }) => <button onClick={() => openPanel({
           key: `sidekick:${SIDEKICK}`, label: 'Sidekick: Incident triage',
           render: (controls) => <SidekickPanel id={SIDEKICK} controls={controls} />,
         })}>Open attached Sidekick</button>} />} />
@@ -123,6 +123,28 @@ function renderSidekick(viewerId: string, search = '', inCanvas = false): QueryC
     </MemoryRouter>
   </QueryClientProvider></Tooltip.Provider>);
   return queryClient;
+}
+
+const CANVAS = '00000000-0000-7000-8000-000000000c51';
+
+/** A Canvas's Chat on the real surface, with its panels where the Canvas screen asks for them. */
+function renderCanvas(): QueryClient {
+  session.current = { user: { id: AUTHOR, name: 'Viewer', email: 'viewer@example.test' }, workspace: { id: 'w', region: 'global', role: 'member' } };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const conversation = boot();
+  queryClient.setQueryData(['workstream', CANVAS], { ...conversation, id: CANVAS, title: 'Launch plan' });
+  queryClient.setQueryData(['ordered-transcript', CANVAS], conversation.transcript);
+  render(<Tooltip.Provider><QueryClientProvider client={queryClient}>
+    <MemoryRouter initialEntries={[`/canvases/${CANVAS}`]}>
+      <Routes><Route element={<ConversationSurface panelSide="leading" parentId={CANVAS} parentKind="canvas" substreamId="0" />} path="/canvases/:id" /></Routes>
+    </MemoryRouter>
+  </QueryClientProvider></Tooltip.Provider>);
+  return queryClient;
+}
+
+/** A generated artifact as the conversation socket's `resource_attached` adds it to the detail. */
+function attached(id: string, title: string): WorkstreamBoot['resources'][number] {
+  return { id, direction: 'artifact', title, resourceType: 'file', mimeType: 'text/plain', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', currentVersion: 1, relationshipType: 'generated' };
 }
 
 function CurrentLocation(): React.JSX.Element {
@@ -139,6 +161,25 @@ async function openComposerMenu(): Promise<void> {
   const trigger = await screen.findByRole('button', { name: 'Composer actions' });
   fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
 }
+
+describe("a Canvas's Chat on the shared surface", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    useUiStore.setState({ railOpen: false, railScope: null, railExpanded: false, railLeaving: false });
+    vi.stubGlobal('ResizeObserver', class { observe(): void {} unobserve(): void {} disconnect(): void {} });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('opens an artifact attached to a Canvas while it is open in a panel that leads', async () => {
+    const client = renderCanvas();
+    await screen.findByRole('textbox', { name: 'Ask Rally or the people here' });
+    expect(screen.queryByRole('complementary')).toBeNull();
+    await act(async () => client.setQueryData<WorkstreamBoot>(['workstream', CANVAS], (current) => ({ ...current!, resources: [attached('brief', 'Launch brief')] })));
+    expect(await screen.findByRole('complementary', { name: 'Resource: Launch brief' })).toHaveClass('is-leading');
+    expect(useUiStore.getState().railOpen).toBe(true);
+  });
+});
 
 describe("a Sidekick's shared conversation", () => {
   beforeEach(() => {
@@ -170,6 +211,8 @@ describe("a Sidekick's shared conversation", () => {
     expect(within(panel).queryByRole('button', { name: 'Sidekick details' })).toBeNull();
     expect(canvasComposer).toHaveValue('Keep this Canvas draft');
     expect(useUiStore.getState().railScope).toBe('00000000-0000-7000-8000-000000000c51');
+    // A Sidekick opened from a Canvas takes the place the Canvas's artifact has.
+    expect(panel).toHaveClass('is-leading');
     fireEvent.click(within(panel).getByRole('button', { name: 'Close panel' }));
     await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Sidekick: Incident triage' })).toBeNull());
     expect(canvasComposer).toHaveValue('Keep this Canvas draft');
@@ -203,6 +246,13 @@ describe("a Sidekick's shared conversation", () => {
     expect(within(panel).getByRole('button', { name: 'Sidekick menu: Incident triage' })).toBeInTheDocument();
     expect(within(panel).queryByRole('button', { name: 'Back to Incident triage' })).toBeNull();
     expect(within(panel).queryByText('Ready to begin')).toBeNull();
+  });
+
+  it('keeps a Sidekick’s own panels after its conversation', async () => {
+    const client = renderSidekick(AUTHOR);
+    await screen.findByRole('textbox', { name: 'Message Incident triage and the team' });
+    await act(async () => client.setQueryData<WorkstreamBoot>(['workstream', SIDEKICK], (current) => ({ ...current!, resources: [attached('report', 'Report')] })));
+    expect(await screen.findByRole('complementary', { name: 'Resource: Report' })).not.toHaveClass('is-leading');
   });
 
   it('attaches a paste on the Sidekick panel to neither conversation', async () => {

@@ -8,6 +8,7 @@ import {
 } from '../../common/embedded-browser';
 import { desktopBridge } from '../lib/platform';
 import { IconButton } from './primitives';
+import { observePanelPlacement, visibleRect } from './rail-surface';
 
 const emptyState: EmbeddedBrowserState = { tabs: [], activeTabId: null };
 
@@ -74,8 +75,11 @@ export function useEmbeddedBrowserPlacement(pageRef: RefObject<HTMLElement | nul
       void bridge.setEmbeddedBrowserVisible(false);
       return;
     }
+    // The panel's frame clips the page's box while the slot slides open, so
+    // the native page is held to the part of it on screen.
+    const frame = page.closest('.rail-surface');
     const update = (): void => {
-      const rect = page.getBoundingClientRect();
+      const bounds = visibleRect(page.getBoundingClientRect(), [frame?.getBoundingClientRect()], { width: window.innerWidth, height: window.innerHeight });
       const occluded = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
         .some((overlay) => {
           if (overlay.contains(page) || overlay.getAttribute('data-state') === 'closed') return false;
@@ -84,19 +88,15 @@ export function useEmbeddedBrowserPlacement(pageRef: RefObject<HTMLElement | nul
           if (overlay.getAttribute('role') !== 'menu') return true;
           const menu = (overlay.closest('[data-radix-popper-content-wrapper]') ?? overlay).getBoundingClientRect();
           return menu.width > 0 && menu.height > 0
-            && menu.left < rect.right && menu.right > rect.left
-            && menu.top < rect.bottom && menu.bottom > rect.top;
+            && menu.left < bounds.x + bounds.width && menu.right > bounds.x
+            && menu.top < bounds.y + bounds.height && menu.bottom > bounds.y;
         });
-      void bridge.setEmbeddedBrowserBounds({
-        x: Math.round(Math.max(0, rect.left)),
-        y: Math.round(Math.max(0, rect.top)),
-        width: Math.max(0, Math.round(Math.min(rect.right, window.innerWidth) - Math.max(0, rect.left))),
-        height: Math.max(0, Math.round(Math.min(rect.bottom, window.innerHeight) - Math.max(0, rect.top))),
-      });
+      void bridge.setEmbeddedBrowserBounds(bounds);
       void bridge.setEmbeddedBrowserVisible(!occluded);
     };
     const sizes = new ResizeObserver(update);
     sizes.observe(page);
+    observePanelPlacement(sizes, page);
     const overlays = new MutationObserver((mutations) => {
       // Dictation and virtualized transcript rows also change inline styles.
       // Only menu positioning and sizing need placement checks here.
@@ -181,7 +181,7 @@ export function focusAddress(addressRef: RefObject<HTMLInputElement | null>): vo
 
 /**
  * The browser's keyboard shortcuts for a host's own controls. With a scope,
- * they act only while focus is inside it, so a browser in the right rail never
+ * they act only while focus is inside it, so a browser in a panel never
  * takes ⌘W or ⌘T from the rest of Rally. A shortcut pressed inside the page
  * itself is handled in main and arrives here only as a request for the address
  * field.

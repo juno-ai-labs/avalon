@@ -397,7 +397,8 @@ describe('CanvasScreen', () => {
   it("opens the Canvas's Chat as a canvas conversation under a header naming it", async () => {
     renderCanvas();
     await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
-    expect(lastSurface().props).toMatchObject({ parentId: CANVAS, parentKind: 'canvas', substreamId: '0' });
+    // Its panels lead: the artifact sits beside the sidebar, the Chat after it.
+    expect(lastSurface().props).toMatchObject({ parentId: CANVAS, parentKind: 'canvas', substreamId: '0', panelSide: 'leading' });
     expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled();
     // The viewer is not counted among the people here.
     expect(await screen.findByRole('group', { name: '1 person here' })).toBeInTheDocument();

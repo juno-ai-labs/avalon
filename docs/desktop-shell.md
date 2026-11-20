@@ -2,7 +2,8 @@
 
 The shell is everything around a pane: the navigation sidebar (a rail of two
 sections beside one list), the floating title pills and their menus, and the
-one right slot a pane's artifact or attachment opens in. The Electron client
+one slot a pane's artifact or attachment opens in: beside the sidebar for a
+Canvas, after the conversation everywhere else. The Electron client
 and the browser web app mount the same shell, the desktop renderer's
 `WorkspaceApp`, for members and guests alike; each host supplies its session
 and its native services. What differs by host or by guest is read from
@@ -16,7 +17,7 @@ Threads, Breakouts, the Thread-feed Activity and the Pinned and Artifacts
 sections were removed at the 2026-11 cutover; the changelog below records them.
 
 Read this before changing the rail, a list, what a row shows, the landing, the
-routes the shell serves, or who owns the right panel.
+routes the shell serves, who owns the slot, or how a panel takes a side.
 
 ## Where the code lives
 
@@ -24,7 +25,8 @@ routes the shell serves, or who owns the right panel.
 | --- | --- |
 | `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/marketplace/:slug` (starts a Canvas from that template, replacing the route; `screens/template-start.tsx`), `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/activity`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
 | `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: `/canvases` by default, or the restorable `last-route` with Last Opened selected, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
-| `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
+| `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the slot's width, search, the dock badge, and the `last-route` and presence writes. |
+| `apps/desktop/src/renderer/components/rail-surface.tsx` | The panel layer. `RailSurface`, a panel's frame: its side, how it arrives, its handle, focus and Escape. `PanelHost`, what one conversation's panels share: their side, and whether one mounting now slides in. `useRailExitFade`. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Activity), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts, and `useRailDockBadge`, which sends Activity's unseen count (`dockBadgeCount`) to the dock. |
 | `apps/desktop/src/common/sidebar-attention.ts` | `canvasNeedsAttention` and `sidekickNeedsAttention`: what counts as needing attention; Canvas counts serve `useSectionCounts` and both predicates serve the menu bar ([`menu-bar.md`](menu-bar.md)). |
@@ -35,7 +37,7 @@ routes the shell serves, or who owns the right panel.
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id` ([`automation-lifecycle.md`](automation-lifecycle.md)). |
 | `apps/desktop/src/renderer/screens/activity-home.tsx` | `/activity`, with an empty state or a prompt to choose a row ([`activity.md`](activity.md)). |
 | `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader`, the menu building blocks, `TitlePillAction` and `TitlePillClose`. |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation: a Canvas's Chat or a Sidekick's conversation. Owns its right panel by conversation. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation: a Canvas's Chat or a Sidekick's conversation. Owns its panel by conversation, and wraps its panels in a `PanelHost` on the side its screen asks for (`panelSide`). |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
 | `packages/ui/src/styles/app.css` | The "Single sidebar" and "Title pills" blocks. |
 | `apps/browser/src/shell.tsx` | The web app: this shell over the browser's cookie session ([`browser-client.md`](browser-client.md#the-shell)). |
@@ -335,7 +337,7 @@ levels; reduced motion turns that off.
   attached (`CanvasSidekicksSection`), then a **Notifications** section, then
   Archive canvas for a manager. A
   Sidekick's row is its hexagon, name and state (Draft, Active, Paused). It
-  opens the Sidekick's details in the Canvas's right panel only when `canOpen` admits
+  opens the Sidekick's details in the Canvas's panel only when `canOpen` admits
   it; for anyone else it stays focusable, opens nothing, and its tooltip says
   to ask in the Canvas's chat. The menu archives no Sidekick: one the
   Canvas made is archived by asking its chat, or with the Canvas. A
@@ -369,11 +371,12 @@ levels; reduced motion turns that off.
   `PATCH /conversations/:parentId/resources/:resourceId`. Download reads original
   bytes separately from readable previews, including files without a preview.
 
-### One right slot
+### One slot
 
-The right panel holds the desktop's embedded browser, or whatever the
-conversation opened: a Canvas's artifact with its actions, an attachment, a
-citation's file, a prior version, or a host-owned item such as a Sidekick. None of these opens as a modal. The
+One slot beside the conversation holds the desktop's embedded browser, or
+whatever the conversation opened: a Canvas's artifact with its actions, an
+attachment, a citation's file, a prior version, or a host-owned item such as a
+Sidekick. None of these opens as a modal. The
 panel's header is a pane header: the item's title pill, its actions in the
 pill's menu, and the round close button. At phone width (640px and under) the
 panel takes the whole width, with no resize edge. Above it, an attachment or
@@ -382,6 +385,63 @@ tab splits its window in half; [`desktop-layout.md`](desktop-layout.md) owns
 the width and its resize edge. `ConversationSurface` scopes the panel to the
 conversation that opened it (`railScope`, the parent id), and a surface only
 closes, fades or restores a panel it owns.
+
+**A panel says where it sits, and the stack follows.** The side and the
+arrival belong to the panel layer (`components/rail-surface.tsx`), not to the
+shell, the store or any one screen. A screen wraps its panels in
+`<PanelHost side="leading">` or `"trailing"`; every `RailSurface` under it
+takes that side. The shell holds no state for either: it reads the mounted
+panel back with `:has()` in `app.css`, as it reads a dragged sidebar, and
+makes room on the side the panel names, by as much as the panel shows. So a
+new screen that wants a panel beside the sidebar adds a host, and nothing
+else changes.
+
+- **Leading** sits beside the sidebar with the conversation after it. A
+  Canvas asks for it (`panelSide="leading"` on its `ConversationSurface`):
+  the artifact is what a Canvas is for. **Trailing**, the default, sits after
+  the conversation; a Sidekick's conversation keeps it.
+- **The side is the host's, not the content's.** An attachment, the browser
+  or a Sidekick's details opened from a Canvas takes the place its artifact
+  had, so the Chat never changes sides. A host with no `side` inside another
+  passes the outer one through, so a conversation mounted inside a panel puts
+  its own panels over the slot it sits in.
+- **One slot still.** The width, the open state and the scope are one set in
+  `ui-store.ts`, so one side holds a panel at a time. Panels on both sides at
+  once would need a width and a reveal per side; the frame and the CSS
+  already name the side, the store does not.
+- Below 641px the side is not read: the panel is the full-width sheet.
+
+**How it arrives.** The shell draws the slot through one length,
+`--rail-shown`, which is the slot's width times its reveal (`--rail-reveal`,
+0 to 1). The panel's width, the room the main pane gives up and the resize
+handle all read it, so they move as one. A leading panel keeps its place
+against the sidebar's edge and widens from there with its content held to its
+far edge: it slides out from under the sidebar while the conversation moves
+over by the same amount. The frame carries three classes the shell reads:
+`is-leading`, `is-shown` (the reveal's target) and `is-travelling` (a change
+may animate).
+
+- **A conversation opening or closing its own panel travels**, over 240ms: an
+  artifact arriving in an open Canvas, a click, a close.
+- **An arrival does not.** A host is mounted per conversation, since each
+  screen is keyed by its id. For two frames after a host mounts, a panel that
+  mounts is in place at its width: a Canvas reopened with its panel saved has
+  it there at the first paint. A panel that takes over from one already shown
+  (still in the document as the new one renders) is in place too. A panel
+  that unmounts leaves nothing matching, so no room slides shut beside the
+  next screen.
+- **An opening is shown two frames after it mounts.** The mount can outlast
+  the slide: a transition started inside it is over before a frame is drawn.
+  The panel first paints clipped to nothing, then the slide runs on frames of
+  its own.
+
+A reactive site and the embedded browser are native views that nothing in the
+page clips or moves, so each holds its bounds to the part of the panel's frame
+that is on screen (`site-resource-detail.tsx`, `embedded-browser-view.tsx`).
+Each re-measures when its own box, the frame or the main pane changes size
+(`observePanelPlacement`). The frame covers the slide. The pane covers a
+leading panel carried sideways: resizing the sidebar moves it without changing
+its size, so neither its box nor the frame's says anything.
 
 A Canvas supplies a Sidekick through `ConversationHeaderContext.openPanel`:
 `ConversationHostPanel` names it and renders it with the slot's close, expand
@@ -435,24 +495,37 @@ panel of the pane it was clicked in, once.
   Guard: `components/navigation-sidebar.test.tsx`.
 - **A surface touches only the panel scope it owns.** Guard: verified visually;
   the scope comparison is in each close path of `conversation-surface.tsx`.
-- **One link listener, however many hosts.** Two listeners open a link twice,
-  as two browser tabs. Guard: `lib/browser-rail-links.test.ts`.
-- **A restore never interrupts.** No stored route is applied before onboarding
-  has finished, and a restored object that is gone falls back to its section
-  home without a dialog; a dialog is for something the person just asked to
-  open. Guard: `screens/landing.test.tsx`.
-- **A removed route never draws a dead screen.** Stored and linked addresses of
-  removed surfaces redirect to `/canvases`. Guard: `App.session-gate.test.tsx`,
-  `screens/landing.test.tsx`.
-- **The sidebar never collapses, and never stacks rails.** It is one list with a
-  rail beside it. Guard: `collapsible={false}`; no toggle exists to call. At
-  phone width the sheet is a different layout, not a collapse, and writes no
-  width.
+- **Everything placed against the slot reads `--rail-shown`.** A rule that
+  reads `--rail-slot` or `--rail-width` for a position draws at the open width
+  while the panel is still sliding, and parts company with it. Guard: verified
+  visually, no automated guard.
+- **The stack is read off the panels, never told.** Side and reveal are
+  classes on `RailSurface` that the shell reads with `:has()`. A screen that
+  sets a shell class or a store field for its panel's side makes a second
+  answer that goes stale when the panel unmounts. The other half of that
+  contract: any `.rail-surface` under the shell moves the pane, and one
+  portalled outside the shell does not. Guard: verified visually; the classes
+  are covered by `components/rail-surface.test.tsx`.
+- **An arrival never travels.** Animating it slides an empty room shut beside
+  the screen that replaced the Canvas, and squeezes a Canvas's Chat every time
+  it is reopened. Guard: `components/rail-surface.test.tsx`.
+- **A native view never draws outside the panel's frame.** A leading panel's
+  content starts out behind the sidebar, and the sidebar's edge carries the
+  whole panel when it is resized; a site or browser page placed from its own
+  box alone would be painted over the sidebar while the slot opens, and left
+  behind when the sidebar moves. Both views clip through `visibleRect` and
+  re-measure through `observePanelPlacement`. Guard:
+  `components/rail-surface.test.tsx` (the clip) and
+  `components/embedded-browser-rail.test.tsx` (the clip and the move, through
+  the browser's placement). Not seen with a real native view: the sandbox
+  draws neither a reactive site nor a capturable browser page.
 
 ## Boundary
 
 The shell owns layout, navigation chrome, the routes and which pane is shown.
-It does not own:
+It owns the panel layer too: a panel's frame, the side it takes and how it
+arrives. A screen chooses a side and what the panel holds; it does not place
+it. It does not own:
 
 - what a Canvas is and who may open it ([`canvases.md`](canvases.md));
 - a Sidekick's screens and lifecycle ([`automation-lifecycle.md`](automation-lifecycle.md));
@@ -462,6 +535,12 @@ It does not own:
 
 ## Failure modes and limits
 
+- **A long task during a panel's slide costs frames.** The slide is layout on
+  the main thread, and a panel's content can finish loading mid-slide. The
+  panel and the conversation still end in the right place.
+- **A first visit to a Canvas slides.** The panel is in place at the first
+  paint only when one was saved; otherwise the Chat paints at full width and
+  moves over once the Canvas detail names an artifact.
 - **No restorable route:** a device that saved none, or saved a route of a
   removed surface, lands on `/canvases`.
 - **A saved Canvas or Sidekick that is gone:** the landing reopens it, the
@@ -493,6 +572,14 @@ It does not own:
 - **Panel focus:** `components/rail-surface.test.tsx` verifies explicit opens
   take and restore focus, while automatic reveals leave it alone on arrival
   and removal.
+- **A panel's side and arrival:** `components/rail-surface.test.tsx` covers
+  the frame's classes through an arrival, an opening, a close, a takeover
+  and a nested host; `components/inspector-rail.test.tsx` that a leading
+  panel widens toward the conversation by drag and by key;
+  `screens/sidekick-conversation.test.tsx` that a Canvas's panel leads and a
+  Sidekick's does not, on the real surface. That the
+  panel and the Chat move together, and where each sits, is checked in a real
+  window.
 - **Which phone rule wins:** `screens/workspace-settings.test.tsx` mounts the
   real stylesheet at 390px with `test/app-stylesheet.ts` and reads the
   computed `display` of Settings' sections toggle, which the shell's
@@ -502,6 +589,57 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-20 — A panel takes a side, and the stack follows it
+
+**What changed:** A panel says which side of the pane it sits on. `PanelHost`
+gives one conversation's panels their side, `RailSurface` carries it with how
+it arrives, and the shell reads both off the mounted frame with `:has()`. A
+Canvas asks for the leading side, so its artifact sits beside the sidebar
+with its Chat after it; a Sidekick's conversation still trails. The panel's
+opening keyframes (`rail-open`, `rail-close`) are gone: the slot is drawn
+through `--rail-shown`, the width times a reveal, which the pane's padding,
+the panel's width and the handle all read.
+
+**Why:** A Canvas is its artifact first, and the old layout put the artifact
+in a side panel of its own Chat. The request was for the artifact to take the
+primary place and, when one becomes ready in an open Canvas, for the Chat to
+move over as the artifact slides out from under the sidebar. The old opening
+could not do that: the panel animated its own width while the pane jumped to
+its narrow width in one step, so the two never moved together. This reverses
+a choice in [the Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md),
+which kept the artifact in the existing right panel so that no new client
+primitive was needed; the side on a host is that primitive.
+
+**Considered and rejected:**
+- *The side in the store and the shell*, chosen by the conversation surface
+  from its kind. The next screen wanting a leading panel would then edit the
+  store, the shell and the surface; on a host it is one prop.
+- *A side chosen by what the slot holds* (artifact left, everything else
+  right). The slot is one, so clicking an attachment while an artifact was
+  open would throw the Chat from one side to the other.
+- *A plain CSS transition on the class that opens the slot.* It was built and
+  did not animate. Mounting the panel blocked the main thread longer than the
+  240ms slide, so the transition had run out before the first frame; and a
+  close driven from two store fields passed through a commit with neither
+  class set, which a layout read in between turned into a snap. Hence the
+  two-frame wait, and a reveal the frame owns in one render.
+- *Transforms on the Chat*, which would run off the main thread. The panel is
+  `position: fixed` inside the conversation's own subtree, and a transformed
+  ancestor would become its containing block.
+- *Panels on both sides at once.* Nothing asks for it, and it needs a width,
+  a reveal and a scope per side in the store.
+
+**Consequences:** The slide is layout, on the main thread, like the sidebar's
+width; a long task during the 240ms costs frames. The panel still opens at
+the even split and stores its own width, so in a Canvas the Chat is the part
+that flexes when the window is resized. A new rule placed against the slot
+reads `--rail-shown`. A new native view in a panel clips itself to the frame.
+A new kind of panel renders through `RailSurface`, or the shell cannot see
+it. A panel opened on a first visit slides in when its artifact becomes
+known; only a saved one is in place at the first paint.
+
+Shipped in [#1687](https://github.com/juno-ai-labs/avalon/pull/1687).
 
 ### 2026-11-20 — A Canvas's Sidekick panel is its details alone
 

@@ -86,8 +86,8 @@ be one of the people who built Rally, and you should be getting back to work.
 
 - **Resize the sidebar.** Drag its right edge to make it wider or narrower. It
   does not fold away.
-- **Resize the right-hand panel.** Drag the thin line on the left edge of the
-  panel beside the conversation (what Rally made, or the browser). Rally
+- **Resize the panel beside the conversation.** Drag the thin line between
+  the two (what Rally made, or the browser). Rally
   remembers the width for each Canvas. Double-click the line to put it back.
 - **Pop an artifact out.** In the desktop app, **Open in a new window** in an
   artifact's header gives it a window of its own, ideal for a second screen.

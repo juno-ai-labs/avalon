@@ -18,7 +18,7 @@ function artifactResource(artifact: CanvasArtifact): { resourceType: string; mim
 /**
  * The Canvas menu's Artifacts section: one row per artifact the Canvas holds,
  * newest first as the detail lists them, with its kind's mark, its title and
- * when it last changed. A row opens that artifact in the right rail. Draws
+ * when it last changed. A row opens that artifact in the Canvas's panel. Draws
  * nothing for a Canvas with no artifacts.
  */
 export function CanvasArtifactsSection({ artifacts, onOpen }: {

@@ -13,11 +13,11 @@ A Canvas is one piece of work. Not a department, and not a place where
 announcements go to be ignored. "The March offsite plan" is a good Canvas.
 "Marketing" is a filing cabinet.
 
-Every Canvas has two parts. On the left is a conversation, where you, the
-people you invite and Rally talk about the work. On the right is the work
-itself: whatever Rally made, whether that is a document, a spreadsheet, an
-image, a PDF or a small website. You ask in the conversation, Rally publishes a
-new version on the right, and you look at it and ask for the next one.
+Every Canvas has two parts. On the left is the work itself: whatever Rally
+made, whether that is a document, a spreadsheet, an image, a PDF or a small
+website. On the right is a conversation, where you, the people you invite and
+Rally talk about the work. You ask in the conversation, Rally publishes a new
+version on the left, and you look at it and ask for the next one.
 
 Most chat apps treat their bot like the office printer: you walk over to it,
 you collect what it made, you carry it back to your desk. In a Canvas the agent

@@ -18,8 +18,10 @@ a thing to argue for rather than a thing to preserve.
 A Canvas's Chat is this surface with `parentKind: "canvas"` and substream
 `"0"`, opened by `screens/canvas.tsx` at `/canvases/:id`
 ([`canvases.md`](canvases.md#in-the-client)). Nothing in the feed, composer,
-annotations or right rail is Canvas-specific: the artifacts the Chat publishes
-open in the inspector rail, under the same per-conversation restore. The surface only words the Canvas as one: its opening and unavailable
+annotations or panel is Canvas-specific: the artifacts the Chat publishes
+open in the inspector rail, under the same per-conversation restore. What a
+Canvas adds is told to the surface as data: the side its panels take
+(`panelSide`) and the artifacts its own record lists (`canvasArtifacts`). The surface only words the Canvas as one: its opening and unavailable
 states say "Canvas", its ready state invites a request to Rally, and its
 composer reads "Ask Rally or the people here…". The header is the host's
 `renderHeader`: the Canvas's pill, the people in it now and Share.
@@ -79,7 +81,7 @@ The main-window `/sidekicks` route renders the library on both hosts; there
 is no separate Sidekicks window. The account menu's Sidekicks
 item opens `/sidekicks` without changing the sidebar section, and a Settings
 memory row naming a Sidekick opens it in the main window through
-`openSidekick`. Standalone automation and Sidekick routes keep the Canvases list, or Activity when selected. Canvas menu picks open a Sidekick's details in the right panel. Attachment remove buttons
+`openSidekick`. Standalone automation and Sidekick routes keep the Canvases list, or Activity when selected. Canvas menu picks open a Sidekick's details in the Canvas's panel. Attachment remove buttons
 have their own class so accessibility labels on the row do not apply button-only
 layout. Workspace automation pushes invalidate the library and attachment REST
 queries in each open window, keeping cross-window authoring and availability
@@ -87,7 +89,7 @@ changes visible without navigation.
 
 ## Sidekick conversations and attachments
 
-A Sidekick's shared conversation uses this surface in the main window only: a Canvas's right panel shows the Sidekick's details and mounts no conversation. An embedded surface (the mobile Chat) keeps its previews local and does not restore, claim, resize or close the shell's rail; its host owns that slot. Route-owned message-search parameters belong only to the outer Canvas. A file pasted on a host's panel belongs to no conversation; a hidden conversation or a run with no composer still accepts no files. See [`desktop-shell.md`](desktop-shell.md#one-right-slot). Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column to the right of its conversation (`SidekickDetailLayout`).
+A Sidekick's shared conversation uses this surface in the main window only: a Canvas's panel shows the Sidekick's details and mounts no conversation. An embedded surface (the mobile Chat) keeps its previews local and does not restore, claim, resize or close the shell's rail; its host owns that slot. Route-owned message-search parameters belong only to the outer Canvas. A file pasted on a host's panel belongs to no conversation; a hidden conversation or a run with no composer still accepts no files. See [`desktop-shell.md`](desktop-shell.md#one-slot). Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column to the right of its conversation (`SidekickDetailLayout`).
 
 The Canvas host supplies `composerActivity` above the input on desktop and web;
 [`canvases.md`](canvases.md#running-helpers-above-the-composer) owns its counts.
@@ -572,9 +574,9 @@ prop.
 Each conversation's header is what the host renders through `renderHeader`;
 the header context carries the detail, the socket state, who is present, and
 `openArtifact` and `openResource` for opening one of the conversation's
-artifacts in the right panel. `scrollToTurn` asks the surface to bring a turn
+artifacts in its panel. `scrollToTurn` asks the surface to bring a turn
 into view, and a `?turn=&sequence=` search target (a search result) is honoured
-the same way. The right panel is scoped to the conversation that opened it.
+the same way. The panel is scoped to the conversation that opened it.
 [`desktop-shell.md`](desktop-shell.md) owns the panes and that scope.
 
 A conversation read with `readOnly` (a run's own conversation, read from its

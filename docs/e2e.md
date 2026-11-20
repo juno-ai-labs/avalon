@@ -106,7 +106,7 @@ opening message uses the REST admission route a command client uses.
 
 ## Lightbox and desktop acceptance
 
-Resource checks use an open Canvas's right rail, or Resource details from an
+Resource checks use an open Canvas's artifact panel, or Resource details from an
 artifact preview. Test the version menu, refresh and archive cancellation
 there. Generated sites must use the isolated native viewer, not file
 conversion. Route changes close previews; missing content shows an error
@@ -115,7 +115,7 @@ content.
 
 Run the Electron desktop with `pnpm dev:desktop` and exercise these flows against the local Worker:
 
-1. Open the seeded **Launch plan** Canvas and confirm its newest artifact opens in the right rail. Open **Versions** from the artifact's header and confirm it is a dropdown over the document rather than a pane that replaces it. Open an image resource and confirm the picture itself is in the lightbox, not an empty last-updated panel. Archive a resource only after **Continue** on the confirm modal — the dialog stays until the unlink succeeds, and a refused request leaves the document open with the reason.
+1. Open the seeded **Launch plan** Canvas and confirm its newest artifact opens on the left, beside the sidebar, with the Chat on the right. Leave and reopen the Canvas: the panel is already in place, and nothing slides. Close the panel and reopen it from the pill's **Open artifact**: the artifact slides out from under the sidebar while the Chat moves over with it. Make a new Canvas, leave it open, and publish a file into it from outside (`POST /canvases/:id/artifacts`): the artifact slides in without a reload, and the composer keeps focus. Open a Sidekick's own conversation and preview an attachment: its panel opens on the right. Open **Versions** from the artifact's header and confirm it is a dropdown over the document rather than a pane that replaces it. Open an image resource and confirm the picture itself is in the lightbox, not an empty last-updated panel. Archive a resource only after **Continue** on the confirm modal — the dialog stays until the unlink succeeds, and a refused request leaves the document open with the reason.
 2. Sweep the pointer toward the navigation sidebar's trailing edge and confirm its pill appears once the pointer is within 20 pixels of the edge, at the top of the list and at the bottom alike, and that dragging it resizes the navigation.
 3. Describe a Sidekick in **New Sidekick** and send one turn without finishing it, then return to the Sidekicks home and confirm the named draft appears without a lifecycle pill (only paused Sidekicks have one), without an active Sidekick being created. Restart the client, open that draft, and confirm the wizard resumes on the turn it was left at, with the earlier messages above it and the wizard's question still answerable; answer it and confirm no second draft appears. Type an answer without sending it, switch to another Sidekick and back, and confirm the unsent text stayed with the draft it was typed in. Finish one draft and confirm the same row becomes the active Sidekick rather than leaving a second draft beside it. On another draft, open the overview header's **⋯** menu and confirm it offers **Archive draft**; confirm the dialog says the authoring conversation remains stored but will no longer be viewable, and that Rally does not offer a way to unarchive it yet. Cancel once and confirm the draft remains; then choose **Archive** and confirm the draft leaves the list and does not return after a restart. Open an active or paused Sidekick, open the same menu, and confirm it offers **Archive Sidekick**, names the Sidekick, says its schedules stop, and that choosing **Archive** removes it from the list, stops its next planned run, and rejects mail to its address while the address stays reserved. With the network refusing the archive, confirm the dialog stays open and says why instead of closing on a failure.
 4. In a Sidekick's conversation, as a manager, switch **Edit Sidekick** on in the composer's menu and confirm the composer reads "Describe a change to this Sidekick…" and the heading says **Editing this Sidekick**; switch it off and send a request, and confirm a run row appears, collapsed, and opens the run's own read-only conversation with a way back.
@@ -445,7 +445,7 @@ Use a test workspace with two members, Adam and Samantha.
 
 1. Sign in as Adam, choose **New Canvas**, and start it from a prompt. Confirm the Canvas opens on its Chat with the prompt as Adam's first message and Rally's reply streaming in.
 2. Open **Share**, add Samantha, and confirm she sees the Canvas in her list and can open it, while a third member who is not on it is told it does not exist.
-3. Attach a small text or PDF file and confirm the resource appears without exposing storage identifiers or credentials. Ask Rally for a document and confirm it lands in the right rail as the Canvas's artifact.
+3. Attach a small text or PDF file and confirm the resource appears without exposing storage identifiers or credentials. Ask Rally for a document and confirm it lands in the Canvas's panel, on the left, as the Canvas's artifact.
 4. Open the Canvas as Samantha while Adam has it open and confirm each sees the other in the header's face pile, and that viewing adds nobody to the conversation's participants.
 5. Reload both clients and confirm the transcript, audience and artifact remain durable while presence disappears when the second client closes.
 
@@ -682,7 +682,7 @@ The navigation is one sidebar that never collapses
 ([`desktop-shell.md`](desktop-shell.md)); there is no ⌘B toggle, compact rail,
 or bottom collapse control. Drag its edge and confirm it stops at the minimum
 rather than snapping shut, and that the width survives a relaunch. Double-click
-the right panel's edge and confirm it resets to its default width. Check both
+the panel's edge and confirm it resets to the even split. Check both
 appearances, long titles, and a short window: the account row must remain
 visible while the list scrolls.
 

@@ -4788,18 +4788,38 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .workspace-shell {
   --rail-max-slot: max(280px, calc(100vw - var(--spaces-sidebar-width, 0px) - var(--av-cmp-sidebar-width) - var(--conversation-min-width)));
   --rail-slot: min(var(--rail-width), var(--rail-max-slot));
-  transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --spaces-sidebar-width var(--sidebar-collapse-motion), --av-cmp-sidebar-width var(--sidebar-collapse-motion);
+  /* What of the slot is on screen now. The panel's width, the room the pane
+     gives up for it and the handle between them all read this one length, so
+     a panel arriving and the conversation making way for it move as one. */
+  --rail-shown: calc(var(--rail-slot) * var(--rail-reveal));
+  transition: --spaces-sidebar-width var(--sidebar-collapse-motion), --av-cmp-sidebar-width var(--sidebar-collapse-motion);
 }
+/* The slot's reveal, 0 closed to 1 open, set from `RailSurface`'s classes with
+   `:has()`; see docs/desktop-shell.md#one-slot. */
+@property --rail-reveal {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+/* A shown frame inside a leaving one does not hold the slot open: a preview
+   open in a Sidekick panel is still mounted while that panel fades out.
+   `:where()` keeps both at the shell's own weight, so the drag rules below
+   win without being restated. */
+.workspace-shell:where(:has(.rail-surface.is-shown:not(.rail-surface.is-leaving .rail-surface))) { --rail-reveal: 1; }
+.workspace-shell:where(:has(.rail-surface.is-travelling)) { transition: --spaces-sidebar-width var(--sidebar-collapse-motion), --av-cmp-sidebar-width var(--sidebar-collapse-motion), --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --rail-reveal 240ms cubic-bezier(.22, 1, .36, 1); }
 /* A drag has to track the pointer exactly, so for the length of the gesture the
    dragged sidebar's own width channel leaves the transitioned set and the
    sidebar sits where the pointer is. Only that one: the other two are restated
    rather than dropped with it, so dragging one sidebar cannot silently stop the
    other — or a rail closing on its own — from moving. Naming the survivors is
-   enough to re-pair them with their durations by position, because all three
-   entries above carry the same 240ms and the same curve. The class is on the
+   enough to re-pair them with their durations by position, because every
+   entry above carries the same 240ms and the same curve. The class is on the
    sidebar, which is what knows it is being dragged, so the shell reads it back
-   with `:has()` rather than the drag having to reach up and set a second flag. */
-.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --spaces-sidebar-width; }
+   with `:has()` rather than the drag having to reach up and set a second flag.
+   Two forms, one per list above: the panel's channels survive only while a
+   panel is travelling, so one that arrives in place mid-drag stays in place. */
+.workspace-shell:has(.sidebar.is-resizing) { transition-property: --spaces-sidebar-width; }
+.workspace-shell:has(.sidebar.is-resizing):has(.rail-surface.is-travelling) { transition-property: --rail-width, --spaces-sidebar-width, --rail-reveal; }
 
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
    column's minimum is the items' min-content, and a markdown document's
@@ -4807,8 +4827,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    and `.rail-scroll`'s `overflow-x: hidden` clipped the prose instead of
    wrapping it to the slot. */
 .rail-surface { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); bottom: 8px; box-shadow: var(--av-sys-elevation-shadow-rail); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
-/* A dismissed panel dissolves without making the frame disappear abruptly. */
-.rail-surface.is-leaving { animation: rail-close 240ms cubic-bezier(.22, 1, .36, 1) forwards; min-width: 0; pointer-events: none; z-index: 41; }
+/* A dismissed panel dissolves without making the frame disappear abruptly.
+   Its width follows the slot's reveal, like the room the pane takes back; a
+   panel closed inside another, where the slot stays open, has only the fade. */
+.rail-surface.is-leaving { animation: rail-surface-close 240ms cubic-bezier(.22, 1, .36, 1) forwards; min-width: 0; pointer-events: none; z-index: 41; }
 /* A short pill that colors and grows under the pointer, standing in the gap
    beside the panel it resizes rather than drawing a second border down its
    edge. Both sidebars use it; only where each one sits differs. */
@@ -4848,7 +4870,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   height: 54px;
 }
 .rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: 12px; z-index: 41; }
-/* A drag has to track the pointer exactly; only closing the rail is animated. */
+/* A drag has to track the pointer exactly. */
 .is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
 .is-resizing-rail .workspace-shell { transition: none; }
 .rail-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: flex; justify-content: space-between; padding: 0 7px 0 11px; }
@@ -5095,7 +5117,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .message-context-label { color: var(--av-ref-color-neutral-9); font-size: var(--av-cmp-feed-byline-font-size); font-weight: 450; }
 .template-path { align-items: center; background: transparent; color: var(--av-sys-color-accent-base); display: inline-flex; font-size: var(--av-sys-type-caption-1); gap: 4px; margin-top: 19px; }
 .automation-composer-wrap { bottom: 13px; left: 50%; max-width: 920px; position: fixed; transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - 76px); z-index: 4; }
-.rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2 - var(--rail-slot) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - var(--rail-slot) - 76px); }
 .automation-composer { --composer-text-padding: 14px 15px 4px; background: var(--av-sys-color-surface-raised); border-color: var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); }
 .automation-composer textarea { min-height: 54px; }
 .automation-composer .composer-toolbar { min-height: 37px; padding: 1px 8px 7px; }
@@ -6051,20 +6072,25 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    it: the pane gives up the panel's width. At phone width it is a full-width
    sheet instead. 641 is `PHONE_LAYOUT_MAX_WIDTH` plus one. */
 @media (min-width: 641px) {
-  .workspace-shell.rail-open .main-pane { padding-right: var(--rail-slot); }
+  .workspace-shell .main-pane { padding-right: var(--rail-shown); }
+  /* A leading panel sits beside the sidebar and widens from its edge, its
+     content held to its far edge: docs/desktop-shell.md#one-slot. */
+  .workspace-shell:where(:has(.rail-surface.is-leading)) .main-pane { padding-left: var(--rail-shown); padding-right: 0; }
+  .rail-surface.is-leading { left: var(--av-cmp-sidebar-width); right: auto; }
+  .rail-surface.is-leading > .rail-surface-content { margin-left: calc(var(--rail-shown) - var(--rail-slot)); }
   /* Too narrow for the conversation's minimum beside the narrowest panel
      (`railFillsPane`): the panel covers the whole pane and the pane keeps its
      width under it, with no scrim and no edge to drag. */
   .workspace-shell.rail-fills-pane,
   .workspace-shell.rail-expanded { --rail-slot: calc(100vw - var(--av-cmp-sidebar-width)); }
-  .workspace-shell.rail-open.rail-fills-pane .main-pane,
-  .workspace-shell.rail-open.rail-expanded .main-pane { padding-right: 0; }
+  .workspace-shell.rail-fills-pane .main-pane,
+  .workspace-shell.rail-expanded .main-pane { padding-left: 0; padding-right: 0; }
   .workspace-shell.rail-fills-pane .rail-resizer,
   .workspace-shell.rail-expanded .rail-resizer { display: none; }
 }
 .rail-surface {
-  animation: rail-open 240ms cubic-bezier(.22, 1, .36, 1);
   min-width: 0;
+  width: var(--rail-shown);
   background: var(--av-sys-color-surface-canvas);
   border-left: 0;
   border-bottom: 0;
@@ -6085,19 +6111,28 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   min-height: 0;
   width: var(--rail-slot);
 }
-.rail-surface.is-leaving .rail-surface-content { animation: rail-content-close 160ms ease forwards; }
 /* The target sits inside the panel, reaching only the 2px of the
    conversation's scrollbar border, so the transcript's scrollbar stays
    draggable. The divider line stays on the panel's edge. */
-.rail-resizer { bottom: 0; justify-content: flex-start; padding-left: 2px; right: calc(var(--rail-slot) - var(--resize-hit-size) + 2px); top: 0; width: var(--resize-hit-size); }
+.rail-resizer { bottom: 0; justify-content: flex-start; padding-left: 2px; right: calc(var(--rail-shown) - var(--resize-hit-size) + 2px); top: 0; width: var(--resize-hit-size); }
 /* Except over a reactive site or a browser page: Electron composites a native
    view over the panel's body that takes the pointer from anything drawn
    under it, so a target inside the edge is grabbable only along the header.
    There the target reaches over the conversation instead, and covers its
    scrollbar's last few pixels. */
-.rail-resizer:has(+ .rail-surface :is(.site-detail-pane, .embedded-browser-page)) {
+.rail-resizer:where(:has(+ .rail-surface :is(.site-detail-pane, .embedded-browser-page))) {
   padding-left: calc(var(--resize-hit-size) - 4px);
-  right: calc(var(--rail-slot) - 4px);
+  right: calc(var(--rail-shown) - 4px);
+}
+/* A leading panel's edge faces the conversation's left side, which has no
+   scrollbar to keep clear of, so the target always reaches over the
+   conversation, whatever the panel holds, with the line on the panel's edge. */
+@media (min-width: 641px) {
+  .rail-resizer.is-leading {
+    left: calc(var(--av-cmp-sidebar-width) + var(--rail-shown) - 4px);
+    padding-left: 4px;
+    right: auto;
+  }
 }
 .rail-resizer > span {
   align-self: stretch;
@@ -6114,11 +6149,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   background: color-mix(in srgb, var(--av-sys-color-text-default) 20%, transparent);
   height: auto;
 }
-@keyframes rail-open { from { width: 0; } to { width: var(--rail-slot); } }
 .rail-resizer > .rail-resizer-limit { height: 0; pointer-events: none; position: fixed; visibility: hidden; width: var(--rail-max-slot); }
-@keyframes rail-close { from { width: var(--rail-slot); } to { width: 0; } }
+@keyframes rail-surface-close { to { opacity: 0; } }
 @keyframes rail-content-open { from { opacity: 0; } to { opacity: 1; } }
-@keyframes rail-content-close { from { opacity: 1; } to { opacity: 0; } }
 .rail-header { border-bottom: 0; gap: 8px; padding: 0 12px; }
 /* A panel's header is a conversation pane's: its title pill centred and
    Close at the right, the same height as the pane beside it. */

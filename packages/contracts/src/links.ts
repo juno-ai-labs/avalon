@@ -42,7 +42,7 @@ const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 export interface CanvasLinkTarget extends WorkspaceTarget {
   canvasId: string;
-  /** One of the Canvas's artifacts to open it onto, in the right rail. */
+  /** One of the Canvas's artifacts to open it onto, in its panel. */
   artifactId?: string;
   /**
    * One message of the Canvas's Chat to open it at: the turn's id, with

@@ -13,6 +13,7 @@ import { useCopy } from '../lib/use-copy';
 import { useDetailHeaderActions } from './detail-header-actions';
 import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
 import { EmptyState, InsetSurface, SegmentedControl } from './primitives';
+import { observePanelPlacement, visibleRect } from './rail-surface';
 
 /**
  * The rail's detail for a **reactive artifact**: a published site Rally serves.
@@ -269,20 +270,15 @@ export function SiteResourceDetail({
   const measure = React.useCallback((): { x: number; y: number; width: number; height: number } | null => {
     const pane = paneRef.current;
     if (!pane) return null;
-    const rect = pane.getBoundingClientRect();
-    const viewport = pane.closest('.rail-scroll')?.getBoundingClientRect();
-    const left = Math.max(rect.left, viewport?.left ?? 0, 0);
-    const top = Math.max(rect.top, viewport?.top ?? 0, 0);
-    const right = Math.min(rect.right, viewport?.right ?? window.innerWidth, window.innerWidth);
-    const bottom = Math.min(rect.bottom, viewport?.bottom ?? window.innerHeight, window.innerHeight);
     // Window-relative, because the main process composites over the window
-    // rather than over this component's own coordinate space.
-    return {
-      x: Math.round(left),
-      y: Math.round(top),
-      width: Math.max(0, Math.round(right - left)),
-      height: Math.max(0, Math.round(bottom - top)),
-    };
+    // rather than over this component's own coordinate space. Held to its
+    // scroll viewport, and to the panel's frame, which clips its content
+    // while the slot slides open.
+    return visibleRect(
+      pane.getBoundingClientRect(),
+      [pane.closest('.rail-scroll')?.getBoundingClientRect(), pane.closest('.rail-surface')?.getBoundingClientRect()],
+      { width: window.innerWidth, height: window.innerHeight },
+    );
   }, []);
 
   // The owning lightbox is allowed. Modal overlays always win; tooltips and
@@ -429,6 +425,9 @@ export function SiteResourceDetail({
     window.addEventListener('scroll', update, true);
     const observer = new ResizeObserver(update);
     if (paneRef.current) observer.observe(paneRef.current);
+    // The pane keeps its size while its panel slides open or is carried
+    // sideways by the sidebar, so the frame and the main pane say it moved.
+    if (paneRef.current) observePanelPlacement(observer, paneRef.current);
     // Floating UI positions the wrapper after mount; its style mutation must
     // recheck overlap even when the tooltip's own state has not changed.
     const overlays = new MutationObserver((mutations) => {
