@@ -322,7 +322,7 @@ a declined request
 (`access_denied`) opens the Canvas's id onto its requestable pane, which then
 says "Request declined" and offers Request access again (opening it reads no
 conversation, so the row stays unseen until the requester asks again or Mark
-all seen), a source row opens its Sidekick, whose Sources section shows the
+all seen), a source row opens its Sidekick, whose Wakes on section shows the
 request, but only while the viewer's Sidekick list holds that Sidekick: the
 person asked usually cannot open it until they approve, so until then their
 row opens the Activity home (`/activity`) and is never drawn open

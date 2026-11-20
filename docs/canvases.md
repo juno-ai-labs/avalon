@@ -512,9 +512,10 @@ from the row, which the socket keeps current, rather than from the detail it
 opened with. A Sidekick's directory write pushes the Canvas list when its
 name, state or appearance moved (`noteAttachedSidekickFace`).
 
-Selecting an openable Sidekick in the Canvas command pill opens its conversation
-and details in the existing right panel, preserving the Canvas chat and route.
-The panel has close and expand controls; its run selection stays local.
+Selecting an openable Sidekick in the Canvas command pill opens its details,
+and only its details, in the existing right panel, preserving the Canvas chat
+and route. The panel has close and expand controls; its conversation and runs
+are reached at the Sidekick's own route.
 [`desktop-shell.md`](desktop-shell.md#one-right-slot) owns the panel behavior.
 
 `GET /canvases/:id` lists them as `sidekicks` (`HostedCanvas.sidekicks`): id,

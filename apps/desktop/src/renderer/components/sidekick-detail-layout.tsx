@@ -16,11 +16,15 @@ export interface SidekickDetailHeaderContext {
  * Where both do not fit, the details take the conversation's place under the
  * same header, and the header's Details button switches between them; the
  * conversation stays mounted either way, so an unsent message survives.
+ *
+ * A host that passes no conversation (a Canvas's panel) gets the header over
+ * the details alone, at any width, with nothing to switch to.
  */
 export function SidekickDetailLayout({ header, details, children }: {
   header: (context: SidekickDetailHeaderContext) => ReactNode;
   details: ReactNode;
-  children: ReactNode;
+  /** The conversation; absent where only the details are shown. */
+  children?: ReactNode;
 }): React.JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const container = useRef<HTMLElement>(null);
@@ -37,6 +41,13 @@ export function SidekickDetailLayout({ header, details, children }: {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  const alone = children === undefined || children === null || children === false;
+  if (alone) {
+    return <main className="sidekick-detail" data-alone>
+      <div className="sidekick-detail-header window-drag">{header({ compact: false, detailsOpen: true, toggleDetails: () => undefined })}</div>
+      <aside aria-label="Sidekick details" className="sidekick-profile">{details}</aside>
+    </main>;
+  }
   const showingDetails = compact && detailsOpen;
   return <main ref={container} data-compact={compact} className="sidekick-detail" data-view={showingDetails ? 'details' : 'conversation'}>
     <div className="sidekick-detail-header window-drag">{header({ compact, detailsOpen: showingDetails, toggleDetails: () => setDetailsOpen((open) => !open) })}</div>

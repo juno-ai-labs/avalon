@@ -448,8 +448,10 @@ session and workspace boundary.
 
 The Sidekick's details column shows, as design §4 draws it, Pause/Resume and
 a "⋯" menu (Run now, Run history, Copy link, Archive), then three blocks that
-are always present: **Wakes on** (one row per trigger with its mark, and the
-next run), **Uses** (the connections its runs use, with their count) and
+are always present: **Wakes on** (one row per trigger with its mark and its
+condition, under each event trigger the accounts whose events reach it, and
+the next run; [`shared-ui.md`](shared-ui.md#sidekick-sources) owns the
+section), **Uses** (the connections its runs use, with their count) and
 **Writes to** (the Canvases attached to it). A block with nothing in it reads
 **Nothing yet** rather than disappearing, so "uses nothing" and "not shown"
 cannot be confused. Who it may act as follows the blocks. A draft shows no
@@ -1137,9 +1139,10 @@ such a turn started, whose own turns meet the same manager check
 (`actsAsSidekickWizard`, [`agent-loop-types.md`](agent-loop-types.md#a-background-agent-acts-with-its-roots-authority));
 a turn that reached `"0"`'s loop any other way gets the delegation tools alone.
 
-**In the client.** The same Sidekick screen is hosted by a standalone route
-or by a Canvas's right panel. The panel keeps runs local, closes on archive,
-and leaves the Canvas's route and draft intact;
+**In the client.** The Sidekick screen is its standalone route. A Canvas's
+right panel shows the same Sidekick's details alone: no conversation, no run,
+no Run now, no Run history, no Pause and no Archive. It leaves the Canvas's
+route and draft intact;
 [`desktop-shell.md`](desktop-shell.md#one-right-slot) owns this layout.
 The Sidekick screen's composer offers a manager **Edit
 Sidekick** in its actions menu, a checkbox entry (`ComposerMenuAction.checked`)

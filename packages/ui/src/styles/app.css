@@ -7273,6 +7273,13 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
   &[data-view=conversation] .sidekick-profile, &[data-view=details] .sidekick-conversation { visibility: hidden; pointer-events: none; }
   .sidekick-profile { border-left: 0; }
 }
+/* The details alone, with no conversation beside them (a Canvas's panel):
+   one column under the header at any width. */
+.sidekick-detail[data-alone] {
+  grid-template-columns: minmax(0, 1fr);
+  .sidekick-detail-header .title-pill-header { margin-right: 0; }
+  .sidekick-profile { border-left: 0; grid-column: 1; }
+}
 
 .sidekick-section-list { list-style: none; margin: 0; padding: 0; }
 .sidekick-recommendation { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 50%; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 24px; height: 24px; justify-content: center; margin-right: 8px; }
@@ -7299,8 +7306,8 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
 .sidebar-collapse-footer-toggle { display: flex; }
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
-:is(.sidekick-delegation, .sidekick-sources) { margin-top: 0; }
-:is(.sidekick-delegation, .sidekick-sources) h2 { font-size: var(--av-sys-type-body); margin: 0 0 10px; }
+.sidekick-delegation { margin-top: 0; }
+.sidekick-delegation h2 { font-size: var(--av-sys-type-body); margin: 0 0 10px; }
 .sidekick-delegation-disclosure { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); line-height: 1.5; }
 .sidekick-delegation-disclosure p { margin: 0 0 10px; }
 .sidekick-delegates { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 14px; }
@@ -7310,16 +7317,22 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
 .sidekick-delegate-copy > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .sidekick-delegate-copy small { font-size: var(--av-sys-type-footnote); color: var(--av-sys-color-text-muted); }
 .sidekick-delegation > button { margin: 4px 0; max-width: 100%; white-space: normal; text-align: left; }
-/* Sources sit beside delegation in the same list shape: a person, what
-   their account lets in, and their own control under it, where the 340px
-   details column has room for it. */
-.sidekick-sources .sidekick-delegates li { align-items: flex-start; }
-.sidekick-sources .sidekick-delegate-copy > .button { justify-self: start; margin-top: 5px; min-height: 28px; padding: 3px 10px; }
-.sidekick-sources-empty { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-callout); margin: 10px 0 0; }
-/* The people asked sit under the people who answered yes, told apart by a label of their own. */
-.sidekick-sources-asked { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); font-weight: 500; margin: 16px 0 0; }
-.sidekick-sources-asked + .sidekick-delegates { margin-top: 10px; }
-.sidekick-source-requests .source-decision { margin-top: 5px; }
+/* Wakes on lists each trigger's accounts under it, in delegation's list
+   shape: a person (or the Organization's connection), what their account
+   lets in, and their own control under it, where the 340px details column
+   has room for it. */
+.sidekick-wake-trigger-copy { display: grid; flex: 1; gap: 6px; min-width: 0; }
+.sidekick-wake-accounts { gap: 12px; margin: 4px 0 8px; }
+.sidekick-wake-accounts li { align-items: flex-start; }
+.sidekick-wake-accounts .sidekick-delegate-copy > .button { justify-self: start; margin-top: 5px; min-height: 28px; padding: 3px 10px; }
+.sidekick-wake-accounts .source-decision { margin-top: 5px; }
+/* The Organization's connection sits where a person's avatar does, at its size. */
+.sidekick-wake-account-mark { align-items: center; display: inline-flex; flex: none; height: 24px; justify-content: center; width: 24px; }
+.sidekick-wake-account-mark .connector-mark { height: 18px; width: 18px; }
+.sidekick-wake-account-mark svg { margin-top: 0; }
+.sidekick-wake-accounts-none { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-footnote); }
+/* Accounts no trigger listens for, under a label of their own. */
+.sidekick-wake-other { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); font-weight: 500; margin: 16px 0 6px; }
 
 /* Approve and Decline for a Sidekick source request: the pair is the
    request's state as much as its controls, and reads the same on the card,
@@ -8836,7 +8849,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .annotation-chip > [role='alert'] button { margin:6px 8px 0 0; color:inherit; background:transparent; border:1px solid var(--av-sys-color-border-default); border-radius:6px; padding:4px 8px; cursor:pointer; }
 .annotation-chips > [role='status'] { color:var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); }
 
-/* A hosted Sidekick uses the whole right slot; its previews cover that same slot. */
+/* A hosted Sidekick's details use the whole right slot. */
 .conversation-host-panel > .rail-surface-content { grid-template-rows: minmax(0, 1fr); }
 .conversation-host-panel .rail-resizer { display: none; }
 

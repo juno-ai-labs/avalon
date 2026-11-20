@@ -12,7 +12,8 @@ import type * as UseWorkstreamSocketModule from '../lib/use-workstream-socket';
  * conversation surface and its composer, down to the conversation socket's
  * `createMessage`, which `use-workstream-socket` sends as `create_message`
  * (its own test proves the intent reaches that command). Only the socket and
- * the REST reads behind the profile are doubles.
+ * the REST reads behind the profile are doubles. And the same Sidekick opened
+ * from a Canvas, in the Canvas's real panel, where it is its details alone.
  */
 
 const SIDEKICK = '00000000-0000-7000-8000-000000000a51';
@@ -152,81 +153,80 @@ describe("a Sidekick's shared conversation", () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it('opens the real Sidekick in the Canvas panel, preserves the Canvas draft and releases only its own slot', async () => {
+  it("opens the Sidekick's details alone in the Canvas panel, preserves the Canvas draft and releases only its own slot", async () => {
     writeLayout(layoutKey('w', AUTHOR, `artifact-panel:${SIDEKICK}:0`), JSON.stringify({ resourceId: 'old-sidekick-artifact', workstreamScoped: false }));
     renderSidekick(AUTHOR, '', true);
     const canvasComposer = await screen.findByRole('textbox', { name: 'Ask Rally or the people here' });
     fireEvent.change(canvasComposer, { target: { value: 'Keep this Canvas draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
     const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
-    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
+    const details = await within(panel).findByRole('complementary', { name: 'Sidekick details' });
+    expect(await within(details).findByRole('heading', { level: 1, name: 'Incident triage' })).toBeInTheDocument();
+    expect(details).not.toHaveAttribute('inert');
+    // No conversation: no composer, no feed, and nothing to switch to one.
+    expect(within(panel).queryByRole('textbox')).toBeNull();
+    expect(within(panel).queryByRole('log', { name: 'Transcript' })).toBeNull();
+    expect(within(panel).queryByRole('region', { name: 'Sidekick conversation' })).toBeNull();
+    expect(within(panel).queryByRole('button', { name: 'Sidekick details' })).toBeNull();
     expect(canvasComposer).toHaveValue('Keep this Canvas draft');
     expect(useUiStore.getState().railScope).toBe('00000000-0000-7000-8000-000000000c51');
-    fireEvent.click(within(panel).getByRole('button', { name: 'Sidekick details' }));
-    expect(within(panel).getByRole('complementary', { name: 'Sidekick details' })).not.toHaveAttribute('inert');
     fireEvent.click(within(panel).getByRole('button', { name: 'Close panel' }));
     await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Sidekick: Incident triage' })).toBeNull());
     expect(canvasComposer).toHaveValue('Keep this Canvas draft');
     expect(useUiStore.getState().railOpen).toBe(false);
   });
 
-  it.each(['frame', 'header'])('pastes files into the Sidekick from its %s, and into the Canvas from its own composer', async (target) => {
+  it('starts no run, lists none, reads none and offers no Pause or Archive from the Canvas panel', async () => {
+    api.getAutomation.mockResolvedValue(sidekick({ runnable: true }));
     renderSidekick(AUTHOR, '', true);
     fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
     const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
-    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
-    const header = within(panel).getByRole('button', { name: 'Sidekick details' });
-    const element = target === 'frame' ? panel : header;
+    await within(panel).findByRole('heading', { level: 1, name: 'Incident triage' });
+    expect(within(panel).getByText('Active')).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Pause' })).toBeNull();
+    fireEvent.pointerDown(within(panel).getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    const more = await screen.findByRole('menu');
+    expect(within(more).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual(['Copy link']);
+    fireEvent.keyDown(more, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    fireEvent.pointerDown(within(panel).getByRole('button', { name: 'Sidekick menu: Incident triage' }), { button: 0, ctrlKey: false });
+    const pill = await screen.findByRole('menu');
+    expect(within(pill).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual(['Copy link']);
+    expect(api.getAutomationRuns).not.toHaveBeenCalled();
+  });
+
+  it("keeps the route's run out of the Canvas panel: the pill stays the Sidekick's", async () => {
+    renderSidekick(AUTHOR, '?run=run-1', true);
+    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
+    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
+    await within(panel).findByRole('heading', { level: 1, name: 'Incident triage' });
+    expect(within(panel).getByRole('button', { name: 'Sidekick menu: Incident triage' })).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Back to Incident triage' })).toBeNull();
+    expect(within(panel).queryByText('Ready to begin')).toBeNull();
+  });
+
+  it('attaches a paste on the Sidekick panel to neither conversation', async () => {
+    renderSidekick(AUTHOR, '', true);
+    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
+    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
     const clipboardData = { files: [new File(['png'], 'screenshot.png', { type: 'image/png' })], types: ['Files'], getData: () => '' };
-    fireEvent.paste(element, { clipboardData });
-    expect(addFiles).toHaveBeenCalledOnce();
-    expect(addFiles).toHaveBeenCalledWith([expect.objectContaining({ name: 'screenshot.png', type: 'image/png' })]);
+    fireEvent.paste(await within(panel).findByRole('complementary', { name: 'Sidekick details' }), { clipboardData });
+    expect(addFiles).not.toHaveBeenCalled();
     expect(canvasFiles).not.toHaveBeenCalled();
     fireEvent.paste(screen.getByRole('textbox', { name: 'Ask Rally or the people here' }), { clipboardData });
     expect(canvasFiles).toHaveBeenCalledOnce();
-    expect(canvasFiles).toHaveBeenCalledWith([expect.objectContaining({ name: 'screenshot.png', type: 'image/png' })]);
-    expect(addFiles).toHaveBeenCalledOnce();
-  });
-
-  it('does not attach a paste to either conversation while Sidekick Details hides its composer', async () => {
-    renderSidekick(AUTHOR, '', true);
-    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
-    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
-    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
-    fireEvent.click(within(panel).getByRole('button', { name: 'Sidekick details' }));
-    fireEvent.paste(within(panel).getByRole('complementary', { name: 'Sidekick details' }), {
-      clipboardData: { files: [new File(['png'], 'screenshot.png', { type: 'image/png' })], types: ['Files'], getData: () => '' },
-    });
     expect(addFiles).not.toHaveBeenCalled();
-    expect(canvasFiles).not.toHaveBeenCalled();
   });
 
   it('keeps the Sidekick open when a new Canvas artifact arrives', async () => {
     const client = renderSidekick(AUTHOR, '', true);
     fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
     const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
-    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
+    await within(panel).findByRole('heading', { level: 1, name: 'Incident triage' });
     await act(async () => client.setQueryData<WorkstreamBoot>(['workstream', '00000000-0000-7000-8000-000000000c51'], (current) => ({
       ...current!, resources: [{ id: 'new-artifact', direction: 'artifact', title: 'Report', resourceType: 'file', mimeType: 'text/plain', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', currentVersion: 1, relationshipType: 'generated' }],
     })));
     expect(screen.getByRole('complementary', { name: 'Sidekick: Incident triage' })).toBe(panel);
-  });
-
-  it('leaves a pending Canvas message jump to the Canvas even when the Sidekick covers that sequence', async () => {
-    const client = renderSidekick(AUTHOR, '?turn=canvas-turn&sequence=5', true);
-    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledWith({
-      snapshotId: '00000000-0000-7000-8000-000000000a59',
-      range: { startInclusive: 5, endExclusive: 6 }, resumeAfterEventSequence: 0,
-    }));
-    await act(async () => client.setQueryData(['ordered-transcript', SIDEKICK], {
-      ...boot().transcript, ranges: [{ covered: { startInclusive: 1, endExclusive: 10 }, turns: [] }],
-    }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
-    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
-    await within(panel).findByPlaceholderText('Message Incident triage and the team…');
-    expect(screen.getByTestId('location')).toHaveTextContent('?turn=canvas-turn&sequence=5');
-    expect(screen.queryByText('The matching message is no longer available.')).toBeNull();
-    expect(loadTranscriptRange).toHaveBeenCalledOnce();
   });
 
   it("sends a manager's message as a wizard edit once Edit Sidekick is on", async () => {

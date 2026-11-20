@@ -22,7 +22,7 @@ const surfaceIntents = vi.hoisted(() => [] as (string | undefined)[]);
 const surfaceMenus = vi.hoisted(() => [] as (ReadonlyArray<{ label: string; checked?: boolean; onSelect: () => void }> | undefined)[]);
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
-  useCollaborationSession: () => ({ session: viewer.session, api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, getSidekickSources, createAutomation } }),
+  useCollaborationSession: () => ({ session: viewer.session, api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, getSidekickSources, createAutomation, getConnections: async () => [] } }),
   useShellCapabilities: () => ({ host: shell.host, guest: false }),
 }));
 const socket = vi.hoisted(() => ({ mounted: false }));

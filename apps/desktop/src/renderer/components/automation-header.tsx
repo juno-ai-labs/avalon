@@ -5,7 +5,9 @@ import { Archive, ChevronRight, CirclePause, Clock, Copy, Ellipsis, Hand, Histor
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
-import type { AutomationDetail, AutomationRun } from '../lib/types';
+import { SIDEKICK_DETAILS_NOTHING_YET as NOTHING_YET, SidekickWakesOnList, type WakeTrigger } from '@rally/ui/components/sidekick-sources';
+import type { AutomationDetail, AutomationRun, WorkstreamConnection } from '../lib/types';
+import { sourceWords } from '../lib/sidekick-sources';
 import { statusLabel } from '../lib/format';
 import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot } from './primitives';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
@@ -21,14 +23,30 @@ export interface AutomationHeaderProps {
   automation: AutomationDetail;
   delegateNames?: ReadonlyMap<string, string>;
   delegation?: ReactNode;
-  /** Whose events may start it (`docs/sidekick-sources.md`), drawn beside delegation and apart from it. */
-  sources?: ReactNode;
+  /**
+   * Wakes on with each trigger's accounts (`docs/sidekick-sources.md`): the
+   * host that reads whose events may start it draws the section from the
+   * triggers built here. Absent, and for a draft, the triggers are listed
+   * with no accounts.
+   */
+  wakesOn?: (section: { triggers: WakeTrigger[]; next: ReactNode }) => ReactNode;
+  /**
+   * The connections this reader can see, for naming the Organization's own
+   * connection an event trigger watches. Absent, no trigger names one.
+   */
+  connections?: readonly WorkstreamConnection[] | undefined;
   /**
    * Every run the automation has, newest first, from `GET /automations/:id/runs`.
    * `undefined` while loading, in which case the detail's recent runs stand in.
    */
   runs?: AutomationRun[];
   runsError?: string | undefined;
+  /**
+   * For a host that shows the details alone (a Canvas's panel): no Run now,
+   * Run history, Pause, Resume or Archive. The badge still says where the
+   * Sidekick stands; those are done at its own route.
+   */
+  detailsOnly?: boolean;
   /** The action in flight, so its button reads as busy and the rest stay put. */
   pending?: AutomationHeaderAction | null;
   error?: string | undefined;
@@ -103,17 +121,27 @@ export function customToolPluginLabel(pluginId: string): string {
   return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
 
-type TriggerType = NonNullable<AutomationDetail['currentDefinition']>['triggers'][number]['type'];
+type Trigger = NonNullable<AutomationDetail['currentDefinition']>['triggers'][number];
+type TriggerType = Trigger['type'];
+
+/**
+ * What an event trigger listens for, which is what a person's source is
+ * matched to. A written condition's event type is its prefilter's; one that
+ * names none listens for every event of its connector.
+ */
+function listensFor(trigger: Trigger | undefined): WakeTrigger['listensFor'] {
+  if (trigger?.type === 'connector_activity') return { connectorType: trigger.connectorType, eventTypes: trigger.eventTypes };
+  if (trigger?.type !== 'semantic_activity') return undefined;
+  const eventType = trigger.deterministicPrefilter['eventType'];
+  return { connectorType: trigger.connectorType, eventTypes: typeof eventType === 'string' && eventType.trim() ? [eventType] : null };
+}
 
 /** The mark beside a "Wakes on" row, as design §4 draws one per trigger: a clock for a schedule, a bolt for an event. */
 function TriggerIcon({ type }: { type: TriggerType | undefined }): React.JSX.Element {
-  if (type === 'calendar') return <Clock aria-hidden="true" size={15} />;
+  if (type === 'calendar' || type === 'interval') return <Clock aria-hidden="true" size={15} />;
   if (type === 'manual') return <Hand aria-hidden="true" size={15} />;
   return <Zap aria-hidden="true" size={15} />;
 }
-
-/** A details block with nothing in it says so, rather than leaving a reader to wonder whether it was shown. */
-const NOTHING_YET = 'Nothing yet';
 
 function runStatus(run: AutomationRun): React.ComponentProps<typeof StatusDot>['status'] {
   return run.status === 'pending' ? 'scheduled' : run.status;
@@ -124,9 +152,11 @@ export function AutomationHeader({
   automation,
   delegateNames,
   delegation,
-  sources,
+  wakesOn,
+  connections,
   runs,
   runsError,
+  detailsOnly = false,
   pending = null,
   error,
   onPause,
@@ -165,7 +195,26 @@ export function AutomationHeader({
     ? undefined : 'This Sidekick has no triggers or previous runs.';
   // Summaries are derived one per definition trigger, in order (`lib/api.ts`),
   // so the trigger at the same index says which mark the row wears.
-  const triggers: Array<{ summary: string; type: TriggerType | undefined }> = automation.triggerSummaries.map((summary, index) => ({ summary, type: definition?.triggers[index]?.type }));
+  // An event trigger also says what it listens for, and names the connection
+  // it is bound to when that one is the Organization's: a person's own
+  // connection is listed as their source instead.
+  const triggers: WakeTrigger[] = automation.triggerSummaries.map((summary, index) => {
+    const trigger = definition?.triggers[index];
+    const listens = listensFor(trigger);
+    const pluginId = trigger && 'suggestedSourcePluginId' in trigger ? trigger.suggestedSourcePluginId : undefined;
+    const bound = pluginId ? connections?.find((connection) => connection.id === automation.connectorBindings[pluginId]) : undefined;
+    return {
+      key: `${index}:${summary}`,
+      icon: <TriggerIcon type={trigger?.type} />,
+      summary,
+      ...(listens ? { listensFor: listens } : {}),
+      ...(listens && bound?.scope === 'workspace' ? { organizationAccount: { connectorType: bound.connectorType, name: bound.displayName } } : {}),
+    };
+  });
+  const wakes = {
+    triggers,
+    next: automation.nextRunAt ? <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p> : null,
+  };
   const isDraft = automation.lifecycle === 'draft';
   // The connections its runs use, named as the rest of the profile names
   // plugins; and the Canvases it writes that this reader may open.
@@ -174,8 +223,10 @@ export function AutomationHeader({
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
-  // A draft has no Pause beside it, so the menu sits at the end of the
-  // title's pills rather than alone on a row of its own.
+  // A draft has no Pause beside it, and neither does a host that offers none,
+  // so the menu sits at the end of the title's pills rather than alone on a
+  // row of its own.
+  const lifecycleControl = !isDraft && !detailsOnly;
   const moreMenu = (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -183,27 +234,31 @@ export function AutomationHeader({
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-          <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
-            <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
-          </MenuActionItem>
-          <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
-            <History size={14} /> Run history
-          </MenuActionItem>
+          {!detailsOnly && <>
+            <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
+              <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
+            </MenuActionItem>
+            <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
+              <History size={14} /> Run history
+            </MenuActionItem>
+          </>}
           <DropdownMenu.Item className="menu-item" onSelect={() => {
             setCopyFailed(false);
             void onCopyLink().catch(() => setCopyFailed(true));
           }}>
             <Copy size={14} /> Copy link
           </DropdownMenu.Item>
-          <DropdownMenu.Separator className="menu-separator" />
-          <DropdownMenu.Item
-            className="menu-item menu-item-danger"
-            disabled={pending !== null}
-            onSelect={() => setConfirmingArchive(true)}
-          >
-            <Archive size={14} />
-            {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
-          </DropdownMenu.Item>
+          {!detailsOnly && <>
+            <DropdownMenu.Separator className="menu-separator" />
+            <DropdownMenu.Item
+              className="menu-item menu-item-danger"
+              disabled={pending !== null}
+              onSelect={() => setConfirmingArchive(true)}
+            >
+              <Archive size={14} />
+              {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
+            </DropdownMenu.Item>
+          </>}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
@@ -228,7 +283,7 @@ export function AutomationHeader({
                 {lifecycleLabel[automation.lifecycle]}
               </Badge>
               <Badge className="scope-badge">{sidekickAudienceLabel(automation)}</Badge>
-              {isDraft && <span className="automation-title-more">{moreMenu}</span>}
+              {!lifecycleControl && <span className="automation-title-more">{moreMenu}</span>}
             </div>
             {(description || error || copyFailed) && <div className="automation-description">
               {description}
@@ -237,7 +292,7 @@ export function AutomationHeader({
             </div>}
           </div>
         </div>
-        {!isDraft && <div className="workstream-header-actions window-no-drag">
+        {lifecycleControl && <div className="workstream-header-actions window-no-drag">
           {/* A draft has nothing running to pause; it is finished in the conversation. */}
           <Button disabledReason={disabledReason} onClick={isPaused ? onResume : onPause}>
             {isPaused ? <Play aria-hidden="true" size={14} /> : <CirclePause aria-hidden="true" size={14} />}
@@ -252,15 +307,8 @@ export function AutomationHeader({
         />
       </div>
       <div className="automation-header-details">
-        <section aria-labelledby="sidekick-wakes-on" className="sidekick-profile-section">
-          <h2 id="sidekick-wakes-on">Wakes on</h2>
-          {triggers.length === 0 && !automation.nextRunAt
-            ? <p className="sidekick-profile-empty">{NOTHING_YET}</p>
-            : triggers.length > 0 && <ul aria-label="Triggers" className="sidekick-profile-rows">
-              {triggers.map(({ summary, type }) => <li key={summary}><TriggerIcon type={type} /><span>{summary}</span></li>)}
-            </ul>}
-          {automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}
-        </section>
+        {/* What starts it and whose events reach each trigger, in one list. A draft has nobody to ask yet. */}
+        {!isDraft && wakesOn ? wakesOn(wakes) : <SidekickWakesOnList {...wakes} words={sourceWords} />}
         <section aria-labelledby="sidekick-uses" className="sidekick-profile-section">
           <h2 className="sidekick-profile-heading" id="sidekick-uses">Uses{plugins.length > 0 && <span>{plugins.length} {plugins.length === 1 ? 'tool' : 'tools'}</span>}</h2>
           {plugins.length === 0
@@ -283,8 +331,7 @@ export function AutomationHeader({
         </section>
         {/* Who it may act as is a question for a Sidekick that runs; a draft has nobody to ask yet. */}
         {!isDraft && automation.delegationAttention && <p role="status">{automation.delegationAttention.message}</p>}
-        {/* What starts it, then who it acts as: two questions with two owners, never one list. */}
-        {!isDraft && sources}
+        {/* Who it acts as is a different question from what starts it, with a different owner: never one list. */}
         {!isDraft && delegation}
         {customTools.length > 0 && <section className="sidekick-profile-section sidekick-tools-section">
           <h2>Tools</h2>

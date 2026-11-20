@@ -8,11 +8,12 @@ import { Avatar, Button, ConnectorMark } from './primitives';
 /**
  * Sidekick sources as people read them (`docs/sidekick-sources.md`): the
  * Approve and Decline pair, the card a conversation draws for an ask, and the
- * Sidekick panel's Sources section. Presentation only: the host reads, sends
+ * Sidekick details' Wakes on section, which lists each trigger's accounts. Presentation only: the host reads, sends
  * the answers and names its failures.
  */
 
-export const SIDEKICK_SOURCES_EXPLANATION = 'Events from these people’s accounts can start this Sidekick.';
+/** A details block with nothing in it says so, rather than leaving a reader to wonder whether it was shown. */
+export const SIDEKICK_DETAILS_NOTHING_YET = 'Nothing yet';
 
 export type SourceDecision = 'approve' | 'decline';
 
@@ -200,76 +201,177 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
   </article>;
 }
 
+/** One trigger of a Sidekick, as its details list it under Wakes on. */
+export interface WakeTrigger {
+  key: string;
+  /** The mark for its kind: a clock for a schedule, a hand for on request, a bolt for an event. */
+  icon: ReactNode;
+  /** What starts it, in one line: the schedule, or the event and its condition. */
+  summary: string;
+  /**
+   * For a trigger an event starts: the connector and event types it listens
+   * for. A null field matches anything, as a trigger that names no connector
+   * or no event type gates every event reaching it. Absent for a schedule or
+   * on request, which no account feeds.
+   */
+  listensFor?: { connectorType: string | null; eventTypes: readonly string[] | null };
+  /** The Organization's own connection it watches, by name; that one needs nobody's source. */
+  organizationAccount?: { connectorType: string; name: string };
+}
+
+type Listening = NonNullable<WakeTrigger['listensFor']>;
+
+/** Whether a person's source or request is on the connector this trigger listens to. */
+function onConnector(listensFor: Listening, entry: SourceAsk): boolean {
+  return listensFor.connectorType === null || listensFor.connectorType === entry.connectorType;
+}
+
+/** Whether it is also for an event type the trigger declares. */
+function declared(listensFor: Listening, entry: SourceAsk): boolean {
+  return onConnector(listensFor, entry)
+    && (listensFor.eventTypes === null || entry.eventTypes.some((eventType) => listensFor.eventTypes!.includes(eventType)));
+}
+
 /**
- * The Sidekick panel's Sources section: whose events can start the Sidekick,
- * and who has been asked. It sits beside delegation and is not delegation: a
- * source lets events in and lends no account.
+ * The Sidekick details' Wakes on section: every trigger with its condition,
+ * and under each trigger an event starts, the accounts whose events reach it
+ * (`docs/sidekick-sources.md`): the Organization's connection it watches, each
+ * person's source with their own filter, and each person who has been asked.
+ * A source lets events in and lends no account; that is delegation, the
+ * section below.
+ *
+ * A source or request is listed under the triggers whose declared event types
+ * it shares. The server registers events by the Sidekick's evaluator rules,
+ * which this reader is not shown and which may cover event types a trigger
+ * does not declare, so one that shares no trigger's declared types is listed
+ * under every trigger on its connector rather than called unused, and a
+ * trigger says nobody's account feeds it only when no account is on its
+ * connector at all. Only one on a connector no trigger listens to is listed
+ * under Other accounts, so its person can always see it and take it back.
+ * One listed under several triggers has its control on the first only: the
+ * control acts on the whole source or request.
  */
-export function SidekickSourcesList({ data, loading, words, onDecide, deciding = null, onWithdraw, withdrawing = null }: {
+export function SidekickWakesOnList({ triggers, next, data, loading = false, words, onDecide, deciding = null, onWithdraw, withdrawing = null }: {
+  triggers: readonly WakeTrigger[];
+  /** The next scheduled run, drawn under the triggers. */
+  next?: ReactNode;
+  /** Whose events may enter; `undefined` before the read, and for a host that reads none (a draft). */
   data?: SidekickSourcesResult | undefined;
-  loading: boolean;
+  loading?: boolean;
   words: SourceWords;
-  onDecide: (request: SidekickSourceRequestView, decision: SourceDecision) => void;
+  onDecide?: ((request: SidekickSourceRequestView, decision: SourceDecision) => void) | undefined;
   deciding?: { requestId: string; decision: SourceDecision } | null;
   /** The viewer takes their own source back. */
-  onWithdraw: (connectionId: string) => void;
+  onWithdraw?: ((connectionId: string) => void) | undefined;
   /** The connection whose withdrawal is in flight. */
   withdrawing?: string | null;
 }): React.JSX.Element {
   const who = (person: SourcePerson, yours: boolean): React.JSX.Element => <span>
     {person.displayName}{yours && <small>You</small>}
   </span>;
-  return <section aria-labelledby="sidekick-sources-heading" className="sidekick-profile-section sidekick-sources">
-    <h2 id="sidekick-sources-heading">Sources</h2>
-    <p className="sidekick-delegation-disclosure">{SIDEKICK_SOURCES_EXPLANATION}</p>
-    {!data && loading && <p role="status">Loading sources…</p>}
-    {data && <>
-      {data.sources.length === 0 && <p className="sidekick-sources-empty">Nothing lets events in from a person’s account.</p>}
-      {data.sources.length > 0 && <ul aria-label="Sources" className="sidekick-delegates">
-        {data.sources.map((source) => <li key={`${source.person.userId}:${source.connectionId}:${source.condition ?? ''}`}>
-          <PersonAvatar person={source.person} />
-          <span className="sidekick-delegate-copy">
-            {who(source.person, source.yours)}
-            <small>{source.connectionName} · {words(source).events}</small>
-            {source.condition && <small>Only when {quoted(source.condition)}</small>}
-            {!source.available && <small>Unavailable — restore Organization membership</small>}
-            {/* Under the copy, as a request's pair is: the details column is 340px wide. */}
-            {source.yours && <Button
-              aria-label={`Stop allowing ${source.connectionName}`}
-              disabled={withdrawing !== null}
-              onClick={() => onWithdraw(source.connectionId)}
-            >{withdrawing === source.connectionId ? 'Stopping…' : 'Stop allowing'}</Button>}
-          </span>
-        </li>)}
-      </ul>}
-      {data.requests.length > 0 && <h3 className="sidekick-sources-asked" id="sidekick-sources-asked">Asked</h3>}
-      {data.requests.length > 0 && <ul aria-labelledby="sidekick-sources-asked" className="sidekick-delegates sidekick-source-requests">
-        {data.requests.map((request) => {
-          const { connector, events } = words(request);
-          const answerable = request.yours && request.state === 'pending';
-          const toMake = connectionToMake(request);
-          return <li key={request.requestId}>
-            <PersonAvatar person={request.person} />
-            <span className="sidekick-delegate-copy">
-              {who(request.person, request.yours)}
-              <small>Asked by {request.requestedByName} · {events} in {connector}</small>
-              {request.condition && <small>Only when {quoted(request.condition)}</small>}
-              {!answerable && <small>{standing(request)}</small>}
-              {toMake && <small>{request.yours && !organizationsStep(request)
-                // Connecting happens on the request's card, in the conversation it was asked from.
-                ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} from the request in its conversation first`
-                : connectionWords(toMake, connector, organizationsStep(request))}</small>}
-              {answerable && <SourceDecisionButtons
-                approveBlocked={toMake ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} first` : undefined}
-                deciding={deciding?.requestId === request.requestId ? deciding.decision : null}
-                onDecide={(decision) => onDecide(request, decision)}
-                state="pending"
-                subject={subjectOf(request, connector)}
-              />}
-            </span>
+  // The rows already drawn with their control, so a repeat under a later trigger has none.
+  const controlled = new Set<string>();
+  const firstListing = (key: string): boolean => {
+    if (controlled.has(key)) return false;
+    controlled.add(key);
+    return true;
+  };
+  const sourceRow = (source: SidekickSourcesResult['sources'][number]): React.JSX.Element => {
+    const key = `source:${source.person.userId}:${source.connectionId}:${source.condition ?? ''}`;
+    const withdrawable = source.yours && onWithdraw !== undefined && firstListing(key);
+    return <li key={key}>
+      <PersonAvatar person={source.person} />
+      <span className="sidekick-delegate-copy">
+        {who(source.person, source.yours)}
+        <small>{source.connectionName} · {words(source).events}</small>
+        {source.condition && <small>Only when {quoted(source.condition)}</small>}
+        {!source.available && <small>Unavailable — restore Organization membership</small>}
+        {/* Under the copy, as a request's pair is: the details column is 340px wide. */}
+        {withdrawable && <Button
+          aria-label={`Stop allowing ${source.connectionName}`}
+          disabled={withdrawing !== null}
+          onClick={() => onWithdraw(source.connectionId)}
+        >{withdrawing === source.connectionId ? 'Stopping…' : 'Stop allowing'}</Button>}
+      </span>
+    </li>;
+  };
+  const requestRow = (request: SidekickSourceRequestView): React.JSX.Element => {
+    const { connector, events } = words(request);
+    const key = `request:${request.requestId}`;
+    const answerable = request.yours && request.state === 'pending' && onDecide !== undefined && firstListing(key);
+    const toMake = connectionToMake(request);
+    return <li key={key}>
+      <PersonAvatar person={request.person} />
+      <span className="sidekick-delegate-copy">
+        {who(request.person, request.yours)}
+        <small>Asked by {request.requestedByName} · {events} in {connector}</small>
+        {request.condition && <small>Only when {quoted(request.condition)}</small>}
+        {!answerable && <small>{standing(request)}</small>}
+        {toMake && <small>{request.yours && !organizationsStep(request)
+          // Connecting happens on the request's card, in the conversation it was asked from.
+          ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} from the request in its conversation first`
+          : connectionWords(toMake, connector, organizationsStep(request))}</small>}
+        {answerable && <SourceDecisionButtons
+          approveBlocked={toMake ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} first` : undefined}
+          deciding={deciding?.requestId === request.requestId ? deciding.decision : null}
+          onDecide={(decision) => onDecide(request, decision)}
+          state="pending"
+          subject={subjectOf(request, connector)}
+        />}
+      </span>
+    </li>;
+  };
+  const listening = triggers.flatMap((trigger) => trigger.listensFor ? [trigger.listensFor] : []);
+  const feeds = (listensFor: Listening, entry: SourceAsk): boolean => declared(listensFor, entry)
+    || (onConnector(listensFor, entry) && !listening.some((other) => declared(other, entry)));
+  const unheard = (entry: SourceAsk): boolean => !listening.some((listensFor) => onConnector(listensFor, entry));
+  const otherSources = data?.sources.filter(unheard) ?? [];
+  const otherRequests = data?.requests.filter(unheard) ?? [];
+  return <section aria-labelledby="sidekick-wakes-on" className="sidekick-profile-section sidekick-wakes-on">
+    <h2 id="sidekick-wakes-on">Wakes on</h2>
+    {triggers.length === 0 && !next
+      ? <p className="sidekick-profile-empty">{SIDEKICK_DETAILS_NOTHING_YET}</p>
+      : triggers.length > 0 && <ul aria-label="Triggers" className="sidekick-profile-rows">
+        {triggers.map((trigger) => {
+          const { listensFor, organizationAccount } = trigger;
+          const sources = listensFor && data ? data.sources.filter((source) => feeds(listensFor, source)) : [];
+          const requests = listensFor && data ? data.requests.filter((request) => feeds(listensFor, request)) : [];
+          const organizationMark = organizationAccount
+            && connectorBrandMark(organizationAccount.connectorType, words({ connectorType: organizationAccount.connectorType, eventTypes: [] }).connector);
+          const none = !organizationAccount && sources.length === 0 && requests.length === 0;
+          // Said only when no account is on its connector: one listed under another trigger may reach this one too.
+          const nobody = listensFor && data
+            && ![...data.sources, ...data.requests].some((entry) => onConnector(listensFor, entry));
+          return <li className="sidekick-wake-trigger" key={trigger.key}>
+            {trigger.icon}
+            <div className="sidekick-wake-trigger-copy">
+              <span>{trigger.summary}</span>
+              {listensFor && !none && <ul aria-label={`Accounts for ${trigger.summary}`} className="sidekick-delegates sidekick-wake-accounts">
+                {organizationAccount && <li key="organization">
+                  <span aria-hidden="true" className="sidekick-wake-account-mark">{organizationMark && <ConnectorMark mark={organizationMark} />}</span>
+                  <span className="sidekick-delegate-copy">
+                    <span>{organizationAccount.name}</span>
+                    <small>Organization account</small>
+                  </span>
+                </li>}
+                {sources.map(sourceRow)}
+                {requests.map(requestRow)}
+              </ul>}
+              {listensFor && none && (data
+                ? nobody && <small className="sidekick-wake-accounts-none">No person’s account lets these events in.</small>
+                : loading && <small className="sidekick-wake-accounts-none" role="status">Loading accounts…</small>)}
+            </div>
           </li>;
         })}
       </ul>}
+    {next}
+    {(otherSources.length > 0 || otherRequests.length > 0) && <>
+      <h3 className="sidekick-wake-other" id="sidekick-wake-other">Other accounts</h3>
+      <p className="sidekick-delegation-disclosure">Allowed or asked for a connection no trigger above listens to.</p>
+      <ul aria-labelledby="sidekick-wake-other" className="sidekick-delegates sidekick-wake-accounts">
+        {otherSources.map(sourceRow)}
+        {otherRequests.map(requestRow)}
+      </ul>
     </>}
   </section>;
 }

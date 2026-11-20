@@ -89,19 +89,44 @@ people read and answer them, on three surfaces that share one component:
   words, the condition quoted, who asked, and one row per person asked with
   their avatar and the pair. A request replaced by a newer ask reads
   "Replaced by a newer request" with no buttons.
-- **`SidekickSourcesList`** is the Sidekick panel's Sources section, above
-  delegation: each source (the person, the connection's name, what it lets
-  in, its condition, Unavailable while the person is out of the
-  Organization), under an **Asked** label each pending or declined request
-  (who was asked, by whom, for what, where it stands), and one line when
-  nothing lets events in. The
-  viewer's own source has **Stop allowing**; their own pending request has the
-  pair. Delegation's explanation now ends by pointing at Sources, because the
-  two lists sit together and name some of the same people.
+- **`SidekickWakesOnList`** is the Sidekick details' **Wakes on** section,
+  above delegation: one row per trigger (`WakeTrigger`: its mark and its
+  condition in one line), and under each trigger an event starts, the
+  accounts whose events reach it. An account is the Organization's connection
+  the trigger watches ("Organization account"), a person's source (the
+  person, the connection's name, what it lets in, their own condition,
+  Unavailable while the person is out of the Organization), or a pending or
+  declined request (who was asked, by whom, for what, where it stands). A
+  schedule or On request lists no account. The viewer's own source has
+  **Stop allowing**; their own pending request has the pair.
+
+  A source or request sits under a trigger when the trigger's `listensFor`
+  names its connector and one of its event types; a null connector or a null
+  event list matches any. The server registers events by the evaluator rules,
+  which a reader is not shown and which may cover event types a trigger does
+  not declare, so the section never states a mismatch as fact: one that
+  shares no trigger's declared types is listed under every trigger on its
+  connector, and only one on a connector no trigger listens to is listed
+  under **Other accounts** at the foot, where its person can still see it and
+  take it back. An event trigger says "No person’s account lets these events
+  in." only when no account is on its connector at all, once the read has
+  answered, and "Loading accounts…" before. An account that feeds several triggers is listed under each, with
+  its control on the first only. Delegation's explanation ends by pointing at
+  Wakes on, because the two lists sit together and name some of the same
+  people.
+
+  The host builds the triggers: `AutomationHeader` maps the definition's
+  triggers to `WakeTrigger`s and names an Organization account from the
+  reader's `['connections']` read and the Sidekick's `connectorBindings`; a
+  trigger bound to a person's own connection names none, since that person's
+  source is the row.
 
 The desktop adapter (`apps/desktop/src/renderer/components/sidekick-sources.tsx`)
-owns the reads and the two writes for the Mac app and the browser alike. The
-panel reads `GET /sidekicks/:id/sources` under `['automation', id, 'sources']`.
+owns the reads and the two writes for the Mac app and the browser alike
+(`SidekickWakesOn`, which `AutomationHeader` hands the triggers through its
+`wakesOn` prop; a draft, and a host that passes none, lists the triggers with
+no accounts and reads nothing). The
+details read `GET /sidekicks/:id/sources` under `['automation', id, 'sources']`.
 A card reads `POST /sidekicks/source-requests/read` by the request ids its tool
 call answered, under the same key with `requests` and the ids appended, and
 never takes a state from the tool's output: that output is the asker's view at
@@ -128,9 +153,9 @@ A request whose person still has to connect (`connection` is not
 only. The slot answers `{ control, connectsHere }`: the card view draws
 `control` in that person's Approve's place (`approveSlot`), and the card's
 title becomes "Connect Gmail and approve Deals" only when `connectsHere` says a
-button is drawn, not when the step is a line pointing at Settings. There and in the
-Sources list, `SourceDecisionButtons` holds Approve with `approveBlocked` (its
-reason on hover) while Decline stays live; the Sources list says to connect
+button is drawn, not when the step is a line pointing at Settings. There and under
+Wakes on, `SourceDecisionButtons` holds Approve with `approveBlocked` (its
+reason on hover) while Decline stays live; the Wakes on row says to connect
 from the request in its conversation. Every other reader's row says "Needs to
 connect" or "Needs to reconnect", or, for a connector only the Organization
 connects (`connect.scope: "workspace"`), "Needs an admin to connect" or
@@ -328,6 +353,29 @@ surfaces in Electron, and in Chrome for the browser host; no second component
 test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-11-20 — Wakes on lists each trigger's accounts; the Sources section is gone
+
+**What changed:** `SidekickWakesOnList` replaces `SidekickSourcesList`: each
+trigger's condition, and under each event trigger the accounts whose events
+reach it. The Sidekick's own page and a Canvas's panel share it.
+
+**Why:** Requested: one Wakes on that lists both the condition and the
+account. Apart, a trigger did not say whose account fed it, and a source did
+not say which trigger it fed.
+
+**Considered and rejected:** Keeping Sources and repeating names under each
+trigger, which shows every person twice. Dropping accounts that match no
+trigger, which would hide a permission its person could no longer take back.
+A server join, since both reads already exist.
+
+**Consequences:** The match is the client's, on connector and declared event
+type. `sidekickSourceRegistrations` registers by the evaluator rules instead,
+and also weighs the resource and whether a request stands behind the source,
+so the section groups by the declared types where they agree and otherwise
+falls back to the connector rather than say an account is unused. A change
+that needs the exact registration should have the server say it rather than
+sharpen this match.
 
 ### 2026-11-13 — A failed Retry says it failed
 

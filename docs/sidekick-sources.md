@@ -102,7 +102,7 @@ account connected, the asker included: connecting is part of answering
 Everyone else gets an Activity
 row that is its actions, a push and an email; the asker gets none of those
 for their own request, whose card is in the conversation they asked from and
-whose row is under Sources.
+whose row is under Wakes on.
 An ask names the conversation it was asked from (`place`). When that is a
 Canvas, the asker must be able to open it, or the whole ask is refused
 `sidekick_source_place_denied`: the request's card is drawn there for
@@ -244,7 +244,7 @@ One press runs the same connect or reconnect as the conversation's connection
 card (`useConnectorConnectionAction`) and sends the approval only when the
 sign-in that press started succeeds and the request then reads `connected`;
 any other end drops it, and a connection made elsewhere only brings back the
-ordinary Approve. Decline is never held. The Sources panel holds the person's Approve too and points
+ordinary Approve. Decline is never held. The Sidekick's Wakes on row holds the person's Approve too and points
 them at that conversation; the Activity row keeps its plain pair, and an
 Approve there before connecting is refused by name. Everyone else reads
 "Needs to connect Gmail" or "Needs to reconnect Gmail" in that person's row. A
@@ -363,11 +363,15 @@ delegate, and with none by the Sidekick itself.
 
 Three surfaces show a request and share one pair of buttons, Decline then
 Approve: the card in the conversation the request was asked from, the asked
-person's Activity row, and the Sources section of the Sidekick's panel.
-The Sources section lists one line per person, connection and condition:
-`readSources` groups a person's rows on one connection that share a
-condition and names their event types together, so a person who lets in new
-mail unfiltered and label changes under a filter reads as two lines.
+person's Activity row, and the Wakes on section of the Sidekick's details.
+There is no separate Sources section: Wakes on lists each trigger's
+condition and, under each trigger an event starts, the accounts whose events
+reach it, which are the Organization's connection it watches, each person's
+source and each person asked. A source or request no trigger listens for is
+listed under Other accounts. `readSources` answers one line per person,
+connection and condition: it groups a person's rows on one connection that
+share a condition and names their event types together, so a person who lets
+in new mail unfiltered and label changes under a filter reads as two lines.
 [`shared-ui.md`](shared-ui.md#sidekick-sources) owns the components, their
 reads and what re-reads them; [`activity.md`](activity.md) owns the row.
 
@@ -858,7 +862,7 @@ asks the same person again for the same Sidekick and connector with
 different event types or a different condition: that cancels the request the
 link names, and the link then reads "replaced". An identical ask returns the
 waiting request and cancels nothing. If the link was already used to approve,
-the person withdraws the source from the Sidekick's Sources panel
+the person withdraws the source from the Sidekick's Wakes on section
 (`POST /automations/:id/sources/withdraw`).
 
 **Why did this event not start the Sidekick?** The delivery's outcome code

@@ -1,13 +1,14 @@
 import { sourceConnectionCardId, type ConnectorConnectionCardId, type SidekickSourceRequestView, type SidekickSourcesResult } from '@rally/contracts';
 import {
   SidekickSourceRequestCardView,
-  SidekickSourcesList,
+  SidekickWakesOnList,
   SourceDecisionButtons,
   type SourceAsk,
   type SourceDecision,
+  type WakeTrigger,
 } from '@rally/ui/components/sidekick-sources';
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import type { OAuthConnectorProviderCatalogEntry } from '../lib/connector-catalog';
 import { connectorConnectionCardProvider, useConnectorConnectionAction } from './connector-mentions';
@@ -27,7 +28,7 @@ import { Button, ErrorNotice } from './primitives';
  * (`docs/sidekick-sources.md`): the reads, the asked person's own answer, and
  * a person's own withdrawal, behind the shared presentation. Three surfaces
  * mount it: the card in a conversation, the Activity row and the Sidekick
- * panel's Sources section.
+ * details' Wakes on section.
  */
 
 /** One request, as much of it as an answer and its refusal need. */
@@ -298,11 +299,18 @@ export function SourceRequestActions({ request, sidekickName }: {
 }
 
 /**
- * The Sidekick panel's Sources section, from `GET /sidekicks/:id/sources`. It
- * shares the Sidekick's cache key, so the invalidations a Sidekick already
- * gets reach it, and it re-reads on focus and reconnect as delegation does.
+ * The Sidekick details' Wakes on section with each trigger's accounts, from
+ * `GET /sidekicks/:id/sources`. It shares the Sidekick's cache key, so the
+ * invalidations a Sidekick already gets reach it, and it re-reads on focus
+ * and reconnect as delegation does.
  */
-export function SidekickSources({ id }: { id: string }): React.JSX.Element {
+export function SidekickWakesOn({ id, triggers, next }: {
+  id: string;
+  /** The Sidekick's triggers, as its details build them. */
+  triggers: readonly WakeTrigger[];
+  /** The next scheduled run. */
+  next?: ReactNode;
+}): React.JSX.Element {
   const { api } = useCollaborationSession();
   const queryClient = useQueryClient();
   const queryKey = sidekickSourcesQueryKey(id);
@@ -328,17 +336,19 @@ export function SidekickSources({ id }: { id: string }): React.JSX.Element {
     onError: () => queryClient.invalidateQueries({ queryKey }),
   });
   return <>
-    <SidekickSourcesList
+    <SidekickWakesOnList
       data={query.data}
       deciding={decidingOf(decide)}
       loading={query.isPending}
+      next={next}
       onDecide={(request, decision) => decide.mutate({ request, decision })}
       onWithdraw={(connectionId) => withdraw.mutate(connectionId)}
+      triggers={triggers}
       withdrawing={withdraw.isPending ? withdraw.variables : null}
       words={sourceWords}
     />
-    {query.error && <Button onClick={() => void query.refetch()}>Refresh sources</Button>}
-    {query.error && <ErrorNotice occurrence={query.error} title="Sources could not be loaded">{query.error.message}</ErrorNotice>}
+    {query.error && <Button onClick={() => void query.refetch()}>Refresh accounts</Button>}
+    {query.error && <ErrorNotice occurrence={query.error} title="Accounts could not be loaded">{query.error.message}</ErrorNotice>}
     <DecisionRefusal decide={decide} />
     {withdraw.error && <ErrorNotice occurrence={withdraw.error} title="The source could not be withdrawn">
       {sourceRefusal(withdraw.error)}
