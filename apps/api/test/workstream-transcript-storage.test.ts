@@ -2390,6 +2390,96 @@ describe("canonical ordered work-stream transcript", () => {
       .toEqual([queued.inputId]);
   });
 
+  it("reports a loop as awaiting an answer only while its withheld batch is all questions", async () => {
+    const { transcript, sql, storage } = open();
+    seedPendingInputRoot(sql);
+    const initial = await admitPendingInput({ storage, withAttachment: false });
+    await transcript.commitBindTransition(initializePersistentLoop(), NOW + 2);
+    sql.exec(`UPDATE substream_loops SET bind_state_revision = 1 WHERE id = 1`);
+    expect(transcript.awaitingQuestionAnswer("persistent-loop")).toBe(false);
+    const activated = await transcript.activatePendingInput({
+      loopId: "persistent-loop",
+      expectedInputId: initial.inputId,
+      expectedLoopRevision: initial.loop.loop()!.revision,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 1,
+      receipt: {
+        substreamId: "0",
+        runId: "00000000-0000-7000-8000-000000000191",
+        executionEpoch: 1,
+        leaseOwner: "question-owner",
+        leaseExpiresAt: NOW + 100_000,
+        executionContextJson: "{}",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: "user-1" }),
+        origin: "human_message",
+        model: "test/model",
+      },
+      enqueueRegionalEffectsInTransaction: () => undefined,
+      now: NOW + 3,
+    });
+    const turnId = "persistent-loop:turn:1";
+    const reservation = initial.loop.reserveAssistantTurn({
+      executionId: activated.receiptRunId,
+      executionEpoch: 1,
+      leaseOwner: "question-owner",
+      expectedLoopRevision: activated.loop.revision,
+      receiptRunId: activated.receiptRunId,
+      turnId,
+      modelTurnIndex: 1,
+      streamId: "question-stream",
+      now: NOW + 4,
+    });
+    const fence = {
+      executionId: activated.receiptRunId,
+      executionEpoch: 1,
+      leaseOwner: "question-owner",
+    };
+    await transcript.commitBindTransition({
+      kind: "assistant_reserved",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 3,
+      turnId,
+      modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+    }, NOW + 5, { ...fence, expectedBindStateRevision: 2 });
+    await transcript.commitBindTransition({
+      kind: "assistant_accepted",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 4,
+      turnId,
+      modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+      message: {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "provider-elicitation-call",
+          type: "function",
+          function: { name: "request_elicitation", arguments: "{}" },
+        }],
+      },
+    }, NOW + 6, { ...fence, expectedBindStateRevision: 3 });
+
+    // A withheld call with no question behind it is the wedge the warning
+    // exists for, not a wait.
+    expect(transcript.awaitingQuestionAnswer("persistent-loop")).toBe(false);
+
+    sql.exec(
+      `INSERT INTO elicitation_requests
+         (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+          minimum_selections, maximum_selections, target_user_id, status, answer_json,
+          answered_by_user_id, external_actor_json, created_at, answered_at)
+       VALUES ('elicitation-open', ?, ?, 'Which scope?', 'text', '[]', 0, NULL, NULL,
+               'pending', NULL, NULL, NULL, ?, NULL)`,
+      activated.receiptRunId,
+      `${turnId}:tool:0`,
+      NOW + 6,
+    );
+    expect(transcript.awaitingQuestionAnswer("persistent-loop")).toBe(true);
+  });
+
   it("cancels a withheld question when another message arrives and activates that message", async () => {
     const { transcript, sql, storage } = open();
     seedPendingInputRoot(sql);

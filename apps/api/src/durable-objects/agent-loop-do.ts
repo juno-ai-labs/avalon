@@ -8173,8 +8173,10 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // is stopped or an open question is waiting for its answer. A newly
       // admitted ordinary message cancels that question and supplies the tool
       // result during promotion.
+      // Waiting on an open question is the designed park; the warning is for a
+      // queue held by anything else, such as an unsettled non-question batch.
       const queued = stopped ? [] : this.loop.pendingInputs();
-      if (queued.length > 0) {
+      if (queued.length > 0 && !this.transcript.awaitingQuestionAnswer(loop.loop_id)) {
         logWarn(this.env, "substream_loop_parked_with_queued_input", {
           loop_id: loop.loop_id,
           queued_input_count: queued.length,

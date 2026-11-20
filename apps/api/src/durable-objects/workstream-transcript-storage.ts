@@ -4302,6 +4302,25 @@ export class WorkstreamTranscriptStorage {
   }
 
   /**
+   * Whether the loop's last assistant step is a batch of questions only, so
+   * what is queued behind it waits for the person's answer.
+   *
+   * That is the room working as designed, not a stall: the answer, or a newer
+   * message that cancels the question, arms its own wake. `nextLoopWorkAt`
+   * reads this to keep `substream_loop_parked_with_queued_input` for a queue
+   * held by anything else. Reporting the question wait too made one Canvas
+   * whose question went unanswered for a day the loudest warning in
+   * production, on every alarm its other work brought.
+   */
+  awaitingQuestionAnswer(loopId: string): boolean {
+    const projection = this.readBindProjection(loopId);
+    if (!projection) return false;
+    const withheld = pendingBindToolBatch(projection);
+    if (!withheld || withheld.calls.length === 0) return false;
+    return this.openQuestionToolCallIds(projection).size === withheld.calls.length;
+  }
+
+  /**
    * Pending inputs in the order Bind will take them.
    *
    * The queue is FIFO because that is the order the room said things in. Bind's
