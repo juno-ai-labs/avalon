@@ -15,13 +15,13 @@ import { canvasRoute } from '../lib/canvases';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, IconButton, OpeningState } from '../components/primitives';
-import { useCollaborationSession } from '../lib/collaboration-session';
+import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { copyLink } from '../lib/copy-link';
 import { useDocumentTitle } from '../lib/document-title';
 import { useRestoredRouteFallback } from '../lib/landing';
 import { ConversationSurface, type ConversationPanelControls } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
-import { SidekickSources } from '../components/sidekick-sources';
+import { SidekickWakesOn } from '../components/sidekick-sources';
 import { sidekickRunLabel, useSidekickRunNumber } from '../components/sidekick-run-row';
 
 /**
@@ -146,6 +146,16 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
     enabled: Boolean(api),
     staleTime: 5_000,
   });
+  // The conversation surface's own read (`['connections']`), so it is already
+  // cached wherever a conversation is open: it names the Organization's
+  // connection an event trigger watches.
+  const { guest } = useShellCapabilities();
+  const connections = useQuery({
+    queryKey: ['connections'],
+    queryFn: ({ signal }) => api!.getConnections(signal),
+    enabled: Boolean(api && !guest),
+    staleTime: 60_000,
+  });
   const leaving = useRestoredRouteFallback(panel ? null : automation.error, '/sidekicks');
   const runs = useQuery({
     queryKey: ['automation-runs', id],
@@ -251,7 +261,8 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
       automation={detail}
       delegateNames={new Map([...(delegates.data?.delegates ?? []), ...(delegates.data?.creator ? [delegates.data.creator] : [])].map((person) => [person.userId, person.displayName]))}
       delegation={<SidekickDelegation id={id} />}
-      sources={<SidekickSources id={id} />}
+      wakesOn={(section) => <SidekickWakesOn id={id} {...section} />}
+      connections={connections.data}
       error={act.error?.message}
       onAppearanceChange={setAppearance}
       onArchive={() => act.mutateAsync('archive').then(() => undefined)}

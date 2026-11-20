@@ -182,6 +182,45 @@ describe('AutomationHeader', () => {
     expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
   });
 
+  const eventDefinition = {
+    ...definition,
+    triggers: [
+      { type: 'calendar' as const, rrule: 'FREQ=WEEKLY;BYDAY=MO', timezone: null, summary: 'Every Monday at 9:00 AM' },
+      { type: 'connector_activity' as const, connectorType: 'slack', sourceBindingKey: 'slack_deals', suggestedSourcePluginId: 'plugin_slack', eventTypes: ['message.posted'], deterministicFilters: {} },
+      { type: 'semantic_activity' as const, connectorType: 'google', sourceBindingKey: 'mail', suggestedSourcePluginId: 'plugin_google_gmail', deterministicPrefilter: { eventType: 'email.received' }, condition: 'When mail arrives about a round' },
+      { type: 'semantic_activity' as const, connectorType: 'github', sourceBindingKey: 'repo', suggestedSourcePluginId: 'plugin_github', deterministicPrefilter: {}, condition: 'When a release looks risky' },
+    ],
+  };
+  const eventSidekick: AutomationDetail = {
+    ...draft, lifecycle: 'active', currentDefinition: eventDefinition, currentDefinitionRevision: 1,
+    triggerSummaries: ['Every Monday at 9:00 AM', 'When there is matching activity in slack', 'When mail arrives about a round', 'When a release looks risky'],
+    connectorBindings: { plugin_slack: 'c-slack', plugin_google_gmail: 'c-mail' },
+  };
+  const connection = (id: string, connectorType: string, displayName: string, scope: 'you' | 'workspace') =>
+    ({ id, modelPluginId: `plugin_${connectorType}`, connectorType, displayName, scope, status: 'healthy' as const });
+
+  it('hands the accounts host each trigger with what it listens for, which is what a source is matched to', () => {
+    renderHeader(eventSidekick, {
+      wakesOn: ({ triggers }) => <output aria-label="Handed triggers">{JSON.stringify(triggers.map((trigger) => [trigger.summary, trigger.listensFor ?? null]))}</output>,
+    });
+    expect(JSON.parse(screen.getByRole('status', { name: 'Handed triggers' }).textContent ?? '')).toEqual([
+      ['Every Monday at 9:00 AM', null],
+      ['When there is matching activity in slack', { connectorType: 'slack', eventTypes: ['message.posted'] }],
+      ['When mail arrives about a round', { connectorType: 'google', eventTypes: ['email.received'] }],
+      // A written condition that names no event type listens for every event of its connector.
+      ['When a release looks risky', { connectorType: 'github', eventTypes: null }],
+    ]);
+  });
+
+  it('names the Organization connection an event trigger watches, and not a person\'s own, which is listed as their source', () => {
+    renderHeader(eventSidekick, {
+      connections: [connection('c-slack', 'slack', 'Rally Slack', 'workspace'), connection('c-mail', 'google', 'me@rally.test', 'you')],
+    });
+    expect(screen.getByRole('list', { name: 'Accounts for When there is matching activity in slack' })).toHaveTextContent('Rally SlackOrganization account');
+    expect(screen.queryByRole('list', { name: 'Accounts for When mail arrives about a round' })).toBeNull();
+    expect(screen.queryByText('me@rally.test')).toBeNull();
+  });
+
   it('shows saved state and never offers Apply changes', () => {
     const active: AutomationDetail = {
       ...draft,

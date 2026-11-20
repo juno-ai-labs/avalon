@@ -7,10 +7,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
 import { sidekickSourcesQueryKey } from '../lib/sidekick-sources';
-import { SidekickSourceRequestCard, SidekickSources } from './sidekick-sources';
+import type { WakeTrigger } from '@rally/ui/components/sidekick-sources';
+import { SidekickSourceRequestCard, SidekickWakesOn } from './sidekick-sources';
 
 /*
- * The conversation's card and the Sidekick panel's Sources section, through
+ * The conversation's card and the Sidekick details' Wakes on section, through
  * the desktop adapter: what each reader is shown, who can press, and what an
  * answer and a withdrawal send.
  */
@@ -333,7 +334,13 @@ describe('the source request card in a conversation', () => {
   });
 });
 
-describe('the Sidekick panel\'s Sources section', () => {
+describe('the Sidekick details\' Wakes on section', () => {
+  const triggers: WakeTrigger[] = [
+    { key: 'schedule', icon: null, summary: 'Every Friday at 2:00 PM' },
+    { key: 'mail', icon: null, summary: 'When mail arrives about a round', listensFor: { connectorType: 'google', eventTypes: ['email.received'] } },
+    { key: 'slack', icon: null, summary: 'When #deals mentions a round', listensFor: { connectorType: 'slack', eventTypes: ['message.posted'] },
+      organizationAccount: { connectorType: 'slack', name: 'Rally Slack' } },
+  ];
   const sources = (overrides: Partial<SidekickSourcesResult> = {}): SidekickSourcesResult => ({
     sidekickId: SIDEKICK,
     sources: [
@@ -348,82 +355,111 @@ describe('the Sidekick panel\'s Sources section', () => {
     ],
     ...overrides,
   });
-  const section = (): HTMLElement => screen.getByRole('region', { name: 'Sources' });
+  const MAIL = 'Accounts for When mail arrives about a round';
+  const SLACK = 'Accounts for When #deals mentions a round';
+  const section = (): HTMLElement => screen.getByRole('region', { name: 'Wakes on' });
   const item = (list: string, name: string): HTMLElement =>
     within(within(section()).getByRole('list', { name: list })).getByText(name).closest('li')!;
+  const wakesOn = <SidekickWakesOn id={SIDEKICK} triggers={triggers} />;
 
-  it('lists each source with its account, what it lets in and its condition, and each request with who asked and where it stands', async () => {
+  it('lists each trigger with its condition, and under each event trigger the accounts that feed it: the Organization\'s, each person\'s source, and each person asked', async () => {
     api.getSidekickSources.mockResolvedValue(sources());
-    mount(<SidekickSources id={SIDEKICK} />);
-    await screen.findByRole('list', { name: 'Sources' });
-    expect(within(section()).getByText('Events from these people’s accounts can start this Sidekick.')).toBeInTheDocument();
-    expect(item('Sources', 'Me')).toHaveTextContent('MeYoume@rally.test · Email receivedOnly when “it is about a pre-seed round”Stop allowing');
-    expect(item('Sources', 'Maya')).toHaveTextContent('Mayamaya@rally.test · Email received, Calendar event changedUnavailable — restore Organization membership');
+    mount(wakesOn);
+    await screen.findByRole('list', { name: MAIL });
+    expect(within(within(section()).getByRole('list', { name: 'Triggers' })).getAllByText(/^(Every|When) /u).map((line) => line.textContent))
+      .toEqual(['Every Friday at 2:00 PM', 'When mail arrives about a round', 'When #deals mentions a round']);
+    // A schedule is fed by no account.
+    expect(within(section()).queryByRole('list', { name: 'Accounts for Every Friday at 2:00 PM' })).toBeNull();
+    expect(item(MAIL, 'Me')).toHaveTextContent('MeYoume@rally.test · Email receivedOnly when “it is about a pre-seed round”Stop allowing');
+    expect(item(MAIL, 'Maya')).toHaveTextContent('Mayamaya@rally.test · Email received, Calendar event changedUnavailable — restore Organization membership');
     // Only the viewer's own source can be withdrawn here.
-    expect(within(item('Sources', 'Maya')).queryByRole('button')).toBeNull();
-    expect(item('Asked', 'Priya')).toHaveTextContent('PriyaAsked by Adam · Email received in GmailOnly when “it is about a pre-seed round”Declined');
-    expect(within(item('Asked', 'Priya')).queryByRole('button')).toBeNull();
-    // The viewer's own pending request is theirs to answer.
-    expect(item('Asked', 'Me')).toHaveTextContent('Asked by Adam · Message posted in Slack');
-    expect(within(item('Asked', 'Me')).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
+    expect(within(item(MAIL, 'Maya')).queryByRole('button')).toBeNull();
+    expect(item(MAIL, 'Priya')).toHaveTextContent('PriyaAsked by Adam · Email received in GmailOnly when “it is about a pre-seed round”Declined');
+    expect(within(item(MAIL, 'Priya')).queryByRole('button')).toBeNull();
+    // The Organization's connection needs nobody's source, and the viewer's own pending request is theirs to answer.
+    expect(item(SLACK, 'Rally Slack')).toHaveTextContent('Rally SlackOrganization account');
+    expect(item(SLACK, 'Me')).toHaveTextContent('Asked by Adam · Message posted in Slack');
+    expect(within(item(SLACK, 'Me')).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
       .toEqual(['Decline your Slack for Deals', 'Approve your Slack for Deals']);
+    // Each account sits under the trigger it feeds and nowhere else.
+    expect(within(within(section()).getByRole('list', { name: SLACK })).queryByText('Maya')).toBeNull();
+    expect(within(section()).queryByRole('list', { name: 'Other accounts' })).toBeNull();
+  });
+
+  it('keeps an account no trigger listens for in view, under Other accounts, where its person can still take it back', async () => {
+    api.getSidekickSources.mockResolvedValue(sources({
+      sources: [{ person: { userId: ME as UserId, displayName: 'Me' }, connectionId: 'c-cal', connectionName: 'me@rally.test', connectorType: 'google',
+        eventTypes: ['calendar.event_changed'], condition: null, available: true, yours: true }],
+      requests: [],
+    }));
+    mount(wakesOn);
+    await screen.findByRole('list', { name: 'Other accounts' });
+    expect(item('Other accounts', 'Me')).toHaveTextContent('MeYoume@rally.test · Calendar event changedStop allowing');
+    expect(within(section()).getByText('Allowed or asked for events no trigger above listens for.')).toBeInTheDocument();
+    expect(within(section()).queryByRole('list', { name: MAIL })).toBeNull();
   });
 
   it('holds my Approve while my account lapsed and points me at the request\'s conversation, with no connect card of its own', async () => {
     api.getSidekickSources.mockResolvedValue(sources({ requests: [request('r-me', ME, 'Me', { connection: 'reconnect_required' })] }));
-    mount(<SidekickSources id={SIDEKICK} />);
-    await screen.findByRole('list', { name: 'Asked' });
-    expect(item('Asked', 'Me')).toHaveTextContent('Reconnect Gmail from the request in its conversation first');
+    mount(wakesOn);
+    await screen.findByRole('list', { name: MAIL });
+    expect(within(item(MAIL, 'Asked by Adam · Email received in Gmail'))
+      .getByText('Reconnect Gmail from the request in its conversation first')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Connect card/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Decline your Gmail for Deals' })).toBeEnabled();
   });
 
   it('tells me an admin connects an Organization-only connector, rather than sending me to the conversation', async () => {
-    api.getSidekickSources.mockResolvedValue(sources({ requests: [request('r-me', ME, 'Me', {
+    api.getSidekickSources.mockResolvedValue(sources({ sources: [], requests: [request('r-me', ME, 'Me', {
       connectorType: 'granola', eventTypes: ['note.generated'], connection: 'not_connected', connect: { scope: 'workspace', card: null } })] }));
-    mount(<SidekickSources id={SIDEKICK} />);
-    await screen.findByRole('list', { name: 'Asked' });
-    expect(item('Asked', 'Me')).toHaveTextContent('Needs an admin to connect Granola');
-    expect(item('Asked', 'Me')).not.toHaveTextContent('from the request in its conversation');
+    mount(wakesOn);
+    await screen.findByRole('list', { name: 'Other accounts' });
+    expect(item('Other accounts', 'Me')).toHaveTextContent('Needs an admin to connect Granola');
+    expect(item('Other accounts', 'Me')).not.toHaveTextContent('from the request in its conversation');
   });
 
-  it('says so when nothing lets events in', async () => {
-    api.getSidekickSources.mockResolvedValue(sources({ sources: [], requests: [] }));
-    mount(<SidekickSources id={SIDEKICK} />);
-    expect(await screen.findByText('Nothing lets events in from a person’s account.')).toBeInTheDocument();
-    expect(within(section()).queryByRole('list')).toBeNull();
+  it('says so under an event trigger no person\'s account feeds, and not under one the Organization\'s connection does', async () => {
+    let answer: (result: SidekickSourcesResult) => void = () => undefined;
+    api.getSidekickSources.mockReturnValue(new Promise<SidekickSourcesResult>((resolve) => { answer = resolve; }));
+    mount(wakesOn);
+    const mail = (): HTMLElement => within(section()).getByText('When mail arrives about a round').closest('li')!;
+    expect(within(mail()).getByRole('status')).toHaveTextContent('Loading accounts…');
+    answer(sources({ sources: [], requests: [] }));
+    await waitFor(() => expect(mail()).toHaveTextContent('When mail arrives about a roundNo person’s account lets these events in.'));
+    expect(within(section()).getAllByText('No person’s account lets these events in.')).toHaveLength(1);
+    expect(item(SLACK, 'Rally Slack')).toBeInTheDocument();
   });
 
   it('withdraws my own source by its connection and drops it on the acknowledgement', async () => {
     api.getSidekickSources.mockResolvedValue(sources());
     api.withdrawSidekickSource.mockResolvedValue({ withdrawn: true });
-    mount(<SidekickSources id={SIDEKICK} />);
+    mount(wakesOn);
     fireEvent.click(await screen.findByRole('button', { name: 'Stop allowing me@rally.test' }));
     // The read behind the acknowledgement is still out.
     api.getSidekickSources.mockImplementation(() => new Promise(() => {}));
-    await waitFor(() => expect(within(within(section()).getByRole('list', { name: 'Sources' })).getAllByRole('listitem')).toHaveLength(1));
+    await waitFor(() => expect(within(within(section()).getByRole('list', { name: MAIL })).queryByText('me@rally.test · Email received')).toBeNull());
     expect(api.withdrawSidekickSource.mock.calls).toEqual([[SIDEKICK, 'c-me']]);
-    expect(item('Sources', 'Maya')).toBeInTheDocument();
+    expect(item(MAIL, 'Maya')).toBeInTheDocument();
   });
 
-  it('declines my own request from the panel and reads it as declined', async () => {
+  it('declines my own request from the details and reads it as declined', async () => {
     api.getSidekickSources.mockResolvedValue(sources());
     api.decideSidekickSourceRequest.mockResolvedValue(
       request('r-me', ME, 'Me', { connectorType: 'slack', eventTypes: ['message.posted'], condition: null, state: 'declined', decidedAt: 6 }),
     );
-    mount(<SidekickSources id={SIDEKICK} />);
+    mount(wakesOn);
     fireEvent.click(await screen.findByRole('button', { name: 'Decline your Slack for Deals' }));
     api.getSidekickSources.mockImplementation(() => new Promise(() => {}));
-    await waitFor(() => expect(item('Asked', 'Me')).toHaveTextContent('Declined'));
+    await waitFor(() => expect(item(SLACK, 'Me')).toHaveTextContent('Declined'));
     expect(api.decideSidekickSourceRequest.mock.calls).toEqual([[SIDEKICK, 'r-me', 'decline']]);
-    expect(within(item('Asked', 'Me')).queryByRole('button')).toBeNull();
+    expect(within(item(SLACK, 'Me')).queryByRole('button')).toBeNull();
   });
 
   it('names a refused answer in a popup: a request somebody already settled', async () => {
     api.getSidekickSources.mockResolvedValue(sources());
     api.decideSidekickSourceRequest.mockRejectedValue(new ApiError('settled', 409, 'sidekick_source_request_settled'));
-    mount(<SidekickSources id={SIDEKICK} />);
+    mount(wakesOn);
     fireEvent.click(await screen.findByRole('button', { name: 'Approve your Slack for Deals' }));
     expect(await screen.findByRole('alertdialog', { name: 'The request could not be answered' })).toHaveTextContent('This request was already answered.');
   });

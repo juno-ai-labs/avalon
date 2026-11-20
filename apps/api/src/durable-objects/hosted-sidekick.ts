@@ -1264,7 +1264,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * writes the ask and its filter, and nothing it does stands in for the
    * person's answer, their own account's no less than a colleague's. The
    * asker is told nothing about their own request: its card is in the
-   * conversation they asked from, and it is listed under Sources. Asking
+   * conversation they asked from, and it is listed under Wakes on. Asking
    * again for the same thing answers with the request already waiting.
    */
   async requestSources(input: z.input<typeof SidekickSourceAskRequestSchema>): Promise<SidekickSourceRequestResult> {

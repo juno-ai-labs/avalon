@@ -143,7 +143,7 @@ and an event that should not have been shared cannot be taken back.
    Theirs waits for them like anybody's: tell them to press Approve (or
    Connect and approve, if they have not connected) on the request, which is shown where they asked (a Canvas's Chat that messaged
    you shows it too), and that their events stay unfiltered until they do. When theirs should not start the Sidekick at all, tell them, and
-   tell them they can stop their own under Sources on the Sidekick's page.
+   tell them they can stop their own under Wakes on, on the Sidekick's page.
 4. Tell the person what happens next, plainly: who was asked, that each of
    them decides in Rally, or from the email when they get one, and that a
    person's events start arriving only after they approve. Each request's

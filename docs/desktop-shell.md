@@ -395,7 +395,7 @@ its menus starts or lists a run: the title pill offers Pin and Copy link, and
 the details' "⋯" offers Copy link alone (`withoutRuns`, `withoutArchive`). It
 offers no Pause or Resume either (`withoutPause`): the lifecycle badge says
 where the Sidekick stands, and the "⋯" sits at the end of the badges as it
-does for a draft. The appearance picker, Sources and Delegation work as they do on the
+does for a draft. The appearance picker, the accounts under Wakes on and Delegation work as they do on the
 route.
 Opening and closing leaves the Canvas URL, history and draft in place. A
 Sidekick is archived at its own route, by asking the Canvas's Chat, or with

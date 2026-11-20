@@ -448,8 +448,10 @@ session and workspace boundary.
 
 The Sidekick's details column shows, as design §4 draws it, Pause/Resume and
 a "⋯" menu (Run now, Run history, Copy link, Archive), then three blocks that
-are always present: **Wakes on** (one row per trigger with its mark, and the
-next run), **Uses** (the connections its runs use, with their count) and
+are always present: **Wakes on** (one row per trigger with its mark and its
+condition, under each event trigger the accounts whose events reach it, and
+the next run; [`shared-ui.md`](shared-ui.md#sidekick-sources) owns the
+section), **Uses** (the connections its runs use, with their count) and
 **Writes to** (the Canvases attached to it). A block with nothing in it reads
 **Nothing yet** rather than disappearing, so "uses nothing" and "not shown"
 cannot be confused. Who it may act as follows the blocks. A draft shows no

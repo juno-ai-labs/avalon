@@ -5,7 +5,9 @@ import { Archive, ChevronRight, CirclePause, Clock, Copy, Ellipsis, Hand, Histor
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
-import type { AutomationDetail, AutomationRun } from '../lib/types';
+import { SidekickWakesOnList, type WakeTrigger } from '@rally/ui/components/sidekick-sources';
+import type { AutomationDetail, AutomationRun, WorkstreamConnection } from '../lib/types';
+import { sourceWords } from '../lib/sidekick-sources';
 import { statusLabel } from '../lib/format';
 import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot } from './primitives';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
@@ -21,8 +23,18 @@ export interface AutomationHeaderProps {
   automation: AutomationDetail;
   delegateNames?: ReadonlyMap<string, string>;
   delegation?: ReactNode;
-  /** Whose events may start it (`docs/sidekick-sources.md`), drawn beside delegation and apart from it. */
-  sources?: ReactNode;
+  /**
+   * Wakes on with each trigger's accounts (`docs/sidekick-sources.md`): the
+   * host that reads whose events may start it draws the section from the
+   * triggers built here. Absent, and for a draft, the triggers are listed
+   * with no accounts.
+   */
+  wakesOn?: (section: { triggers: WakeTrigger[]; next: ReactNode }) => ReactNode;
+  /**
+   * The connections this reader can see, for naming the Organization's own
+   * connection an event trigger watches. Absent, no trigger names one.
+   */
+  connections?: readonly WorkstreamConnection[] | undefined;
   /**
    * Every run the automation has, newest first, from `GET /automations/:id/runs`.
    * `undefined` while loading, in which case the detail's recent runs stand in.
@@ -115,7 +127,20 @@ export function customToolPluginLabel(pluginId: string): string {
   return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
 
-type TriggerType = NonNullable<AutomationDetail['currentDefinition']>['triggers'][number]['type'];
+type Trigger = NonNullable<AutomationDetail['currentDefinition']>['triggers'][number];
+type TriggerType = Trigger['type'];
+
+/**
+ * What an event trigger listens for, which is what a person's source is
+ * matched to. A written condition's event type is its prefilter's; one that
+ * names none listens for every event of its connector.
+ */
+function listensFor(trigger: Trigger | undefined): WakeTrigger['listensFor'] {
+  if (trigger?.type === 'connector_activity') return { connectorType: trigger.connectorType, eventTypes: trigger.eventTypes };
+  if (trigger?.type !== 'semantic_activity') return undefined;
+  const eventType = trigger.deterministicPrefilter['eventType'];
+  return { connectorType: trigger.connectorType, eventTypes: typeof eventType === 'string' && eventType.trim() ? [eventType] : null };
+}
 
 /** The mark beside a "Wakes on" row, as design §4 draws one per trigger: a clock for a schedule, a bolt for an event. */
 function TriggerIcon({ type }: { type: TriggerType | undefined }): React.JSX.Element {
@@ -136,7 +161,8 @@ export function AutomationHeader({
   automation,
   delegateNames,
   delegation,
-  sources,
+  wakesOn,
+  connections,
   runs,
   runsError,
   withoutRuns = false,
@@ -180,7 +206,26 @@ export function AutomationHeader({
     ? undefined : 'This Sidekick has no triggers or previous runs.';
   // Summaries are derived one per definition trigger, in order (`lib/api.ts`),
   // so the trigger at the same index says which mark the row wears.
-  const triggers: Array<{ summary: string; type: TriggerType | undefined }> = automation.triggerSummaries.map((summary, index) => ({ summary, type: definition?.triggers[index]?.type }));
+  // An event trigger also says what it listens for, and names the connection
+  // it is bound to when that one is the Organization's: a person's own
+  // connection is listed as their source instead.
+  const triggers: WakeTrigger[] = automation.triggerSummaries.map((summary, index) => {
+    const trigger = definition?.triggers[index];
+    const listens = listensFor(trigger);
+    const pluginId = trigger && 'suggestedSourcePluginId' in trigger ? trigger.suggestedSourcePluginId : undefined;
+    const bound = pluginId ? connections?.find((connection) => connection.id === automation.connectorBindings[pluginId]) : undefined;
+    return {
+      key: `${index}:${summary}`,
+      icon: <TriggerIcon type={trigger?.type} />,
+      summary,
+      ...(listens ? { listensFor: listens } : {}),
+      ...(listens && bound?.scope === 'workspace' ? { organizationAccount: { connectorType: bound.connectorType, name: bound.displayName } } : {}),
+    };
+  });
+  const wakes = {
+    triggers,
+    next: automation.nextRunAt ? <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p> : null,
+  };
   const isDraft = automation.lifecycle === 'draft';
   // The connections its runs use, named as the rest of the profile names
   // plugins; and the Canvases it writes that this reader may open.
@@ -273,15 +318,8 @@ export function AutomationHeader({
         />
       </div>
       <div className="automation-header-details">
-        <section aria-labelledby="sidekick-wakes-on" className="sidekick-profile-section">
-          <h2 id="sidekick-wakes-on">Wakes on</h2>
-          {triggers.length === 0 && !automation.nextRunAt
-            ? <p className="sidekick-profile-empty">{NOTHING_YET}</p>
-            : triggers.length > 0 && <ul aria-label="Triggers" className="sidekick-profile-rows">
-              {triggers.map(({ summary, type }) => <li key={summary}><TriggerIcon type={type} /><span>{summary}</span></li>)}
-            </ul>}
-          {automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}
-        </section>
+        {/* What starts it and whose events reach each trigger, in one list. A draft has nobody to ask yet. */}
+        {!isDraft && wakesOn ? wakesOn(wakes) : <SidekickWakesOnList {...wakes} words={sourceWords} />}
         <section aria-labelledby="sidekick-uses" className="sidekick-profile-section">
           <h2 className="sidekick-profile-heading" id="sidekick-uses">Uses{plugins.length > 0 && <span>{plugins.length} {plugins.length === 1 ? 'tool' : 'tools'}</span>}</h2>
           {plugins.length === 0
@@ -304,8 +342,7 @@ export function AutomationHeader({
         </section>
         {/* Who it may act as is a question for a Sidekick that runs; a draft has nobody to ask yet. */}
         {!isDraft && automation.delegationAttention && <p role="status">{automation.delegationAttention.message}</p>}
-        {/* What starts it, then who it acts as: two questions with two owners, never one list. */}
-        {!isDraft && sources}
+        {/* Who it acts as is a different question from what starts it, with a different owner: never one list. */}
         {!isDraft && delegation}
         {customTools.length > 0 && <section className="sidekick-profile-section sidekick-tools-section">
           <h2>Tools</h2>
