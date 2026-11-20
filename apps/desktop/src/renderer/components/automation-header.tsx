@@ -39,6 +39,8 @@ export interface AutomationHeaderProps {
    * where the Sidekick stands; it is paused and resumed at its own route.
    */
   withoutPause?: boolean;
+  /** For the same host: no Archive in the menu. A Sidekick is archived at its own route. */
+  withoutArchive?: boolean;
   /** The action in flight, so its button reads as busy and the rest stay put. */
   pending?: AutomationHeaderAction | null;
   error?: string | undefined;
@@ -139,6 +141,7 @@ export function AutomationHeader({
   runsError,
   withoutRuns = false,
   withoutPause = false,
+  withoutArchive = false,
   pending = null,
   error,
   onPause,
@@ -211,15 +214,17 @@ export function AutomationHeader({
           }}>
             <Copy size={14} /> Copy link
           </DropdownMenu.Item>
-          <DropdownMenu.Separator className="menu-separator" />
-          <DropdownMenu.Item
-            className="menu-item menu-item-danger"
-            disabled={pending !== null}
-            onSelect={() => setConfirmingArchive(true)}
-          >
-            <Archive size={14} />
-            {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
-          </DropdownMenu.Item>
+          {!withoutArchive && <>
+            <DropdownMenu.Separator className="menu-separator" />
+            <DropdownMenu.Item
+              className="menu-item menu-item-danger"
+              disabled={pending !== null}
+              onSelect={() => setConfirmingArchive(true)}
+            >
+              <Archive size={14} />
+              {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
+            </DropdownMenu.Item>
+          </>}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

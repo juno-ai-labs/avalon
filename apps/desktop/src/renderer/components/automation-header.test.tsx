@@ -314,6 +314,17 @@ describe('AutomationHeader', () => {
     expect(screen.getByRole('button', { name: 'More Sidekick actions' })).toBeInTheDocument();
   });
 
+  it.each(['active', 'draft'] as const)('offers a host that asks for none no Archive on a %s Sidekick, and keeps Copy link', async (lifecycle) => {
+    const handlers = renderHeader({ ...draft, lifecycle, runnable: true }, { withoutRuns: true, withoutArchive: true });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual(['Copy link']);
+    expect(within(menu).queryByRole('separator')).toBeNull();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy link' }));
+    expect(handlers.onCopyLink).toHaveBeenCalledOnce();
+    expect(handlers.onArchive).not.toHaveBeenCalled();
+  });
+
   it('archives only after confirmation, explains retention, and keeps a failure in the dialog', async () => {
     const handlers = renderHeader({
       ...draft,
