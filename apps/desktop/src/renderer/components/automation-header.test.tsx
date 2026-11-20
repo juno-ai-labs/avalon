@@ -334,34 +334,21 @@ describe('AutomationHeader', () => {
     expect(handlers.onRunNow).toHaveBeenCalledOnce();
   });
 
-  it('offers a host that shows the details alone no Run now and no Run history, and keeps the rest of the menu', async () => {
-    const handlers = renderHeader({ ...draft, lifecycle: 'active', runnable: true }, { withoutRuns: true });
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
-    const menu = await screen.findByRole('menu');
-    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual(['Copy link', 'Archive Sidekick']);
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy link' }));
-    expect(handlers.onCopyLink).toHaveBeenCalledOnce();
-    expect(handlers.onRunNow).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull();
-  });
-
-  it.each(['active', 'paused'] as const)('offers a host that asks for none no Pause or Resume on a %s Sidekick, and keeps its state and menu', (lifecycle) => {
-    renderHeader({ ...draft, lifecycle, runnable: true }, { withoutPause: true });
+  it.each([['active', 'Active'], ['paused', 'Paused'], ['draft', 'Draft']] as const)('offers a host that shows the details alone only Copy link on a %s Sidekick: no run, no Pause or Resume, no Archive', async (lifecycle, badge) => {
+    const handlers = renderHeader({ ...draft, lifecycle, runnable: true }, { detailsOnly: true });
     expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
-    expect(screen.getByText(lifecycle === 'active' ? 'Active' : 'Paused')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'More Sidekick actions' })).toBeInTheDocument();
-  });
-
-  it.each(['active', 'draft'] as const)('offers a host that asks for none no Archive on a %s Sidekick, and keeps Copy link', async (lifecycle) => {
-    const handlers = renderHeader({ ...draft, lifecycle, runnable: true }, { withoutRuns: true, withoutArchive: true });
+    // The badge still says where it stands.
+    expect(screen.getByText(badge)).toBeInTheDocument();
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
     const menu = await screen.findByRole('menu');
     expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual(['Copy link']);
     expect(within(menu).queryByRole('separator')).toBeNull();
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy link' }));
     expect(handlers.onCopyLink).toHaveBeenCalledOnce();
+    expect(handlers.onRunNow).not.toHaveBeenCalled();
     expect(handlers.onArchive).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull();
   });
 
   it('archives only after confirmation, explains retention, and keeps a failure in the dialog', async () => {

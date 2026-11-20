@@ -273,9 +273,7 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
       pending={act.isPending ? act.variables : null}
       runs={runs.data}
       runsError={runs.error?.message}
-      withoutRuns={Boolean(panel)}
-      withoutPause={Boolean(panel)}
-      withoutArchive={Boolean(panel)}
+      detailsOnly={Boolean(panel)}
     />} header={(context) => <SidekickHeader
       context={context}
       panel={panel}

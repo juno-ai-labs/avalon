@@ -387,21 +387,16 @@ A Canvas supplies a Sidekick through `ConversationHeaderContext.openPanel`:
 `ConversationHostPanel` names it and renders it with the slot's close, expand
 and ancestor controls. **The panel is the Sidekick's details alone**
 (`SidekickPanel`): the same details the standalone route draws beside its
-conversation (`AutomationHeader`, in `SidekickDetailLayout` with no
-conversation passed), under the Sidekick's title pill. It mounts no
+conversation (`AutomationHeader` with `detailsOnly`, in `SidekickDetailLayout`
+with no conversation passed), under the Sidekick's title pill. It mounts no
 conversation, so the wizard and every run stay at the Sidekick's own route,
-and it reads no runs (`GET /sidekicks/:id/runs` is not requested). Neither of
-its menus starts or lists a run: the title pill offers Pin and Copy link, and
-the details' "⋯" offers Copy link alone (`withoutRuns`, `withoutArchive`). It
-offers no Pause or Resume either (`withoutPause`): the lifecycle badge says
-where the Sidekick stands, and the "⋯" sits at the end of the badges as it
-does for a draft. The appearance picker, the accounts under Wakes on and Delegation work as they do on the
-route.
-Opening and closing leaves the Canvas URL, history and draft in place. A
-Sidekick is archived at its own route, by asking the Canvas's Chat, or with
-the Canvas that made it, never from the panel. A paste on the panel attaches to neither
-conversation. Sidekick panels are transient; only resource panels restore
-after relaunch.
+and it reads no runs. The title pill offers Pin and Copy link and the
+details' "⋯" offers Copy link; nothing there starts or lists a run, pauses,
+resumes or archives. The lifecycle badge says where the Sidekick stands. The
+appearance picker, the accounts under Wakes on and Delegation work as they do
+on the route. Opening and closing leaves the Canvas URL, history and draft in
+place, and a paste on the panel attaches to neither conversation. Sidekick
+panels are transient; only resource panels restore after relaunch.
 
 `RailSurface` focuses an explicitly opened panel and returns focus on removal.
 Automatic artifact reveals pass `focusOnOpen: false` through `InspectorRail`,
@@ -510,42 +505,25 @@ It does not own:
 
 ### 2026-11-20 — A Canvas's Sidekick panel is its details alone
 
-**What changed:** Opening a Sidekick from a Canvas's command pill now shows
-only its details in the right panel. The panel no longer mounts the Sidekick's
-conversation or a run's, no longer keeps a run selection of its own
-(`SidekickPanelContext` and `lib/sidekick-panel.ts` are gone), and does not
-read the Sidekick's runs. Run now left the panel's title-pill menu, Run now
-and Run history left its "⋯" menu, the Pause/Resume button left its details,
-and Archive left the "⋯" menu, which is now Copy link alone. The standalone
-`/sidekicks/:id` route is unchanged: conversation, runs, Run now, Run history,
-Pause and Archive all remain there.
+**What changed:** Opening a Sidekick from a Canvas's command pill shows only
+its details. The panel mounts no conversation, reads no runs, and offers no
+Run now, Run history, Pause or Archive; the `/sidekicks/:id` route keeps all
+of them.
 
-**Why:** Requested: from a Canvas a person should see what a Sidekick is (what
-wakes it, what it uses, who it acts as), and should not reach its wizard
-conversation or any run, or start one by hand, from beside the Canvas's Chat.
-Pause and Archive were then asked out of the panel as well. The 2026-11-10
-panel showed the whole Sidekick screen there.
+**Why:** Requested: beside a Canvas's Chat a person should read what a
+Sidekick is, and not reach its wizard conversation or a run, or start, pause
+or archive it from there.
 
-**Considered and rejected:** A second, panel-only details component would
-duplicate the lifecycle, appearance and details controls the 2026-11-10 entry
-kept in one place; the panel instead passes `SidekickDetailLayout` no
-conversation and `AutomationHeader` `withoutRuns`, `withoutPause` and
-`withoutArchive`. Disabling Run now and Run
-history with a reason, as the route does for a paused Sidekick, was rejected
-because nothing a person does in the panel would enable them. Removing
-`ConversationSurface`'s `embedded` mode was rejected: the mobile Chat still
-mounts through it.
+**Considered and rejected:** A panel-only details component, which would
+duplicate the controls the 2026-11-10 entry kept in one place. Disabling the
+controls with a reason, since nothing done in the panel would enable them.
+Removing `ConversationSurface`'s `embedded` mode, which the mobile Chat still
+uses.
 
-**Consequences:** `SidekickDetailLayout` without children is the details-only
-layout, `withoutRuns` is the one switch for a host that shows no runs, and
-`withoutPause` and `withoutArchive` the ones for a host that changes no
-lifecycle; a new host should use them rather than hide controls with CSS. A
-paused Sidekick reads Paused in the panel and is resumed at its own route.
-The panel's "⋯" holds one item that its title pill also offers; whoever next
-changes the panel may fold the two. A run row's Open
-run is a plain link again, since a run row is only ever drawn at the Sidekick's
-route. Nothing in the panel links to that route, so a person reaches the
-conversation through the Sidekicks library, Activity or a link.
+**Consequences:** A host that shows the details alone passes
+`SidekickDetailLayout` no conversation and `AutomationHeader` `detailsOnly`,
+rather than hiding controls with CSS. Nothing in the panel links to the
+Sidekick's route.
 
 ### 2026-11-19 — A category per audience the site sells to, listed first
 

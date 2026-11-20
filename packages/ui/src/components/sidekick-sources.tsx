@@ -12,6 +12,9 @@ import { Avatar, Button, ConnectorMark } from './primitives';
  * the answers and names its failures.
  */
 
+/** A details block with nothing in it says so, rather than leaving a reader to wonder whether it was shown. */
+export const SIDEKICK_DETAILS_NOTHING_YET = 'Nothing yet';
+
 export type SourceDecision = 'approve' | 'decline';
 
 /** What is asked for: a connector's events. */
@@ -230,6 +233,8 @@ function feeds(listensFor: NonNullable<WakeTrigger['listensFor']>, entry: Source
  * A source lets events in and lends no account; that is delegation, the
  * section below. A source or request no trigger listens for is still listed,
  * under Other accounts, so its person can always see it and take it back.
+ * One that feeds several triggers is listed under each, with its control on
+ * the first only: the control acts on the whole source or request.
  */
 export function SidekickWakesOnList({ triggers, next, data, loading = false, words, onDecide, deciding = null, onWithdraw, withdrawing = null }: {
   triggers: readonly WakeTrigger[];
@@ -249,8 +254,17 @@ export function SidekickWakesOnList({ triggers, next, data, loading = false, wor
   const who = (person: SourcePerson, yours: boolean): React.JSX.Element => <span>
     {person.displayName}{yours && <small>You</small>}
   </span>;
-  const sourceRow = (source: SidekickSourcesResult['sources'][number]): React.JSX.Element =>
-    <li key={`source:${source.person.userId}:${source.connectionId}:${source.condition ?? ''}`}>
+  // The rows already drawn with their control, so a repeat under a later trigger has none.
+  const controlled = new Set<string>();
+  const firstListing = (key: string): boolean => {
+    if (controlled.has(key)) return false;
+    controlled.add(key);
+    return true;
+  };
+  const sourceRow = (source: SidekickSourcesResult['sources'][number]): React.JSX.Element => {
+    const key = `source:${source.person.userId}:${source.connectionId}:${source.condition ?? ''}`;
+    const withdrawable = source.yours && onWithdraw !== undefined && firstListing(key);
+    return <li key={key}>
       <PersonAvatar person={source.person} />
       <span className="sidekick-delegate-copy">
         {who(source.person, source.yours)}
@@ -258,18 +272,20 @@ export function SidekickWakesOnList({ triggers, next, data, loading = false, wor
         {source.condition && <small>Only when {quoted(source.condition)}</small>}
         {!source.available && <small>Unavailable — restore Organization membership</small>}
         {/* Under the copy, as a request's pair is: the details column is 340px wide. */}
-        {source.yours && onWithdraw && <Button
+        {withdrawable && <Button
           aria-label={`Stop allowing ${source.connectionName}`}
           disabled={withdrawing !== null}
           onClick={() => onWithdraw(source.connectionId)}
         >{withdrawing === source.connectionId ? 'Stopping…' : 'Stop allowing'}</Button>}
       </span>
     </li>;
+  };
   const requestRow = (request: SidekickSourceRequestView): React.JSX.Element => {
     const { connector, events } = words(request);
-    const answerable = request.yours && request.state === 'pending' && onDecide !== undefined;
+    const key = `request:${request.requestId}`;
+    const answerable = request.yours && request.state === 'pending' && onDecide !== undefined && firstListing(key);
     const toMake = connectionToMake(request);
-    return <li key={`request:${request.requestId}`}>
+    return <li key={key}>
       <PersonAvatar person={request.person} />
       <span className="sidekick-delegate-copy">
         {who(request.person, request.yours)}
@@ -297,7 +313,7 @@ export function SidekickWakesOnList({ triggers, next, data, loading = false, wor
   return <section aria-labelledby="sidekick-wakes-on" className="sidekick-profile-section sidekick-wakes-on">
     <h2 id="sidekick-wakes-on">Wakes on</h2>
     {triggers.length === 0 && !next
-      ? <p className="sidekick-profile-empty">Nothing yet</p>
+      ? <p className="sidekick-profile-empty">{SIDEKICK_DETAILS_NOTHING_YET}</p>
       : triggers.length > 0 && <ul aria-label="Triggers" className="sidekick-profile-rows">
         {triggers.map((trigger) => {
           const { listensFor, organizationAccount } = trigger;

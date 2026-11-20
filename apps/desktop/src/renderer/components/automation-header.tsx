@@ -5,7 +5,7 @@ import { Archive, ChevronRight, CirclePause, Clock, Copy, Ellipsis, Hand, Histor
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
-import { SidekickWakesOnList, type WakeTrigger } from '@rally/ui/components/sidekick-sources';
+import { SIDEKICK_DETAILS_NOTHING_YET as NOTHING_YET, SidekickWakesOnList, type WakeTrigger } from '@rally/ui/components/sidekick-sources';
 import type { AutomationDetail, AutomationRun, WorkstreamConnection } from '../lib/types';
 import { sourceWords } from '../lib/sidekick-sources';
 import { statusLabel } from '../lib/format';
@@ -42,17 +42,11 @@ export interface AutomationHeaderProps {
   runs?: AutomationRun[];
   runsError?: string | undefined;
   /**
-   * For a host that shows the details alone (a Canvas's panel): no Run now and
-   * no Run history. Runs are started and read at the Sidekick's own route.
+   * For a host that shows the details alone (a Canvas's panel): no Run now,
+   * Run history, Pause, Resume or Archive. The badge still says where the
+   * Sidekick stands; those are done at its own route.
    */
-  withoutRuns?: boolean;
-  /**
-   * For the same host: no Pause or Resume. The lifecycle badge still says
-   * where the Sidekick stands; it is paused and resumed at its own route.
-   */
-  withoutPause?: boolean;
-  /** For the same host: no Archive in the menu. A Sidekick is archived at its own route. */
-  withoutArchive?: boolean;
+  detailsOnly?: boolean;
   /** The action in flight, so its button reads as busy and the rest stay put. */
   pending?: AutomationHeaderAction | null;
   error?: string | undefined;
@@ -149,9 +143,6 @@ function TriggerIcon({ type }: { type: TriggerType | undefined }): React.JSX.Ele
   return <Zap aria-hidden="true" size={15} />;
 }
 
-/** A details block with nothing in it says so, rather than leaving a reader to wonder whether it was shown. */
-const NOTHING_YET = 'Nothing yet';
-
 function runStatus(run: AutomationRun): React.ComponentProps<typeof StatusDot>['status'] {
   return run.status === 'pending' ? 'scheduled' : run.status;
 }
@@ -165,9 +156,7 @@ export function AutomationHeader({
   connections,
   runs,
   runsError,
-  withoutRuns = false,
-  withoutPause = false,
-  withoutArchive = false,
+  detailsOnly = false,
   pending = null,
   error,
   onPause,
@@ -237,7 +226,7 @@ export function AutomationHeader({
   // A draft has no Pause beside it, and neither does a host that offers none,
   // so the menu sits at the end of the title's pills rather than alone on a
   // row of its own.
-  const lifecycleControl = !isDraft && !withoutPause;
+  const lifecycleControl = !isDraft && !detailsOnly;
   const moreMenu = (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -245,7 +234,7 @@ export function AutomationHeader({
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-          {!withoutRuns && <>
+          {!detailsOnly && <>
             <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
               <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
             </MenuActionItem>
@@ -259,7 +248,7 @@ export function AutomationHeader({
           }}>
             <Copy size={14} /> Copy link
           </DropdownMenu.Item>
-          {!withoutArchive && <>
+          {!detailsOnly && <>
             <DropdownMenu.Separator className="menu-separator" />
             <DropdownMenu.Item
               className="menu-item menu-item-danger"

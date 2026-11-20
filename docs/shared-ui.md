@@ -106,8 +106,10 @@ people read and answer them, on three surfaces that share one component:
   **Other accounts** at the foot, so its person can always see it and take it
   back. An event trigger with no account says "No person’s account lets
   these events in." once the read has answered, and "Loading accounts…"
-  before. Delegation's explanation ends by pointing at Wakes on, because the
-  two lists sit together and name some of the same people.
+  before. An account that feeds several triggers is listed under each, with
+  its control on the first only. Delegation's explanation ends by pointing at
+  Wakes on, because the two lists sit together and name some of the same
+  people.
 
   The host builds the triggers: `AutomationHeader` maps the definition's
   triggers to `WakeTrigger`s and names an Organization account from the
@@ -350,36 +352,23 @@ test runner is needed for the same implementations.
 
 ### 2026-11-20 — Wakes on lists each trigger's accounts; the Sources section is gone
 
-**What changed:** The Sidekick details had two sections for one question:
-**Wakes on** listed the triggers and, further down, **Sources** listed whose
-accounts let events in, with nothing tying a person to the trigger their
-events feed. `SidekickSourcesList` is replaced by `SidekickWakesOnList`, which
-draws each trigger's condition and, under it, its accounts: the Organization's
-connection, each person's source and each person asked. `AutomationHeader`
-builds the triggers and takes the accounts host through `wakesOn`, in place of
-the `sources` node. The same change is on the Sidekick's own page and in a
-Canvas's panel, which share the component.
+**What changed:** `SidekickWakesOnList` replaces `SidekickSourcesList`: each
+trigger's condition, and under each event trigger the accounts whose events
+reach it. The Sidekick's own page and a Canvas's panel share it.
 
 **Why:** Requested: one Wakes on that lists both the condition and the
-account. Read apart, "When there is matching activity in github" did not say
-whose GitHub, and a source row did not say which trigger it fed.
+account. Apart, a trigger did not say whose account fed it, and a source did
+not say which trigger it fed.
 
-**Considered and rejected:** Keeping Sources and repeating the account names
-under each trigger would show every person twice. Dropping accounts that
-match no trigger would hide a permission its person could then no longer take
-back, hence **Other accounts**. Having the server join triggers to sources
-was not needed: both are already in the two reads the details make, and the
-`['connections']` read that names an Organization account is the conversation
-surface's own, already cached wherever a conversation is open.
+**Considered and rejected:** Keeping Sources and repeating names under each
+trigger, which shows every person twice. Dropping accounts that match no
+trigger, which would hide a permission its person could no longer take back.
+A server join, since both reads already exist.
 
-**Consequences:** The match is the client's, on connector and event type, as
-`sidekickSourceRegistrations` decides the real registration on the server
-with more than that (the resource, and whether a request stands behind the
-source). A row here says "these events of this person's can reach a trigger
-of this kind", not that a registration exists; a change that needs the exact
-registration should have the server say it rather than widen this match. The
-wizard's `setting-up-a-filtered-trigger` skill and the delegation sentence
-name Wakes on where they named Sources.
+**Consequences:** The match is the client's, on connector and event type,
+and looser than `sidekickSourceRegistrations`, which also weighs the resource
+and whether a request stands behind the source. A change that needs the exact
+registration should have the server say it rather than widen this match.
 
 ### 2026-11-13 — A failed Retry says it failed
 

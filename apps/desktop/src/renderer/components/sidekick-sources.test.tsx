@@ -386,6 +386,25 @@ describe('the Sidekick details\' Wakes on section', () => {
     expect(within(section()).queryByRole('list', { name: 'Other accounts' })).toBeNull();
   });
 
+  it('lists a person whose account feeds two triggers under both, with their control once', async () => {
+    api.getSidekickSources.mockResolvedValue(sources({
+      requests: [request('r-me', ME, 'Me', { eventTypes: ['email.received', 'email.labels_changed'], condition: null })],
+    }));
+    mount(<SidekickWakesOn id={SIDEKICK} triggers={[
+      triggers[1]!,
+      { key: 'labels', icon: null, summary: 'When a label changes', listensFor: { connectorType: 'google', eventTypes: ['email.received', 'email.labels_changed'] } },
+    ]} />);
+    const LABELS = 'Accounts for When a label changes';
+    await screen.findByRole('list', { name: LABELS });
+    expect(item(MAIL, 'me@rally.test · Email received')).toHaveTextContent('Stop allowing');
+    expect(item(LABELS, 'me@rally.test · Email received')).not.toHaveTextContent('Stop allowing');
+    expect(screen.getAllByRole('button', { name: 'Stop allowing me@rally.test' })).toHaveLength(1);
+    // The request is answered once too; its repeat says where it stands.
+    expect(screen.getAllByRole('button', { name: 'Approve your Gmail for Deals' })).toHaveLength(1);
+    expect(within(within(section()).getByRole('list', { name: MAIL })).getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeEnabled();
+    expect(within(within(section()).getByRole('list', { name: LABELS })).getByText('Waiting for an answer')).toBeInTheDocument();
+  });
+
   it('keeps an account no trigger listens for in view, under Other accounts, where its person can still take it back', async () => {
     api.getSidekickSources.mockResolvedValue(sources({
       sources: [{ person: { userId: ME as UserId, displayName: 'Me' }, connectionId: 'c-cal', connectionName: 'me@rally.test', connectorType: 'google',
