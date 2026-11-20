@@ -139,10 +139,11 @@ in one invocation. Document and embedding children load only their selected
 canonical document; resource category tombstones remain separate documents.
 The final freshness read never recaptures a failed page. Browser failures record
 only numeric HTTP status, provider code and whether the failure retries. A page
-Browser Run answers with a 4xx other than 408 or 429 (it could not render it)
-is indexed by label and URL and acknowledged, staying uncaptured for the next
-projection; any other failure retries and, once retries are exhausted, preserves
-the reference in the DLQ. A failed page does not retry sibling documents.
+Browser Run answers with 422 (it could not render it) is indexed by label and
+URL and acknowledged. Its row stays uncaptured, but a turn is re-projected only
+on a message edit or a forced migration pass, so such a page is not recaptured
+automatically. Any other failure retries and, once retries are exhausted,
+preserves the reference in the DLQ. A failed page does not retry sibling documents.
 
 All current message, upload, generated-artifact, and captured-page sources emit
 reference-only jobs through their transactional outboxes to the existing regional
@@ -639,7 +640,7 @@ rewritten with its `audience`. Existing semantic chunk rows keep no audience
 (see the changelog). Force both classes in each region, then confirm with a
 Turbopuffer count that no live lexical row lacks `audience` before search
 filters on it. This pass captures every link whose capture failed before
-again. One Browser Run cannot render is indexed without a body and acknowledged;
+again. One Browser Run cannot render (a 422) is indexed without a body and acknowledged;
 one that still fails transiently throws `search_capture_retry_required` after
 its lexical row is written, exhausts the activity Queue's retries and
 dead-letters. Count those against `search_link_capture_failed` logs with
@@ -689,8 +690,8 @@ Browser Run captures Markdown asynchronously from links present in a canonical
 participant turn, including completed web fetch records. Link text and URL are
 indexed by the shared pipeline after the capture attempt, including failed attempts. Captures live in the originating substream's SQLite table and
 retain that substream's audience. Removed links are rejected at read time before
-their deletion job runs. Transient capture failures retry without recapturing
-successful links in the same turn; a page Browser Run cannot render does not. Captured pages are snapshots, not a continuously refreshed
+their deletion job runs. Failed captures retry without recapturing successful
+links in the same turn. Captured pages are snapshots, not a continuously refreshed
 web index. File contents use existing R2 text derivatives or readable originals,
 including JSON, JavaScript, and XML through the shared attachment classifier;
 missing derivatives cannot produce body matches until extraction completes.
@@ -749,23 +750,21 @@ wakeups; the CLI provides the eager fleet pass without the retired tracker.
 ### 2026-11-20 — Settle a link Browser Run cannot render instead of dead-lettering it
 
 **What changed:** `prepareConversationLinks` no longer asks for a retry when
-Browser Run answers a capture with a 4xx other than 408 or 429. The link's
-label and URL are indexed without a body and the job is acknowledged; the row
-stays `captured = 0`, so the next projection of the turn tries again. No
-response, a 5xx, 408, 429, or an unparseable 2xx still retries. The
-`search_link_capture_failed` log gains `retryable`.
+Browser Run answers a capture with 422. The link's label and URL are indexed
+without a body and the job is acknowledged; the row stays `captured = 0`.
+Every other failure still retries. The `search_link_capture_failed` log gains
+`retryable`.
 
-**Why:** Every capture failure retried, so a page Browser Run could not render
-(422, provider code 5002) was fetched six times within minutes, re-planned
-its embedding jobs on each attempt, and dead-lettered. Four such document jobs
-sat in the global activity dead-letter queue on 2026-11-20, all from one
-workspace, each preceded by six identical 422s, and they drowned out the
-dead letters this document asks operators to treat as real.
+**Why:** A 422 means Browser Run could not render the page, and a retry
+seconds later renders it the same way: six Browser Run calls, an embedding
+re-plan per attempt, then a dead letter in the activity DLQ that operators
+are told to treat as real.
 
-**Considered and rejected:** Keeping the DLQ as the record of a failed capture.
-Nothing replays it, and the uncaptured row is already the durable record: a
-re-projection recaptures it. Treating every capture failure as final would lose
-a page behind a Browser Run outage or rate limit.
+**Considered and rejected:** Keeping the DLQ as the record of a failed capture;
+nothing replays it, and the uncaptured row is already the record. Settling every
+4xx except 408/429: a 400 or 401/403 is our request, binding or entitlement
+breaking, and would then index every link body-less without a dead letter to
+notice. Add another status only when the `retryable` log shows it deterministic.
 
 ### 2026-11-19 — Settle a display job for an erased Chat instead of dead-lettering it
 

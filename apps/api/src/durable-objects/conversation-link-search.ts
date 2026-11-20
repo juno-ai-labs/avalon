@@ -135,14 +135,9 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
       sql.exec(`UPDATE conversation_search_links SET markdown = ?, captured = 1, revision = revision + 1
         WHERE id = ? AND revision = ? AND deleted = 0`, payload.result, row.id, row.revision);
     } catch {
-      // Browser Run answers a page it could not render (a crash, a load
-      // timeout, an unsupported page) with a 4xx; the queue retrying it
-      // seconds later renders the same page the same way, six Browser Run
-      // calls and then a dead letter. Index the link's label and URL without
-      // a body instead; the row stays uncaptured, so the next projection of
-      // the turn tries again. No response, a 5xx, 408 or 429 still retries.
-      const retryable = captureStatus === undefined || captureStatus < 400 || captureStatus >= 500
-        || captureStatus === 408 || captureStatus === 429;
+      // 422: Browser Run could not render the page; a retry renders it the
+      // same way. The row stays uncaptured for the next projection.
+      const retryable = captureStatus !== 422;
       if (retryable) captureFailed = true;
       logWarn(env, 'search_link_capture_failed', {
         workspace_id: identity.workspaceId, workstream_id: identity.parentId,
