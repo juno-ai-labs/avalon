@@ -99,7 +99,10 @@ receipt. New table rebuilds remain valid with foreign-key enforcement enabled:
 they create replacements, copy children and parents, remove the old graph
 child-first, and then rename the replacements parent-first. The runner executes
 `foreign_key_check` before commit only where it can find something: after a
-group in the legacy `disabled_during_rebuild` mode, or whenever `PRAGMA
+group in the legacy `disabled_during_rebuild` mode, after a group whose own
+statements set `PRAGMA foreign_keys` or `PRAGMA defer_foreign_keys` (turning
+deferral off discards the violations SQLite was holding for commit, so an orphan
+written while deferred would otherwise commit), or whenever `PRAGMA
 foreign_keys` reads off. With enforcement on, SQLite has already refused any
 write that would orphan a row, and the check reads every row of every table
 with a foreign key — the cost of an object's whole size, paid on every deploy
@@ -386,18 +389,22 @@ executor calls the object back.
 
 **What changed:** The shared migration runner skips `PRAGMA foreign_key_check`
 after a group that ran with foreign-key enforcement on, and keeps it for the
-legacy `disabled_during_rebuild` mode and for any group where `PRAGMA
-foreign_keys` reads off.
+legacy `disabled_during_rebuild` mode, for any group whose statements set a
+foreign-key pragma (`foreign_keys` or `defer_foreign_keys`), and for any group
+where `PRAGMA foreign_keys` reads off.
 
 **Why:** On 2026-11-19 the largest WorkspaceDO took a deploy carrying the
 `workspace_connector_events` item backfill. The group read 276,802 rows for
 the backfill and then 737,342 for `foreign_key_check`, exceeded the 30-second
 CPU limit, and was reset; the `memoryDigest` calls waiting on it failed with
 `exceededCpu` until the retry committed about two minutes later. With
-enforcement on, the check cannot find a violation — SQLite refuses an orphaning
-write when it happens, and a deferred one at commit — so it was the full cost
-of the object's size for no information, on every deploy that shipped a
-migration.
+enforcement on and no deferral toggled, the check cannot find a violation —
+SQLite refuses an orphaning write when it happens — so it was the full cost of
+the object's size for no information, on every deploy that shipped a migration.
+Deferral is the exception kept: `PRAGMA defer_foreign_keys = OFF` resets
+SQLite's count of pending deferred violations, so an orphan written between
+`ON` and `OFF` commits unless the check runs, and three shipped migrations
+toggle it.
 
 **Considered and rejected:** Bounding or splitting the backfill. It has shipped
 and is hashed into every object's receipt, and the next backfill would meet the

@@ -99,3 +99,37 @@ it('still checks for orphans after a group that asked for enforcement off', asyn
     expect(statements).toContain('PRAGMA foreign_key_check');
   });
 });
+
+it('rolls back a group that hides an orphan behind deferred foreign keys, and leaves no receipt', async () => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName('foreign-key-check-deferred');
+  await stub.ping();
+
+  await runInDurableObject(stub, (_instance, state) => {
+    applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: [PARENT_AND_CHILD], component: 'probe', workerVersionId: 'v1', now: 1 });
+  });
+
+  // Turning deferral off discards the violations SQLite was holding for
+  // commit, so only the runner's own check stands between this and a receipt.
+  await runInDurableObject(stub, (_instance, state) => {
+    expect(() => applyDurableObjectSqliteMigrations({
+      storage: state.storage,
+      migrations: [
+        PARENT_AND_CHILD,
+        {
+          version: 2,
+          description: 'an orphan written while deferred',
+          statements: [
+            'PRAGMA defer_foreign_keys = ON',
+            `INSERT INTO child (id, parent_id) VALUES ('orphan', 'missing')`,
+            'PRAGMA defer_foreign_keys = OFF',
+          ],
+        },
+      ],
+      component: 'probe',
+      workerVersionId: 'v2',
+      now: 2,
+    })).toThrow('probe_schema_foreign_key_violation');
+    expect(state.storage.sql.exec(`SELECT MAX(version) AS version FROM _sql_schema_migrations`).one()).toEqual({ version: 1 });
+    expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM child`).one()).toEqual({ count: 0 });
+  });
+});

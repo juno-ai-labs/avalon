@@ -245,12 +245,14 @@ export function applyDurableObjectSqliteMigrations(
         // `foreign_key_check` reads every row of every table that declares a
         // foreign key — 737k rows on the largest WorkspaceDO, enough with one
         // backfill to exceed the 30s CPU limit and reset the object. It can only
-        // find something when enforcement was off: with it on, SQLite already
-        // refused any write that would orphan a row, and refuses a deferred one
-        // at commit. So it runs for the legacy mode that asks for enforcement
-        // off, and whenever the pragma says enforcement is off now, which the
-        // mode's own pragma cannot be trusted to report.
-        if (group.foreignKeysDisabled || !foreignKeysEnforced(sql)) {
+        // find something when enforcement was off or bypassed: with it on,
+        // SQLite already refused any write that would orphan a row. So it runs
+        // for the legacy mode that asks for enforcement off; for a group whose
+        // own statements set a foreign-key pragma, because turning
+        // `defer_foreign_keys` off discards the deferred violations SQLite was
+        // holding for commit; and whenever the pragma says enforcement is off
+        // now, which the mode's own pragma cannot be trusted to report.
+        if (group.foreignKeysDisabled || group.migrations.some(setsForeignKeyPragma) || !foreignKeysEnforced(sql)) {
           const violation = sql.exec<Record<string, SqlStorageValue>>(`PRAGMA foreign_key_check`)
             .toArray()[0];
           if (violation) throw new Error(`${options.component}_schema_foreign_key_violation`);
@@ -263,6 +265,10 @@ export function applyDurableObjectSqliteMigrations(
   }
 
   return appliedVersions;
+}
+
+function setsForeignKeyPragma(migration: DurableObjectSqliteMigration): boolean {
+  return migration.statements.some((statement) => /\bPRAGMA\s+(?:defer_)?foreign_keys\b/iu.test(statement));
 }
 
 function foreignKeysEnforced(sql: SqlStorage): boolean {
