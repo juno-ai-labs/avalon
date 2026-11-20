@@ -4292,13 +4292,35 @@ export class WorkstreamTranscriptStorage {
    * message supplies its result through pending-input promotion.
    */
   unsettledToolBatchBlockingRelease(loopId: string): PendingBindToolBatch | null {
+    const withheld = this.withheldBatch(loopId);
+    return withheld && !withheld.allQuestions ? withheld.batch : null;
+  }
+
+  /**
+   * Whether the loop's last assistant step is a batch of questions only, at
+   * least one still unanswered, so what is queued behind it waits for the
+   * person's answer. Read by `nextLoopWorkAt`, which does not report that wait
+   * as a parked loop. A batch whose questions are all closed has no answer
+   * left to come, so a queue held behind it is a wedge and stays reported.
+   */
+  awaitingQuestionAnswer(loopId: string): boolean {
+    const withheld = this.withheldBatch(loopId);
+    if (withheld === null || withheld.batch.calls.length === 0 || !withheld.allQuestions) return false;
+    return boundParameterChunks(withheld.batch.calls.map((call) => call.receiptToolCallId))
+      .some((ids) => this.sql.exec(
+        `SELECT 1 FROM elicitation_requests
+          WHERE status = 'pending' AND tool_call_id IN (${ids.map(() => "?").join(", ")})
+          LIMIT 1`,
+        ...ids,
+      ).toArray().length > 0);
+  }
+
+  private withheldBatch(loopId: string): { batch: PendingBindToolBatch; allQuestions: boolean } | null {
     const projection = this.readBindProjection(loopId);
     if (!projection) return null;
-    const withheld = pendingBindToolBatch(projection);
-    if (!withheld) return null;
-    return this.openQuestionToolCallIds(projection).size === withheld.calls.length
-      ? null
-      : withheld;
+    const batch = pendingBindToolBatch(projection);
+    if (!batch) return null;
+    return { batch, allQuestions: this.openQuestionToolCallIds(projection).size === batch.calls.length };
   }
 
   /**
@@ -4337,7 +4359,8 @@ export class WorkstreamTranscriptStorage {
     // as it could return — each pass throwing `bind_loop_protocol_user_invalid`
     // and changing nothing. Holding the queue is what makes the stall quiet and
     // visible instead: `nextLoopWorkAt` derives no instant, and the loop is
-    // reported once through `substream_loop_parked_with_queued_input`.
+    // reported through `substream_loop_parked_with_queued_input` on each wake
+    // other work brings it.
     if (openToolCallIds.size === 0) return [];
     const cancelled = new Set(this.cancelledQuestionRequests(projection).map((row) => row.toolCallId));
     const answers = new Map<string, PendingLoopInputRow>();
