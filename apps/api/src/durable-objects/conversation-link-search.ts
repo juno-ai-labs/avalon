@@ -135,11 +135,14 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
       sql.exec(`UPDATE conversation_search_links SET markdown = ?, captured = 1, revision = revision + 1
         WHERE id = ? AND revision = ? AND deleted = 0`, payload.result, row.id, row.revision);
     } catch {
-      captureFailed = true;
+      // 422: Browser Run could not render the page; a retry renders it the
+      // same way. The row stays uncaptured for the next projection.
+      const retryable = captureStatus !== 422;
+      if (retryable) captureFailed = true;
       logWarn(env, 'search_link_capture_failed', {
         workspace_id: identity.workspaceId, workstream_id: identity.parentId,
         substream_id: identity.substreamId, link_id: row.id,
-        http_status: captureStatus, provider_code: captureCode,
+        http_status: captureStatus, provider_code: captureCode, retryable,
       });
     }
   }
