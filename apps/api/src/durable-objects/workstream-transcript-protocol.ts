@@ -37,8 +37,7 @@ type LocalOnlyTranscriptOperation =
   // be released to `idle`. Answered against the live projection for the two
   // release paths that hold the loop; nothing off-object may ask it.
   | "unsettledToolBatchBlockingRelease"
-  // Whether a held queue is waiting on an open question; read by the owning
-  // object's wake derivation only.
+  // Read by the owning object's wake derivation only.
   | "awaitingQuestionAnswer"
   | "appendPreparedParticipantMessageAtSequence"
   | "pendingTranscriptInputs"
