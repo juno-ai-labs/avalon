@@ -176,12 +176,14 @@ describe("a Sidekick's shared conversation", () => {
     expect(useUiStore.getState().railOpen).toBe(false);
   });
 
-  it('starts no run, lists none and reads none from the Canvas panel', async () => {
+  it('starts no run, lists none, reads none and offers no Pause from the Canvas panel', async () => {
     api.getAutomation.mockResolvedValue(sidekick({ runnable: true }));
     renderSidekick(AUTHOR, '', true);
     fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
     const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
     await within(panel).findByRole('heading', { level: 1, name: 'Incident triage' });
+    expect(within(panel).getByText('Active')).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Pause' })).toBeNull();
     fireEvent.pointerDown(within(panel).getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
     const more = await screen.findByRole('menu');
     expect(within(more).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual(['Copy link', 'Archive Sidekick']);

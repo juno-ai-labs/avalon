@@ -392,8 +392,11 @@ conversation passed), under the Sidekick's title pill. It mounts no
 conversation, so the wizard and every run stay at the Sidekick's own route,
 and it reads no runs (`GET /sidekicks/:id/runs` is not requested). Neither of
 its menus starts or lists a run: the title pill offers Pin and Copy link, and
-the details' "⋯" offers Copy link and Archive (`withoutRuns`). Pause, the
-appearance picker, Sources and Delegation work as they do on the route.
+the details' "⋯" offers Copy link and Archive (`withoutRuns`). It offers no
+Pause or Resume either (`withoutPause`): the lifecycle badge says where the
+Sidekick stands, and the "⋯" sits at the end of the badges as it does for a
+draft. The appearance picker, Sources and Delegation work as they do on the
+route.
 Opening and closing leaves the Canvas URL, history and draft in place;
 archiving closes the panel. A paste on the panel attaches to neither
 conversation. Sidekick panels are transient; only resource panels restore
@@ -484,7 +487,7 @@ It does not own:
   choice and access gating. `screens/sidekick-conversation.test.tsx` opens the
   real panel from a real Canvas conversation and verifies that it is the
   details alone (no composer, no feed, no run, no runs read, no Run now or Run
-  history in either menu), and that opening and closing preserves the Canvas
+  history in either menu, no Pause), and that opening and closing preserves the Canvas
   draft and keeps rail ownership on the Canvas. `lib/use-file-paste.test.tsx`
   covers routing pastes between mounted conversations. Run with
   `pnpm --filter @rally/desktop exec vitest run <path>`.
@@ -510,27 +513,32 @@ It does not own:
 only its details in the right panel. The panel no longer mounts the Sidekick's
 conversation or a run's, no longer keeps a run selection of its own
 (`SidekickPanelContext` and `lib/sidekick-panel.ts` are gone), and does not
-read the Sidekick's runs. Run now left the panel's title-pill menu, and Run now
-and Run history left its "⋯" menu. The standalone `/sidekicks/:id` route is
-unchanged: conversation, runs, Run now and Run history all remain there.
+read the Sidekick's runs. Run now left the panel's title-pill menu, Run now
+and Run history left its "⋯" menu, and the Pause/Resume button left its
+details. The standalone `/sidekicks/:id` route is unchanged: conversation,
+runs, Run now, Run history and Pause all remain there.
 
 **Why:** Requested: from a Canvas a person should see what a Sidekick is (what
 wakes it, what it uses, who it acts as), and should not reach its wizard
 conversation or any run, or start one by hand, from beside the Canvas's Chat.
-The 2026-11-10 panel showed the whole Sidekick screen there.
+Pause was then asked out of the panel as well. The 2026-11-10 panel showed
+the whole Sidekick screen there.
 
 **Considered and rejected:** A second, panel-only details component would
 duplicate the lifecycle, appearance and details controls the 2026-11-10 entry
 kept in one place; the panel instead passes `SidekickDetailLayout` no
-conversation and `AutomationHeader` `withoutRuns`. Disabling Run now and Run
+conversation and `AutomationHeader` `withoutRuns` and `withoutPause`.
+Disabling Run now and Run
 history with a reason, as the route does for a paused Sidekick, was rejected
 because nothing a person does in the panel would enable them. Removing
 `ConversationSurface`'s `embedded` mode was rejected: the mobile Chat still
 mounts through it.
 
 **Consequences:** `SidekickDetailLayout` without children is the details-only
-layout, and `withoutRuns` is the one switch for a host that shows no runs; a
-new host should use both rather than hide controls with CSS. A run row's Open
+layout, `withoutRuns` is the one switch for a host that shows no runs, and
+`withoutPause` the one for a host that changes no lifecycle; a new host should
+use them rather than hide controls with CSS. A paused Sidekick reads Paused in
+the panel and is resumed at its own route. A run row's Open
 run is a plain link again, since a run row is only ever drawn at the Sidekick's
 route. Nothing in the panel links to that route, so a person reaches the
 conversation through the Sidekicks library, Activity or a link.

@@ -306,6 +306,14 @@ describe('AutomationHeader', () => {
     expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull();
   });
 
+  it.each(['active', 'paused'] as const)('offers a host that asks for none no Pause or Resume on a %s Sidekick, and keeps its state and menu', (lifecycle) => {
+    renderHeader({ ...draft, lifecycle, runnable: true }, { withoutPause: true });
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+    expect(screen.getByText(lifecycle === 'active' ? 'Active' : 'Paused')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'More Sidekick actions' })).toBeInTheDocument();
+  });
+
   it('archives only after confirmation, explains retention, and keeps a failure in the dialog', async () => {
     const handlers = renderHeader({
       ...draft,

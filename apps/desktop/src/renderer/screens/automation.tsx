@@ -131,7 +131,8 @@ function useSidekickRun(): { runId: string | null; openRun: (runId: string | nul
  * A Sidekick open: its conversation and details at its own route, or, given
  * `panel`, its details alone in a Canvas's right panel. The panel reads no
  * runs and mounts no conversation, so nothing there starts a run, opens one,
- * or reaches the wizard; those stay at the Sidekick's own route.
+ * pauses the Sidekick or reaches the wizard; those stay at the Sidekick's own
+ * route.
  */
 function AutomationDetailScreen({ id, panel }: { id: string; panel?: ConversationPanelControls }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
@@ -263,6 +264,7 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
       runs={runs.data}
       runsError={runs.error?.message}
       withoutRuns={Boolean(panel)}
+      withoutPause={Boolean(panel)}
     />} header={(context) => <SidekickHeader
       context={context}
       panel={panel}
@@ -430,7 +432,7 @@ function SidekickDocumentTitle({ name }: { name: string | undefined }): null {
 /**
  * A Sidekick opened from a Canvas, in the Canvas's right panel: its details
  * alone. Its conversation, its wizard and its runs are not reachable from
- * here, and neither menu starts a run or lists them.
+ * here, neither menu starts a run or lists them, and it offers no Pause.
  */
 export function SidekickPanel({ id, controls }: { id: string; controls: ConversationPanelControls }): React.JSX.Element {
   return <AutomationDetailScreen id={id} panel={controls} />;

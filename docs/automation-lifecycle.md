@@ -1139,7 +1139,7 @@ a turn that reached `"0"`'s loop any other way gets the delegation tools alone.
 
 **In the client.** The Sidekick screen is its standalone route. A Canvas's
 right panel shows the same Sidekick's details alone: no conversation, no run,
-no Run now and no Run history. It closes on archive and leaves the Canvas's
+no Run now, no Run history and no Pause. It closes on archive and leaves the Canvas's
 route and draft intact;
 [`desktop-shell.md`](desktop-shell.md#one-right-slot) owns this layout.
 The Sidekick screen's composer offers a manager **Edit

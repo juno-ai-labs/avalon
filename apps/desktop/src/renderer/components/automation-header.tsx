@@ -34,6 +34,11 @@ export interface AutomationHeaderProps {
    * no Run history. Runs are started and read at the Sidekick's own route.
    */
   withoutRuns?: boolean;
+  /**
+   * For the same host: no Pause or Resume. The lifecycle badge still says
+   * where the Sidekick stands; it is paused and resumed at its own route.
+   */
+  withoutPause?: boolean;
   /** The action in flight, so its button reads as busy and the rest stay put. */
   pending?: AutomationHeaderAction | null;
   error?: string | undefined;
@@ -133,6 +138,7 @@ export function AutomationHeader({
   runs,
   runsError,
   withoutRuns = false,
+  withoutPause = false,
   pending = null,
   error,
   onPause,
@@ -180,8 +186,10 @@ export function AutomationHeader({
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
-  // A draft has no Pause beside it, so the menu sits at the end of the
-  // title's pills rather than alone on a row of its own.
+  // A draft has no Pause beside it, and neither does a host that offers none,
+  // so the menu sits at the end of the title's pills rather than alone on a
+  // row of its own.
+  const lifecycleControl = !isDraft && !withoutPause;
   const moreMenu = (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -236,7 +244,7 @@ export function AutomationHeader({
                 {lifecycleLabel[automation.lifecycle]}
               </Badge>
               <Badge className="scope-badge">{sidekickAudienceLabel(automation)}</Badge>
-              {isDraft && <span className="automation-title-more">{moreMenu}</span>}
+              {!lifecycleControl && <span className="automation-title-more">{moreMenu}</span>}
             </div>
             {(description || error || copyFailed) && <div className="automation-description">
               {description}
@@ -245,7 +253,7 @@ export function AutomationHeader({
             </div>}
           </div>
         </div>
-        {!isDraft && <div className="workstream-header-actions window-no-drag">
+        {lifecycleControl && <div className="workstream-header-actions window-no-drag">
           {/* A draft has nothing running to pause; it is finished in the conversation. */}
           <Button disabledReason={disabledReason} onClick={isPaused ? onResume : onPause}>
             {isPaused ? <Play aria-hidden="true" size={14} /> : <CirclePause aria-hidden="true" size={14} />}
