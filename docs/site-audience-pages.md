@@ -36,6 +36,7 @@ stories are drawn with. The look of the pencil pages belongs to
 
 A page is a file. It holds markers for what is shared (`<!-- rally:home-header -->`,
 `<!-- rally:site-footer -->`, `<!-- rally:audience-others <slug> -->`,
+`<!-- rally:audience-start <slug> -->`,
 `<!-- rally:gmail-mark -->`, `<!-- rally:arrow -->`) and writes everything
 else itself: its headline, its sections, its example pages and how they move.
 It links its own stylesheet and `/src/story.ts`.
@@ -49,7 +50,7 @@ and the parts below.
 
 Every sign-up button on an audience page links to that audience's Marketplace
 template on the web app, `/app/templates/<template>`
-([`links.md`](links.md#template-links)). The link signs the person up and opens
+([`links.md`](links.md#template-links)), through the `audience-start` marker. The link signs the person up and opens
 a Canvas whose first message is already the request for their page (an order
 board, a docket, a checklist), so the first thing a new person does is answer
 Rally's one or two questions, not work out what to type. That is what stands
@@ -221,8 +222,12 @@ homepage story uses only the kit.
   `text-wrap: balance`, paragraphs `pretty`, and a `max-width` sets the measure.
   A hand-placed break is right at one width and wrong at the rest, and these
   pages are read on phones first. Verified visually.
-- **Anything that moves has a pause.** A story plays for longer than five
-  seconds, so its bar carries the pause button (WCAG 2.2.2). The homepage
+- **Anything that moves has a pause, and a pause stops all of it.** A story
+  plays for longer than five seconds, so its bar carries the pause button
+  (WCAG 2.2.2). Pausing, or scrolling the story off the screen, holds
+  everything still to happen in the step, the email leaving and the page
+  changing included, and it carries on from where it was. Guard: `holds the
+  whole step while paused`. The homepage
   headline's word changes only with the story, so the same button stops it.
 - **Only a person scrolls.** Autoplay never scrolls the tab row or the page:
   `traffic-signals.ts` reads scrolling as a person's input.
@@ -231,14 +236,17 @@ homepage story uses only the kit.
   dev server and is blocked in production. Sizes that vary go through classes
   or attributes (`kit-meter[data-fill]`), and motion through the stylesheet or
   the Web Animations API.
-- **Sign-up links start the audience's template, and are tracked.** Every link
-  to the web app on an audience page is its row's template link and carries
-  `data-site-action="web-app-template"` (`sign-in-header` in the header), so its
-  click and the signup that follows are joined; the page's path says which
-  audience it was. A template renamed or dropped from the catalog would send
-  every visitor to an empty Canvases home, because a slug the catalog does not
-  hold starts nothing. Guard: `starts each audience page from its own
-  Marketplace template`.
+- **Sign-up links start the audience's template, and are tracked.** A page
+  does not spell its template's link out: it writes
+  `href="<!-- rally:audience-start <slug> -->"` and the registry row fills it
+  in, so a page cannot point at a template its row does not name. The link
+  carries `data-site-action="web-app-template"` (`sign-in-header` in the
+  header), so its click and the signup that follows are joined; the page's
+  path says which audience it was. A template renamed or dropped from the
+  catalog would send every visitor to an empty Canvases home, because a slug
+  the catalog does not hold starts nothing. Guard: `fills in each audience
+  page’s sign-up link from its registry row, with a template the catalog
+  holds`. That a page's buttons carry the tracked id is verified by review.
 - **A page's headline is its row's `headline`.** Guard: the `rally-page-cards`
   build plugin.
 

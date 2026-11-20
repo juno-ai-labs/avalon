@@ -9,7 +9,7 @@ import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { handoffAppLink, handoffDevice, handoffHeading, handoffPlan } from '../src/link-handoff';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
-import { audienceStartLink, audiences, renderAudienceSitemap } from '../src/audiences';
+import { audiences, renderAudienceSitemap } from '../src/audiences';
 import { blogPosts, renderBlogSitemap, renderSiteChrome } from '../src/site-chrome';
 import { renderConnectorMark, renderPluginGlyph } from '../src/connector-marks';
 import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS } from '../../../packages/skills/marketplace-skills/connectors';
@@ -183,13 +183,8 @@ describe('public Rally site', () => {
     const home = renderSiteChrome(readProjectFile('index.html'));
     const variant = renderSiteChrome(readProjectFile('start-fast/index.html'));
     const marketplace = renderSiteChrome(readProjectFile('marketplace/index.html'));
-    const offPath = renderSiteChrome(readProjectFile('developer-mode/index.html'));
-    const audiencePages = audiences.map(({ slug }) => renderSiteChrome(readProjectFile(`for/${slug}/index.html`)));
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
-    for (const id of [...ids(home), ...ids(variant), ...ids(marketplace), ...ids(offPath), ...audiencePages.flatMap(ids)]) expect(siteActionForLink(id), id).not.toBeNull();
-    // Every page that sells sends people to sign up through a counted link.
-    expect(ids(offPath)).toContain('web-app-hero');
-    for (const page of audiencePages) expect(ids(page)).toContain('web-app-template');
+    for (const id of [...ids(home), ...ids(variant), ...ids(marketplace)]) expect(siteActionForLink(id), id).not.toBeNull();
     // A tag removed in a redesign is just as silent: every tracked link must still be on the home page,
     // or, for a template card's link, on the marketplace. Not the variant, so it can't hide a tag the home page lost.
     for (const id of Object.keys(SITE_ACTION_LINKS)) expect([...ids(home), ...ids(marketplace)], id).toContain(id);
@@ -217,21 +212,24 @@ describe('public Rally site', () => {
     ]);
   });
 
-  it('starts each audience page from its own Marketplace template, and from no other door', () => {
-    const catalog = marketplaceTemplates().map(({ slug }) => slug);
-    expect(audiences.map(({ slug, template }) => `${slug} ${template}`)).toEqual([
-      'wholesalers order-board', 'agencies client-wall', 'legal legal-docket', 'accountants client-document-checklist',
-      'recruiters recruiting-desk', 'brokers todays-follow-ups', 'event-planners event-countdown',
+  it('fills in each audience page’s sign-up link from its registry row, with a template the catalog holds', () => {
+    const start = (slug: string): string => renderSiteChrome(`<!-- rally:audience-start ${slug} -->`);
+    expect(audiences.map(({ slug }) => start(slug))).toEqual([
+      'https://app.rallywith.ai/app/templates/order-board',
+      'https://app.rallywith.ai/app/templates/client-wall',
+      'https://app.rallywith.ai/app/templates/legal-docket',
+      'https://app.rallywith.ai/app/templates/client-document-checklist',
+      'https://app.rallywith.ai/app/templates/recruiting-desk',
+      'https://app.rallywith.ai/app/templates/todays-follow-ups',
+      'https://app.rallywith.ai/app/templates/event-countdown',
     ]);
-    for (const { slug, template } of audiences) {
-      // A template that left the catalog would send every visitor to the Canvases home with nothing started.
-      expect(catalog, template).toContain(template);
-      const page = renderSiteChrome(readProjectFile(`for/${slug}/index.html`));
-      const starts = [...page.matchAll(/<a\b[^>]*data-site-action="web-app-template"[^>]*>/gu)].map(([tag]) => /href="([^"]+)"/u.exec(tag)?.[1]);
-      expect(starts.length, slug).toBeGreaterThanOrEqual(2);
-      expect(new Set(starts), slug).toEqual(new Set([audienceStartLink(template)]));
-      expect(audienceStartLink(template)).toBe(`https://app.rallywith.ai/app/templates/${template}`);
-    }
+    // The marker sits inside an attribute on the page, and is filled in there too.
+    expect(renderSiteChrome('<a href="<!-- rally:audience-start legal -->">Connect</a>'))
+      .toBe('<a href="https://app.rallywith.ai/app/templates/legal-docket">Connect</a>');
+    expect(() => start('lawyers')).toThrow('Unknown audience: lawyers');
+    // A template that left the catalog would send every visitor to the Canvases home with nothing started.
+    const catalog = marketplaceTemplates().map(({ slug }) => slug);
+    for (const { template } of audiences) expect(catalog, template).toContain(template);
   });
 
   it('lists every audience in the homepage grid, ending on the page for everything else', () => {

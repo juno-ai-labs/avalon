@@ -46,8 +46,16 @@ const ORIGIN = 'https://rallywith.ai';
 
 export const audiencePath = (slug: string): string => `/for/${slug}/`;
 
-/** Where an audience page's sign-up buttons go: its template's link on the web app. */
-export const audienceStartLink = (template: string): string => `https://app.rallywith.ai/app/templates/${template}`;
+/**
+ * Where an audience page's sign-up buttons go: its template's link on the web
+ * app. A page writes `href="<!-- rally:audience-start <slug> -->"` and this
+ * fills it in, so a page cannot name a template its registry row does not.
+ */
+export function renderAudienceStartLink(slug?: string): string {
+  const audience = audiences.find((candidate) => candidate.slug === slug);
+  if (!audience) throw new Error(`Unknown audience: ${slug ?? '(none)'}`);
+  return `https://app.rallywith.ai/app/templates/${audience.template}`;
+}
 
 export const arrow = '<svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg>';
 

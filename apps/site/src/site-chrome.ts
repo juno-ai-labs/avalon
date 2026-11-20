@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
-import { arrow, audiencePath, audiences, gmailMark, renderAudienceGrid, renderOtherAudiences } from './audiences';
+import { arrow, audiencePath, audiences, gmailMark, renderAudienceGrid, renderAudienceStartLink, renderOtherAudiences } from './audiences';
 import { escapeHtml as escape } from './html';
 import { renderHomeHeader } from './home-header';
 import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
@@ -199,6 +199,7 @@ const markers: Record<string, (argument?: string) => string> = {
   'home-story': renderHomeStory,
   'audience-grid': renderAudienceGrid,
   'audience-others': renderOtherAudiences,
+  'audience-start': renderAudienceStartLink,
   'gmail-mark': () => gmailMark,
   arrow: () => arrow,
   'reading-nav': renderReadingNav,

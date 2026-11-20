@@ -71,11 +71,16 @@ function run(story: HTMLElement): void {
   let current = 0;
   let step = 0;
   let timer = 0;
-  let pageTimer = 0;
-  let mailTimer = 0;
   let visible = false;
   let started = false;
   let held = false;
+  // The step's clock. A pause stops all of a step, not only the move to the
+  // next one: what is still to happen in it (the email leaving, the page
+  // changing) waits too, and carries on from where it was.
+  let running = false;
+  let ranFrom = 0;
+  let spent = 0;
+  let pending: Array<{ at: number; run: () => void; timer: number; done: boolean }> = [];
 
   /** Puts a slide at a step with nothing animated. */
   const set = (slide: HTMLElement, at: number): void => {
@@ -89,14 +94,14 @@ function run(story: HTMLElement): void {
     slide.dataset.step = String(at);
     for (const part of parts(slide, '.story-mail .is-leaving')) part.classList.remove('is-leaving');
     for (const root of parts(slide, '.story-mail')) applyStep(root, at, lastStep(slide));
-    mailTimer = window.setTimeout(() => {
+    const mailLeaves = (): void => {
       // Whatever arrived this step, one card or a burst of them, moves on. `is-new` goes so a page's arrival rule cannot outrank its leaving one.
       for (const mail of parts(slide, `.story-mail [data-at="${at}"]`)) {
         mail.classList.remove('is-new');
         mail.classList.add('is-leaving');
       }
-    }, MAIL_LEAVES);
-    pageTimer = window.setTimeout(() => {
+    };
+    const pageChanges = (): void => {
       const from = leaving(slide, at);
       for (const part of parts(slide, '.is-touched, .is-moved')) part.classList.remove('is-touched', 'is-moved');
       for (const root of parts(slide, '.story-page')) applyStep(root, at, lastStep(slide));
@@ -110,7 +115,16 @@ function run(story: HTMLElement): void {
       }
       // A page's own script can add its own motion to the step.
       slide.dispatchEvent(new CustomEvent('story:step', { bubbles: true, detail: { step: at } }));
-    }, PAGE_DELAY);
+    };
+    pending = [{ at: MAIL_LEAVES, run: mailLeaves, timer: 0, done: false }, { at: PAGE_DELAY, run: pageChanges, timer: 0, done: false }];
+  };
+
+  /** Drops what was still to happen in the step, for a slide that is being reset or left. */
+  const clearStep = (): void => {
+    for (const event of pending) window.clearTimeout(event.timer);
+    pending = [];
+    spent = 0;
+    ranFrom = Date.now();
   };
 
   /** The active tab's bar fills one step at a time, over that step's hold. */
@@ -121,19 +135,29 @@ function run(story: HTMLElement): void {
     bar.style.transform = `scaleX(${fraction})`;
   };
 
+  /** Starts, stops or carries on the step's clock, to match whether the story should be playing now. */
   const schedule = (): void => {
     window.clearTimeout(timer);
-    const running = !reduced && started && visible && !held;
+    for (const event of pending) window.clearTimeout(event.timer);
+    // Time the step has already had, so a resume carries on and does not start the step over.
+    if (running) spent += Date.now() - ranFrom;
+    running = !reduced && started && visible && !held;
+    ranFrom = Date.now();
     story.classList.toggle('is-paused', !running);
     const last = lastStep(slides[current]!);
-    const hold = step === 0 ? OPENING_HOLD : step === last ? STEP_HOLD + CLOSING_HOLD : STEP_HOLD;
-    setBar(current, running ? (step + 1) / (last + 1) : step / (last + 1), running ? hold : 0.2);
-    if (running) timer = window.setTimeout(tick, hold * 1000);
+    const hold = (step === 0 ? OPENING_HOLD : step === last ? STEP_HOLD + CLOSING_HOLD : STEP_HOLD) * 1000;
+    const left = Math.max(0, hold - spent);
+    setBar(current, running ? (step + 1) / (last + 1) : (step + Math.min(1, spent / hold)) / (last + 1), running ? left / 1000 : 0.2);
+    if (!running) return;
+    timer = window.setTimeout(tick, left);
+    for (const event of pending) {
+      if (event.done) continue;
+      event.timer = window.setTimeout(() => { event.done = true; event.run(); }, Math.max(0, event.at - spent));
+    }
   };
 
   const select = (index: number, chosen = false): void => {
-    window.clearTimeout(pageTimer);
-    window.clearTimeout(mailTimer);
+    clearStep();
     current = (index + slides.length) % slides.length;
     tabs.forEach((tab, i) => {
       const on = i === current;
@@ -167,6 +191,7 @@ function run(story: HTMLElement): void {
     const slide = slides[current]!;
     if (step < lastStep(slide)) {
       step += 1;
+      clearStep();
       play(slide, step);
       schedule();
     } else {

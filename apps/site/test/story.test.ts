@@ -185,6 +185,45 @@ describe('story player', () => {
     expect(has('b-mail-1', 'is-on')).toBe(true);
   });
 
+  it('holds the whole step while paused, the email leaving and the page changing included, then carries on from where it was', async () => {
+    await start(story());
+    const pause = document.querySelector<HTMLButtonElement>('[data-story-pause]')!;
+    // One second after the first email arrived: it has not left, and the page has not changed.
+    vi.advanceTimersByTime(2600 + 1000);
+    pause.click();
+    vi.advanceTimersByTime(20_000);
+    expect(has('a-mail-1', 'is-leaving')).toBe(false);
+    expect(has('a-new', 'is-on')).toBe(false);
+    expect(has('a-mail-2', 'is-on')).toBe(false);
+    // Resumed, the email leaves 900ms on (1.9s into its step), not at once and not after a full step.
+    pause.click();
+    vi.advanceTimersByTime(899);
+    expect(has('a-mail-1', 'is-leaving')).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(has('a-mail-1', 'is-leaving')).toBe(true);
+    expect(has('a-new', 'is-on')).toBe(false);
+    vi.advanceTimersByTime(500);
+    expect(has('a-new', 'is-on')).toBe(true);
+    // The next email comes when the rest of the 4.2s step has run.
+    vi.advanceTimersByTime(1799);
+    expect(has('a-mail-2', 'is-on')).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(has('a-mail-2', 'is-on')).toBe(true);
+  });
+
+  it('holds the whole step while scrolled off the screen', async () => {
+    await start(story());
+    vi.advanceTimersByTime(2600 + 2000);
+    // The email has started to leave; the page is due to change in 400ms.
+    expect(has('a-mail-1', 'is-leaving')).toBe(true);
+    onScreen(false);
+    vi.advanceTimersByTime(20_000);
+    expect(has('a-new', 'is-on')).toBe(false);
+    onScreen(true);
+    vi.advanceTimersByTime(400);
+    expect(has('a-new', 'is-on')).toBe(true);
+  });
+
   it('shows every slide at its last step and plays nothing with reduced motion', async () => {
     await start(story(), true);
     expect(has('a-mail-2', 'is-on')).toBe(true);
