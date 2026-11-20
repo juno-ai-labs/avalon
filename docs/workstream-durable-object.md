@@ -1285,12 +1285,14 @@ example:
 5. reject an object whose schema is ahead of the Worker, warn and continue when
    an applied version's implementation hash changed, and let concrete SQL or
    integrity failures reject construction;
-6. run `PRAGMA foreign_key_check`, then `PRAGMA optimize` after changes.
+6. run `PRAGMA foreign_key_check` where enforcement was off for the group
+   (see [Durable Object SQLite](durable-object-sqlite.md#schema-and-migrations)),
+   then `PRAGMA optimize` after changes.
 
 Migration definitions may not include their own `BEGIN`, `COMMIT`, or
 `ROLLBACK`; the runner owns atomicity. A migration that rebuilds a referenced
 parent table must remain valid with enforcement enabled, rebuild dependent rows
-child-first, and pass a complete `foreign_key_check` before commit. The released
+child-first; with enforcement on, SQLite refuses an orphaning write itself. The released
 v32 transcript migration retains its legacy execution marker only because that
 marker records its shipped wrapper without changing its stored hash; it is not
 a pattern for new migrations. An execution mode participates in a new

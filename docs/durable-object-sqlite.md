@@ -98,7 +98,12 @@ invalid statement cannot leave a half-applied migration with a successful
 receipt. New table rebuilds remain valid with foreign-key enforcement enabled:
 they create replacements, copy children and parents, remove the old graph
 child-first, and then rename the replacements parent-first. The runner executes
-`foreign_key_check` before commit. The released v32 transcript migration retains
+`foreign_key_check` before commit only where it can find something: after a
+group in the legacy `disabled_during_rebuild` mode, or whenever `PRAGMA
+foreign_keys` reads off. With enforcement on, SQLite has already refused any
+write that would orphan a row, and the check reads every row of every table
+with a foreign key — the cost of an object's whole size, paid on every deploy
+that ships it a migration. The released v32 transcript migration retains
 its explicit legacy execution marker solely to preserve its shipped fingerprint;
 new migrations may not copy that mode. Earlier complete groups remain
 receipted if a later group fails, and the next construction resumes at the
@@ -376,6 +381,35 @@ or `localWorkspaceEnv`, because `withWorkspaceRuntimeDatabase` without the local
 executor calls the object back.
 
 ## Changelog
+
+### 2026-11-20 — Check foreign keys only where enforcement was off
+
+**What changed:** The shared migration runner skips `PRAGMA foreign_key_check`
+after a group that ran with foreign-key enforcement on, and keeps it for the
+legacy `disabled_during_rebuild` mode and for any group where `PRAGMA
+foreign_keys` reads off.
+
+**Why:** On 2026-11-19 the largest WorkspaceDO took a deploy carrying the
+`workspace_connector_events` item backfill. The group read 276,802 rows for
+the backfill and then 737,342 for `foreign_key_check`, exceeded the 30-second
+CPU limit, and was reset; the `memoryDigest` calls waiting on it failed with
+`exceededCpu` until the retry committed about two minutes later. With
+enforcement on, the check cannot find a violation — SQLite refuses an orphaning
+write when it happens, and a deferred one at commit — so it was the full cost
+of the object's size for no information, on every deploy that shipped a
+migration.
+
+**Considered and rejected:** Bounding or splitting the backfill. It has shipped
+and is hashed into every object's receipt, and the next backfill would meet the
+same scan. Dropping the check entirely: the released rebuild migrations that ask
+for enforcement off rely on it to prove nothing was orphaned, and the doc above
+records that the pragma's state at an event's first statement is not what the
+group runs under.
+
+**Consequences:** A migration that needs orphans checked must run with
+enforcement on, which is what new migrations already must do. A backfill large
+enough to approach the CPU limit on its own still needs splitting across object
+events; this change removes the scan that doubled it, not the limit.
 
 ### 2026-09-21 — A migration fingerprint cannot take an object offline
 
