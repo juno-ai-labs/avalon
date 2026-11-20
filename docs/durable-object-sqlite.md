@@ -102,9 +102,9 @@ child-first, and then rename the replacements parent-first. The runner executes
 group in the legacy `disabled_during_rebuild` mode, after a group whose own
 statements set `PRAGMA foreign_keys` or `PRAGMA defer_foreign_keys` (turning
 deferral off discards the violations SQLite was holding for commit, so an orphan
-written while deferred would otherwise commit), or whenever `PRAGMA
-foreign_keys` reads off. With enforcement on, SQLite has already refused any
-write that would orphan a row, and the check reads every row of every table
+written while deferred would otherwise commit), and, as a safety net, if `PRAGMA
+foreign_keys` reads off. In any other group enforcement has already refused an
+immediate write that would orphan a row, and the check reads every row of every table
 with a foreign key — the cost of an object's whole size, paid on every deploy
 that ships it a migration. The released v32 transcript migration retains
 its explicit legacy execution marker solely to preserve its shipped fingerprint;

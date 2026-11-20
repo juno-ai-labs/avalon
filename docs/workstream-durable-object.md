@@ -1291,8 +1291,10 @@ example:
 
 Migration definitions may not include their own `BEGIN`, `COMMIT`, or
 `ROLLBACK`; the runner owns atomicity. A migration that rebuilds a referenced
-parent table must remain valid with enforcement enabled, rebuild dependent rows
-child-first; with enforcement on, SQLite refuses an orphaning write itself. The released
+parent table must remain valid with enforcement enabled and rebuild dependent
+rows child-first. Enforcement refuses an immediate orphaning write, but not one
+made under `defer_foreign_keys` once deferral is turned off again, so the
+runner still checks every group that sets a foreign-key pragma. The released
 v32 transcript migration retains its legacy execution marker only because that
 marker records its shipped wrapper without changing its stored hash; it is not
 a pattern for new migrations. An execution mode participates in a new

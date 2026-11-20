@@ -242,16 +242,12 @@ export function applyDurableObjectSqliteMigrations(
         }
 
         if (groupIndex === groups.length - 1) options.afterMigrations?.(sql, appliedVersions);
-        // `foreign_key_check` reads every row of every table that declares a
-        // foreign key — 737k rows on the largest WorkspaceDO, enough with one
-        // backfill to exceed the 30s CPU limit and reset the object. It can only
-        // find something when enforcement was off or bypassed: with it on,
-        // SQLite already refused any write that would orphan a row. So it runs
-        // for the legacy mode that asks for enforcement off; for a group whose
-        // own statements set a foreign-key pragma, because turning
-        // `defer_foreign_keys` off discards the deferred violations SQLite was
-        // holding for commit; and whenever the pragma says enforcement is off
-        // now, which the mode's own pragma cannot be trusted to report.
+        // `foreign_key_check` reads every row of every table with a foreign key,
+        // so it runs only where enforcement might not have caught an orphan: the
+        // legacy mode that asks for enforcement off, and a group that sets a
+        // foreign-key pragma itself — turning `defer_foreign_keys` off discards
+        // the violations SQLite was holding for commit. Reading enforcement as
+        // off is a safety net: after the group's own SQL it should not happen.
         if (group.foreignKeysDisabled || group.migrations.some(setsForeignKeyPragma) || !foreignKeysEnforced(sql)) {
           const violation = sql.exec<Record<string, SqlStorageValue>>(`PRAGMA foreign_key_check`)
             .toArray()[0];
