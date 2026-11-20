@@ -31,4 +31,20 @@ describe('SidekickDetailLayout', () => {
     expect(screen.getByTestId('conversation-visible')).toHaveTextContent('true');
     expect(input).toHaveValue('Keep the briefing short');
   });
+
+  it('shows the details alone under the header when the host passes no conversation, with nothing to switch to', () => {
+    render(<SidekickDetailLayout
+      details={<h1>Weekly briefing</h1>}
+      header={({ compact, detailsOpen, toggleDetails }) => <header>
+        <span>Weekly briefing pill</span>
+        {compact && <button aria-pressed={detailsOpen} onClick={toggleDetails} type="button">Sidekick details</button>}
+      </header>}
+    />);
+    const details = screen.getByRole('complementary', { name: 'Sidekick details' });
+    expect(details).toHaveTextContent('Weekly briefing');
+    expect(details).not.toHaveAttribute('inert');
+    expect(details).not.toHaveAttribute('aria-hidden');
+    expect(screen.queryByRole('region', { name: 'Sidekick conversation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sidekick details' })).toBeNull();
+  });
 });

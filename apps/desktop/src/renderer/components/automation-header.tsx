@@ -29,6 +29,11 @@ export interface AutomationHeaderProps {
    */
   runs?: AutomationRun[];
   runsError?: string | undefined;
+  /**
+   * For a host that shows the details alone (a Canvas's panel): no Run now and
+   * no Run history. Runs are started and read at the Sidekick's own route.
+   */
+  withoutRuns?: boolean;
   /** The action in flight, so its button reads as busy and the rest stay put. */
   pending?: AutomationHeaderAction | null;
   error?: string | undefined;
@@ -107,7 +112,7 @@ type TriggerType = NonNullable<AutomationDetail['currentDefinition']>['triggers'
 
 /** The mark beside a "Wakes on" row, as design §4 draws one per trigger: a clock for a schedule, a bolt for an event. */
 function TriggerIcon({ type }: { type: TriggerType | undefined }): React.JSX.Element {
-  if (type === 'calendar') return <Clock aria-hidden="true" size={15} />;
+  if (type === 'calendar' || type === 'interval') return <Clock aria-hidden="true" size={15} />;
   if (type === 'manual') return <Hand aria-hidden="true" size={15} />;
   return <Zap aria-hidden="true" size={15} />;
 }
@@ -127,6 +132,7 @@ export function AutomationHeader({
   sources,
   runs,
   runsError,
+  withoutRuns = false,
   pending = null,
   error,
   onPause,
@@ -183,12 +189,14 @@ export function AutomationHeader({
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-          <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
-            <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
-          </MenuActionItem>
-          <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
-            <History size={14} /> Run history
-          </MenuActionItem>
+          {!withoutRuns && <>
+            <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
+              <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
+            </MenuActionItem>
+            <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
+              <History size={14} /> Run history
+            </MenuActionItem>
+          </>}
           <DropdownMenu.Item className="menu-item" onSelect={() => {
             setCopyFailed(false);
             void onCopyLink().catch(() => setCopyFailed(true));

@@ -79,7 +79,7 @@ The main-window `/sidekicks` route renders the library on both hosts; there
 is no separate Sidekicks window. The account menu's Sidekicks
 item opens `/sidekicks` without changing the sidebar section, and a Settings
 memory row naming a Sidekick opens it in the main window through
-`openSidekick`. Standalone automation and Sidekick routes keep the Canvases list, or Activity when selected. Canvas menu picks open a Sidekick in the right panel. Attachment remove buttons
+`openSidekick`. Standalone automation and Sidekick routes keep the Canvases list, or Activity when selected. Canvas menu picks open a Sidekick's details in the right panel. Attachment remove buttons
 have their own class so accessibility labels on the row do not apply button-only
 layout. Workspace automation pushes invalidate the library and attachment REST
 queries in each open window, keeping cross-window authoring and availability
@@ -87,7 +87,7 @@ changes visible without navigation.
 
 ## Sidekick conversations and attachments
 
-A Sidekick's shared conversation uses this surface in the main window or a Canvas's right panel. An embedded surface keeps its previews local and does not restore, claim, resize or close the shell's rail; its host owns that slot. Route-owned message-search parameters belong only to the outer Canvas. File pastes on the host frame and header belong to the embedded conversation; a hidden conversation or a run with no composer still accepts no files. See [`desktop-shell.md`](desktop-shell.md#one-right-slot). Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column to the right of its conversation (`SidekickDetailLayout`).
+A Sidekick's shared conversation uses this surface in the main window only: a Canvas's right panel shows the Sidekick's details and mounts no conversation. An embedded surface (the mobile Chat) keeps its previews local and does not restore, claim, resize or close the shell's rail; its host owns that slot. Route-owned message-search parameters belong only to the outer Canvas. A file pasted on a host's panel belongs to no conversation; a hidden conversation or a run with no composer still accepts no files. See [`desktop-shell.md`](desktop-shell.md#one-right-slot). Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column to the right of its conversation (`SidekickDetailLayout`).
 
 The Canvas host supplies `composerActivity` above the input on desktop and web;
 [`canvases.md`](canvases.md#running-helpers-above-the-composer) owns its counts.

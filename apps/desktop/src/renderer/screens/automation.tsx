@@ -1,7 +1,7 @@
 import { ErrorNotice } from '../components/primitives';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { PanelRight, Pencil, X } from 'lucide-react';
 import { IconHistory, IconLink, IconPin, IconPinnedOff, IconPlayerPlay } from '@tabler/icons-react';
 import { TitleMenuItem, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
@@ -19,7 +19,6 @@ import { useCollaborationSession } from '../lib/collaboration-session';
 import { copyLink } from '../lib/copy-link';
 import { useDocumentTitle } from '../lib/document-title';
 import { useRestoredRouteFallback } from '../lib/landing';
-import { SidekickPanelContext, useSidekickRun } from '../lib/sidekick-panel';
 import { ConversationSurface, type ConversationPanelControls } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
 import { SidekickSources } from '../components/sidekick-sources';
@@ -32,6 +31,8 @@ import { sidekickRunLabel, useSidekickRunNumber } from '../components/sidekick-r
  * route, so Back never lands on a screen that would create another.
  * `/automations/:id` is the automation's conversation, where the draft is
  * written and later edited, under a header that carries its lifecycle.
+ * A Canvas opens the same Sidekick in its right panel as `SidekickPanel`,
+ * which is its details alone.
  */
 export function AutomationScreen(): React.JSX.Element {
   const { id } = useParams();
@@ -117,6 +118,21 @@ function NewAutomationScreen(): React.JSX.Element {
   return <OpeningState label="Creating Sidekick…" />;
 }
 
+/** The run the route names (`?run=`), whose own conversation stands in for the shared one. */
+function useSidekickRun(): { runId: string | null; openRun: (runId: string | null) => void } {
+  const [search, setSearch] = useSearchParams();
+  return {
+    runId: search.get('run'),
+    openRun: (runId) => setSearch(runId ? { run: runId } : {}, { replace: runId === null }),
+  };
+}
+
+/**
+ * A Sidekick open: its conversation and details at its own route, or, given
+ * `panel`, its details alone in a Canvas's right panel. The panel reads no
+ * runs and mounts no conversation, so nothing there starts a run, opens one,
+ * or reaches the wizard; those stay at the Sidekick's own route.
+ */
 function AutomationDetailScreen({ id, panel }: { id: string; panel?: ConversationPanelControls }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
   const navigate = useNavigate();
@@ -133,7 +149,7 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
   const runs = useQuery({
     queryKey: ['automation-runs', id],
     queryFn: ({ signal }) => api!.getAutomationRuns(id, signal),
-    enabled: Boolean(api && automation.data && automation.data.lifecycle !== 'draft'),
+    enabled: Boolean(api && !panel && automation.data && automation.data.lifecycle !== 'draft'),
     staleTime: 5_000,
   });
   const refresh = (): void => {
@@ -246,6 +262,7 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
       pending={act.isPending ? act.variables : null}
       runs={runs.data}
       runsError={runs.error?.message}
+      withoutRuns={Boolean(panel)}
     />} header={(context) => <SidekickHeader
       context={context}
       panel={panel}
@@ -253,7 +270,7 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
       onCopyLink={copySidekickLink}
       onRunNow={detail?.lifecycle === 'active' && !act.isPending ? () => act.mutate('run') : undefined}
     />}>
-      <SidekickConversation {...conversation} embedded={Boolean(panel)} />
+      {!panel && <SidekickConversation {...conversation} />}
     </SidekickDetailLayout></>;
 }
 
@@ -263,7 +280,8 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
  * here. While a run is open the pill is the run's, with the Sidekick's as the
  * crumb before it that leads back to the shared conversation. Where the
  * details do not fit beside the conversation, a Details button switches to
- * them under this same header.
+ * them under this same header. In a Canvas's panel the pill is always the
+ * Sidekick's and its menu offers no Run now.
  */
 function SidekickHeader({ context, detail, onCopyLink, onRunNow, panel }: {
   panel: ConversationPanelControls | undefined;
@@ -277,7 +295,9 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow, panel }: {
   // No presence here: the workspace socket records only an open Canvas as
   // anyone's foreground (`set_presence`), so a Sidekick never has any.
   const { api } = useCollaborationSession();
-  const { runId, openRun } = useSidekickRun();
+  // The route's run is the Canvas's business in a panel, never this header's.
+  const run = useSidekickRun();
+  const runId = panel ? null : run.runId;
   const name = detail.currentDefinition?.name ?? detail.name;
   const row = useSidekickList()?.find((candidate) => candidate.id === detail.id);
   const pinned = row?.pinnedPosition != null;
@@ -293,7 +313,7 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow, panel }: {
         setMenuError(null);
         api.setSidekickPinned(detail.id, !pinned).catch(() => setMenuError('The Sidekick could not be pinned. Try again.'));
       }}>{pinned ? 'Unpin' : 'Pin'}</TitleMenuItem>}
-      <TitleMenuItem disabled={!onRunNow} icon={<IconPlayerPlay aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => onRunNow?.()}>Run now</TitleMenuItem>
+      {!panel && <TitleMenuItem disabled={!onRunNow} icon={<IconPlayerPlay aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => onRunNow?.()}>Run now</TitleMenuItem>}
       <TitleMenuItem icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
         setMenuError(null);
         void onCopyLink().catch(() => setMenuError('The Sidekick link could not be copied.'));
@@ -312,7 +332,7 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow, panel }: {
   // Back to the shared conversation replaces the history entry, so Back
   // leaves the Sidekick rather than reopening the run.
   const ancestors: TitlePillLevel[] = runId
-    ? [{ ...sidekickLevel, menu: undefined, label: `Back to ${name}`, onSelect: () => openRun(null) }]
+    ? [{ ...sidekickLevel, menu: undefined, label: `Back to ${name}`, onSelect: () => run.openRun(null) }]
     : [];
   return <>
     {menuError && <ErrorNotice>{menuError}</ErrorNotice>}
@@ -347,14 +367,13 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow, panel }: {
  * the server refuses the mark from anyone else. A draft has nothing to run
  * yet, so a manager opens one already editing.
  */
-function SidekickConversation({ id, name, draft, canvases, manages, embedded }: {
-  embedded: boolean;
+function SidekickConversation({ id, name, draft, canvases, manages }: {
   id: string; name: string; draft: boolean; canvases: NonNullable<AutomationDetail['canvases']>; manages: boolean;
 }): React.JSX.Element {
   const { runId } = useSidekickRun();
   const [editing, setEditing] = useState(draft);
   if (runId) {
-    return <ConversationSurface embedded={embedded}
+    return <ConversationSurface
       key={`run:${runId}`}
       parentId={id}
       parentKind="automation"
@@ -367,7 +386,7 @@ function SidekickConversation({ id, name, draft, canvases, manages, embedded }: 
     />;
   }
   const edit = manages && editing;
-  return <ConversationSurface embedded={embedded}
+  return <ConversationSurface
     {...(manages ? { composerMenuActions: [{
       checked: editing,
       icon: <Pencil aria-hidden="true" />,
@@ -408,8 +427,11 @@ function SidekickDocumentTitle({ name }: { name: string | undefined }): null {
   return null;
 }
 
-/** Keep a panel's run selection independent of the Canvas URL. */
+/**
+ * A Sidekick opened from a Canvas, in the Canvas's right panel: its details
+ * alone. Its conversation, its wizard and its runs are not reachable from
+ * here, and neither menu starts a run or lists them.
+ */
 export function SidekickPanel({ id, controls }: { id: string; controls: ConversationPanelControls }): React.JSX.Element {
-  const [runId, openRun] = useState<string | null>(null);
-  return <SidekickPanelContext value={{ runId, openRun }}><AutomationDetailScreen id={id} panel={controls} /></SidekickPanelContext>;
+  return <AutomationDetailScreen id={id} panel={controls} />;
 }

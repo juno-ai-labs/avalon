@@ -295,6 +295,17 @@ describe('AutomationHeader', () => {
     expect(handlers.onRunNow).toHaveBeenCalledOnce();
   });
 
+  it('offers a host that shows the details alone no Run now and no Run history, and keeps the rest of the menu', async () => {
+    const handlers = renderHeader({ ...draft, lifecycle: 'active', runnable: true }, { withoutRuns: true });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual(['Copy link', 'Archive Sidekick']);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy link' }));
+    expect(handlers.onCopyLink).toHaveBeenCalledOnce();
+    expect(handlers.onRunNow).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull();
+  });
+
   it('archives only after confirmation, explains retention, and keeps a failure in the dialog', async () => {
     const handlers = renderHeader({
       ...draft,

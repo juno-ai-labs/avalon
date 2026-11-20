@@ -7273,6 +7273,13 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
   &[data-view=conversation] .sidekick-profile, &[data-view=details] .sidekick-conversation { visibility: hidden; pointer-events: none; }
   .sidekick-profile { border-left: 0; }
 }
+/* The details alone, with no conversation beside them (a Canvas's panel):
+   one column under the header at any width. */
+.sidekick-detail[data-alone] {
+  grid-template-columns: minmax(0, 1fr);
+  .sidekick-detail-header .title-pill-header { margin-right: 0; }
+  .sidekick-profile { border-left: 0; grid-column: 1; }
+}
 
 .sidekick-section-list { list-style: none; margin: 0; padding: 0; }
 .sidekick-recommendation { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 50%; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 24px; height: 24px; justify-content: center; margin-right: 8px; }
@@ -8836,7 +8843,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .annotation-chip > [role='alert'] button { margin:6px 8px 0 0; color:inherit; background:transparent; border:1px solid var(--av-sys-color-border-default); border-radius:6px; padding:4px 8px; cursor:pointer; }
 .annotation-chips > [role='status'] { color:var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); }
 
-/* A hosted Sidekick uses the whole right slot; its previews cover that same slot. */
+/* A hosted Sidekick's details use the whole right slot. */
 .conversation-host-panel > .rail-surface-content { grid-template-rows: minmax(0, 1fr); }
 .conversation-host-panel .rail-resizer { display: none; }
 
