@@ -1285,8 +1285,8 @@ example:
 5. reject an object whose schema is ahead of the Worker, warn and continue when
    an applied version's implementation hash changed, and let concrete SQL or
    integrity failures reject construction;
-6. run `PRAGMA foreign_key_check` where enforcement was off for the group
-   (see [Durable Object SQLite](durable-object-sqlite.md#schema-and-migrations)),
+6. run `PRAGMA foreign_key_check` after a group that turned enforcement or
+   deferral off (see [Durable Object SQLite](durable-object-sqlite.md#schema-and-migrations)),
    then `PRAGMA optimize` after changes.
 
 Migration definitions may not include their own `BEGIN`, `COMMIT`, or

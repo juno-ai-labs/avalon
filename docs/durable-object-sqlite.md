@@ -98,15 +98,11 @@ invalid statement cannot leave a half-applied migration with a successful
 receipt. New table rebuilds remain valid with foreign-key enforcement enabled:
 they create replacements, copy children and parents, remove the old graph
 child-first, and then rename the replacements parent-first. The runner executes
-`foreign_key_check` before commit only where it can find something: after a
-group in the legacy `disabled_during_rebuild` mode, after a group whose own
-statements set `PRAGMA foreign_keys` or `PRAGMA defer_foreign_keys` (turning
-deferral off discards the violations SQLite was holding for commit, so an orphan
-written while deferred would otherwise commit), and, as a safety net, if `PRAGMA
-foreign_keys` reads off. In any other group enforcement has already refused an
-immediate write that would orphan a row, and the check reads every row of every table
-with a foreign key — the cost of an object's whole size, paid on every deploy
-that ships it a migration. The released v32 transcript migration retains
+`foreign_key_check` before commit only after a group in the legacy
+`disabled_during_rebuild` mode or a group whose own statements set `PRAGMA
+foreign_keys` or `PRAGMA defer_foreign_keys`, and refuses a migration that
+declares a foreign key `DEFERRABLE INITIALLY DEFERRED`. Any other group relies
+on enforcement refusing an orphaning write immediately. The released v32 transcript migration retains
 its explicit legacy execution marker solely to preserve its shipped fingerprint;
 new migrations may not copy that mode. Earlier complete groups remain
 receipted if a later group fails, and the next construction resumes at the
@@ -389,9 +385,10 @@ executor calls the object back.
 
 **What changed:** The shared migration runner skips `PRAGMA foreign_key_check`
 after a group that ran with foreign-key enforcement on, and keeps it for the
-legacy `disabled_during_rebuild` mode, for any group whose statements set a
-foreign-key pragma (`foreign_keys` or `defer_foreign_keys`), and for any group
-where `PRAGMA foreign_keys` reads off.
+legacy `disabled_during_rebuild` mode and for any group whose statements set a
+foreign-key pragma (`foreign_keys` or `defer_foreign_keys`). A migration that
+declares a foreign key `DEFERRABLE INITIALLY DEFERRED` is refused, and a
+violation now names its table and parent.
 
 **Why:** On 2026-11-19 the largest WorkspaceDO took a deploy carrying the
 `workspace_connector_events` item backfill. The group read 276,802 rows for
@@ -408,10 +405,14 @@ toggle it.
 
 **Considered and rejected:** Bounding or splitting the backfill. It has shipped
 and is hashed into every object's receipt, and the next backfill would meet the
-same scan. Dropping the check entirely: the released rebuild migrations that ask
-for enforcement off rely on it to prove nothing was orphaned, and the doc above
-records that the pragma's state at an event's first statement is not what the
-group runs under.
+same scan. Dropping the check entirely: by the 2026-09-03 finding the legacy
+mode's groups ran with enforcement on too, so the check is kept for them as a
+cheap guard over released history, and for deferral because it is the only
+guard there. Reading `PRAGMA foreign_keys` as a further trigger: after the
+group's own SQL it always reads on, so it was dead code. A foreign key deferred
+to commit is refused rather than checked, because its violation surfaces only at
+the object event's own commit, after the receipt, as an unnamed reset on every
+wake.
 
 **Consequences:** A migration that needs orphans checked must run with
 enforcement on, which is what new migrations already must do. A backfill large

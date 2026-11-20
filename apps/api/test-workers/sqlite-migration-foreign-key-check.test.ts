@@ -41,7 +41,7 @@ function recording(storage: DurableObjectStorage): { storage: DurableObjectStora
   return { storage: wrapped, statements };
 }
 
-it('does not scan the whole database for orphans after a group SQLite enforced, because SQLite refused them', async () => {
+it('does not scan the whole database for orphans after an ordinary group, which SQLite enforced immediately', async () => {
   const stub = env.MIGRATION_PROBE_DO!.getByName('foreign-key-check-enforced');
   await stub.ping();
 
@@ -60,7 +60,7 @@ it('does not scan the whole database for orphans after a group SQLite enforced, 
       workerVersionId: 'v2',
       now: 2,
     });
-    expect(statements).not.toContain('PRAGMA foreign_key_check');
+    expect(statements.filter((statement) => /foreign_key_check/iu.test(statement))).toEqual([]);
     expect(state.storage.sql.exec(`SELECT MAX(version) AS version FROM _sql_schema_migrations`).one()).toEqual({ version: 2 });
   });
 
@@ -96,7 +96,7 @@ it('still checks for orphans after a group that asked for enforcement off', asyn
       workerVersionId: 'v1',
       now: 1,
     });
-    expect(statements).toContain('PRAGMA foreign_key_check');
+    expect(statements.filter((statement) => /foreign_key_check/iu.test(statement))).toHaveLength(1);
   });
 });
 
@@ -128,8 +128,31 @@ it('rolls back a group that hides an orphan behind deferred foreign keys, and le
       component: 'probe',
       workerVersionId: 'v2',
       now: 2,
-    })).toThrow('probe_schema_foreign_key_violation');
+    })).toThrow('probe_schema_foreign_key_violation:child:parent');
     expect(state.storage.sql.exec(`SELECT MAX(version) AS version FROM _sql_schema_migrations`).one()).toEqual({ version: 1 });
     expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM child`).one()).toEqual({ count: 0 });
+  });
+});
+
+it('refuses a migration that declares a foreign key deferred to commit, before running anything', async () => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName('foreign-key-check-deferrable');
+  await stub.ping();
+
+  await runInDurableObject(stub, (_instance, state) => {
+    expect(() => applyDurableObjectSqliteMigrations({
+      storage: state.storage,
+      migrations: [
+        PARENT_AND_CHILD,
+        {
+          version: 2,
+          description: 'a deferred foreign key',
+          statements: [`CREATE TABLE late (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)`],
+        },
+      ],
+      component: 'probe',
+      workerVersionId: 'v1',
+      now: 1,
+    })).toThrow('probe_schema_deferred_foreign_key_forbidden:2');
+    expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM sqlite_schema WHERE name IN ('parent', 'late')`).one()).toEqual({ count: 0 });
   });
 });

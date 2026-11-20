@@ -89,6 +89,12 @@ function validateMigrations(
       if (/^\s*(?:BEGIN|COMMIT|ROLLBACK)\b/iu.test(statement)) {
         throw new Error(`${component}_schema_transaction_statement_forbidden:${migration.version}`);
       }
+      // A foreign key deferred to commit is checked at the object event's own
+      // commit, after the receipt, where it fails as an unnamed reset on every
+      // wake rather than as this runner's named rollback.
+      if (/\bDEFERRABLE\s+INITIALLY\s+DEFERRED\b/iu.test(statement)) {
+        throw new Error(`${component}_schema_deferred_foreign_key_forbidden:${migration.version}`);
+      }
     }
     prior = migration.version;
   }
@@ -243,15 +249,15 @@ export function applyDurableObjectSqliteMigrations(
 
         if (groupIndex === groups.length - 1) options.afterMigrations?.(sql, appliedVersions);
         // `foreign_key_check` reads every row of every table with a foreign key,
-        // so it runs only where enforcement might not have caught an orphan: the
-        // legacy mode that asks for enforcement off, and a group that sets a
-        // foreign-key pragma itself — turning `defer_foreign_keys` off discards
-        // the violations SQLite was holding for commit. Reading enforcement as
-        // off is a safety net: after the group's own SQL it should not happen.
-        if (group.foreignKeysDisabled || group.migrations.some(setsForeignKeyPragma) || !foreignKeysEnforced(sql)) {
-          const violation = sql.exec<Record<string, SqlStorageValue>>(`PRAGMA foreign_key_check`)
-            .toArray()[0];
-          if (violation) throw new Error(`${options.component}_schema_foreign_key_violation`);
+        // so it runs only where enforcement might not have caught an orphan
+        // (`docs/durable-object-sqlite.md`, Schema and migrations).
+        if (group.foreignKeysDisabled || group.migrations.some(setsForeignKeyPragma)) {
+          const violation = sql.exec<{ table: string; parent: string } & Record<string, SqlStorageValue>>(
+            `PRAGMA foreign_key_check`,
+          ).toArray()[0];
+          if (violation) {
+            throw new Error(`${options.component}_schema_foreign_key_violation:${violation.table}:${violation.parent}`);
+          }
         }
         sql.exec(`PRAGMA optimize`);
       });
@@ -265,9 +271,4 @@ export function applyDurableObjectSqliteMigrations(
 
 function setsForeignKeyPragma(migration: DurableObjectSqliteMigration): boolean {
   return migration.statements.some((statement) => /\bPRAGMA\s+(?:defer_)?foreign_keys\b/iu.test(statement));
-}
-
-function foreignKeysEnforced(sql: SqlStorage): boolean {
-  return sql.exec<{ foreign_keys: number } & Record<string, SqlStorageValue>>(`PRAGMA foreign_keys`)
-    .one().foreign_keys === 1;
 }
