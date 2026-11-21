@@ -511,7 +511,6 @@ describe("inference lakehouse", () => {
   it("backs off a pointer whose archived payload cannot be read", async () => {
     const { env } = fixture();
     const pointer = await stageInferenceLakehouseRecord(env, record());
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     env.PAYLOADS = createCloudflareTestBinding<R2Bucket>({
       async head() { return null; },
       async get() {

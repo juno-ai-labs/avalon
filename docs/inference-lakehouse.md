@@ -350,7 +350,11 @@ never a Worker variable or an inference record.
 Start with `inference_lakehouse_stage_failed` for producer-side gaps and
 `inference_lakehouse_delivery_failed` for consumer retries. A non-empty
 `avalon-global-inference-lakehouse-dead-letter` queue is the definitive
-delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
+delivery alarm. To redrive it, send each dead-lettered body back to
+`avalon-global-inference-lakehouse` unchanged. Replay is safe: the consumer
+re-reads and re-verifies the archived object before it sends a row. Do it
+before the dead-letter queue's retention expires; after that, the Global R2
+archive is the only source. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
 ## Changelog
@@ -361,13 +365,15 @@ source, event type, and whether the row used the oversized fallback.
 back off with `queueRetryDelaySeconds` instead of redelivering at once.
 
 **Why:** A ~3-minute R2 blip on 2026-11-20 dead-lettered 34 pointers, and this
-queue has no outbox to redrive them. The activity consumer moved to the same
-backoff in #1666; #1667 proposes it for usage.
+queue has no outbox to redrive them. The activity consumer already backs off
+(#1657); #1667 proposes the same for usage.
 
 **Rejected:** A Wrangler `retry_delay`, which does not grow with the attempt.
 
-**Consequences:** Three retries still cover only about 35 s; covering longer
-outages needs `max_retries`, which is the team's number to set.
+**Consequences:** This change alone would not have saved those 34 pointers.
+N retries span 5·(2^N−1) s: 35 s at the default 3, 155 s at 5, 315 s at 6.
+The 2026-11-20 outage lasted about 175 s, so covering one like it needs
+`max_retries` of 6. That number is the team's to set.
 
 ### 2026-11-15 — A new lakehouse provisions itself in the pinned account
 
