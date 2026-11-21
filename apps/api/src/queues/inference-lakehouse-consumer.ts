@@ -145,9 +145,6 @@ export async function consumeInferenceLakehouseQueue(
         error_message: error instanceof Error ? error.message : String(error),
         queue_attempts: message.attempts,
       });
-      // Backed off: an immediate redelivery spends every retry inside a
-      // storage blip lasting seconds, and this queue has no outbox to redrive
-      // what it dead-letters.
       message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
     }
   }));
