@@ -325,7 +325,7 @@ describe("release retention", () => {
     expect(active.objects.has(lock)).toBe(true);
   });
 
-  it("still refuses deletion when a release lands while the lock cycles", async () => {
+  it("still refuses deletion when a pointer moves while the lock cycles", async () => {
     const lock = `${prefix}release-publish.lock`;
     const objects = inventory(["1.13.0", "1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0"]);
     objects.push(stored(lock, new TextEncoder().encode("released:first-publisher")));
@@ -333,7 +333,7 @@ describe("release retention", () => {
     active.listHook = (call, bucket) => {
       if (call === 2) {
         bucket.objects.set(lock, stored(lock, new TextEncoder().encode("active:next-publisher")));
-        bucket.objects.set(`${prefix}faster-mac.yml`, stored(`${prefix}faster-mac.yml`, new TextEncoder().encode("version: 1.19.0\n")));
+        bucket.objects.set(`${prefix}latest-mac.yml`, stored(`${prefix}latest-mac.yml`, new TextEncoder().encode("version: 1.19.0\n")));
       }
     };
 

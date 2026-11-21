@@ -277,14 +277,8 @@ function comparableObject(object: R2Object): unknown {
   });
 }
 
-/**
- * What the pre-delete re-list must find unchanged. The release lock is compared
- * by presence only: the hourly Stable promoter takes and releases it on every
- * run, promotion or not, so its ETag and metadata change hourly without any
- * release or pointer changing. Anything a publisher does while it holds the
- * lock — a new release's keys or a moved pointer — still changes this
- * fingerprint. Why: docs/runbook.md § Desktop release retention.
- */
+// The lock is compared by presence only: the hourly Stable promoter rewrites its
+// ETag/metadata every run. Why: docs/runbook.md § Desktop release retention.
 function inventoryFingerprint(objects: R2Object[]): string {
   return JSON.stringify(
     objects.map((object) =>
