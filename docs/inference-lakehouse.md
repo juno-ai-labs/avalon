@@ -255,7 +255,8 @@ from `config/usage-lakehouse.json`. See [usage metering](usage-metering.md).
 - The consumer uses Cloudflare's defaults of 10 messages, a 5-second batch
   window, and three retries. There is no user-visible dependency that justifies
   a lower latency or a guessed custom retry number; the Global DLQ is the
-  failure signal.
+  failure signal. A failed delivery retries with the shared queue backoff,
+  `queueRetryDelaySeconds`, rather than being redelivered at once.
 - The Global sink rolls files every 300 seconds. Data Catalog requires at least
   60 seconds to avoid compaction conflicts, and faster analytical visibility is
   not on the inference request path.
@@ -349,10 +350,30 @@ never a Worker variable or an inference record.
 Start with `inference_lakehouse_stage_failed` for producer-side gaps and
 `inference_lakehouse_delivery_failed` for consumer retries. A non-empty
 `avalon-global-inference-lakehouse-dead-letter` queue is the definitive
-delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
+delivery alarm. To redrive it, send each dead-lettered body back to
+`avalon-global-inference-lakehouse` unchanged. Replay is safe: the consumer
+re-reads and re-verifies the archived object before it sends a row. Do it
+before the dead-letter queue's retention expires; after that, the Global R2
+archive is the only source. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
 ## Changelog
+
+### 2026-11-21 — A failed delivery backs off instead of redelivering at once
+
+**What changed:** Failed deliveries, here and in the analytics events consumer,
+back off with `queueRetryDelaySeconds` instead of redelivering at once.
+
+**Why:** A ~3-minute R2 blip on 2026-11-20 dead-lettered 34 pointers, and this
+queue has no outbox to redrive them. The activity consumer already backs off
+(#1657); #1667 proposes the same for usage.
+
+**Rejected:** A Wrangler `retry_delay`, which does not grow with the attempt.
+
+**Consequences:** This change alone would not have saved those 34 pointers.
+N retries span 5·(2^N−1) s: 35 s at the default 3, 155 s at 5, 315 s at 6.
+The 2026-11-20 outage lasted about 175 s, so covering one like it needs
+`max_retries` of 6. That number is the team's to set.
 
 ### 2026-11-15 — A new lakehouse provisions itself in the pinned account
 

@@ -7,6 +7,7 @@ import {
   InferenceLakehouseRecordSchema,
   type InferenceLakehouseRecord,
 } from "../services/inference-lakehouse";
+import { queueRetryDelaySeconds } from "./retry-backoff";
 
 export const INFERENCE_LAKEHOUSE_QUEUE_NAMES = new Set(configuredRegions.map((region) => `avalon-${region}-inference-lakehouse`));
 
@@ -142,8 +143,9 @@ export async function consumeInferenceLakehouseQueue(
         object_key: parsed.data.objectKey,
         error_name: error instanceof Error ? error.name : "UnknownError",
         error_message: error instanceof Error ? error.message : String(error),
+        queue_attempts: message.attempts,
       });
-      message.retry();
+      message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
     }
   }));
 }

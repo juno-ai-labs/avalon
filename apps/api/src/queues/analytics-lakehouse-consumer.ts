@@ -4,6 +4,7 @@ import {
   AnalyticsLakehousePointerSchema,
   deliverAnalyticsLakehousePointer,
 } from "../services/analytics-lakehouse";
+import { queueRetryDelaySeconds } from "./retry-backoff";
 
 export async function consumeAnalyticsLakehouseQueue(
   batch: MessageBatch<unknown>,
@@ -50,8 +51,9 @@ export async function consumeAnalyticsLakehouseQueue(
         event_id: parsed.data.eventId,
         error_name: error instanceof Error ? error.name : "UnknownError",
         error_message: error instanceof Error ? error.message : String(error),
+        queue_attempts: message.attempts,
       });
-      message.retry();
+      message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
     }
   }));
 }
