@@ -304,6 +304,43 @@ describe("release retention", () => {
       .rejects.toThrow("inventory changed during retention");
     expect(active.deleteCalls).toEqual([]);
   });
+
+  it("archives when the Stable promoter cycles the release lock mid-run", async () => {
+    const lock = `${prefix}release-publish.lock`;
+    const objects = inventory(["1.13.0", "1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0"]);
+    objects.push(stored(lock, new TextEncoder().encode("released:first-promoter")));
+    const active = new MockBucket(objects);
+    active.listHook = (call, bucket) => {
+      if (call === 2) {
+        bucket.objects.set(lock, {
+          ...stored(lock, new TextEncoder().encode("released:next-promoter")),
+          customMetadata: { owner: "next-promoter", state: "released" },
+        });
+      }
+    };
+
+    const report = await runRetention(bindings(active), { dryRun: false, keepCount: 5 });
+
+    expect(report.deletedObjectCount).toBe(5);
+    expect(active.objects.has(lock)).toBe(true);
+  });
+
+  it("still refuses deletion when a pointer moves while the lock cycles", async () => {
+    const lock = `${prefix}release-publish.lock`;
+    const objects = inventory(["1.13.0", "1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0"]);
+    objects.push(stored(lock, new TextEncoder().encode("released:first-publisher")));
+    const active = new MockBucket(objects);
+    active.listHook = (call, bucket) => {
+      if (call === 2) {
+        bucket.objects.set(lock, stored(lock, new TextEncoder().encode("active:next-publisher")));
+        bucket.objects.set(`${prefix}latest-mac.yml`, stored(`${prefix}latest-mac.yml`, new TextEncoder().encode("version: 1.19.0\n")));
+      }
+    };
+
+    await expect(runRetention(bindings(active), { dryRun: false, keepCount: 5 }))
+      .rejects.toThrow("inventory changed during retention");
+    expect(active.deleteCalls).toEqual([]);
+  });
 });
 
 describe("Pacific schedule gate", () => {

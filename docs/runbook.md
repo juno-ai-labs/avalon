@@ -586,7 +586,12 @@ Each admitted invocation performs this fail-closed transaction:
    if any key, metadata or ETag differs from the initial inventory minus the
    versions this run already archived, or if the release grouping or
    retained-version decision changed. This protects a release that races the
-   nightly job.
+   nightly job. `release-publish.lock` is compared by presence only: the
+   hourly Stable promoter (`promote-desktop-stable.yml`, at `:17`) takes and
+   releases it on every run whether or not Stable moves, so comparing its ETag
+   failed every run still going when the promoter fired. Anything a
+   publisher writes while it holds the lock (a release's keys or a moved
+   pointer) is still caught.
 5. Delete exactly that version's five keys, prove each is absent from the active
    bucket, and prove its verified archive copy remains present. Log
    `desktop_release_retention_version_archived` with the number of versions

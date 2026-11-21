@@ -277,10 +277,12 @@ function comparableObject(object: R2Object): unknown {
   });
 }
 
+// The lock is compared by presence only: the hourly Stable promoter rewrites its
+// ETag/metadata every run. Why: docs/runbook.md § Desktop release retention.
 function inventoryFingerprint(objects: R2Object[]): string {
   return JSON.stringify(
     objects.map((object) =>
-      normalize({
+      OPERATIONAL_OBJECTS.has(object.key) ? { key: object.key } : normalize({
         ...comparableObject(object) as Record<string, unknown>,
         storageClass: object.storageClass,
       }),
