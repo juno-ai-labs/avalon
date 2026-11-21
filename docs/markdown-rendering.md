@@ -341,7 +341,10 @@ Firecrawl failure its kind and status (`firecrawl_http_400`,
 `firecrawl_network`), never the provider's message. A 200 the schema refused
 names the field instead (`firecrawl_branding_invalid:<path>:<issue>`), and the
 branding call validates only the metadata it reads — `url`, `sourceURL` and
-`statusCode` — so a page's own tags cannot refuse its favicon. Each KV
+`statusCode` — so a page's own tags cannot refuse its favicon. A host under
+`ARTIFACT_SERVING_DOMAIN` — one of Rally's own reactive sites — answers 404
+before any lookup (`isArtifactServingHost`): those sites admit only signed-in
+viewers, so Firecrawl cannot reach one, and the reader shows its fallback mark. Each KV
 entry expires after 30 days; the next read fetches and overwrites it, so no stale
 generation is retained.
 
@@ -1005,6 +1008,29 @@ renderer keeps its existing parsing and code behavior. Source/range mapping and
 restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-21 — A Rally reactive site asks Firecrawl for no favicon
+
+**What changed:** The favicon route answers 404 for a host under
+`ARTIFACT_SERVING_DOMAIN` without calling Firecrawl.
+
+**Why:** The field-naming code from 2026-11-17 showed the real cause of the
+repeated reactive-site 502s: Firecrawl answers HTTP 200 with `success: false`
+and no `data` (`firecrawl_branding_invalid:success:invalid_value:data:invalid_type`),
+not a metadata field we refused. A reactive site admits only signed-in viewers,
+so Firecrawl's anonymous scrape can never reach one. That failure was never
+cached, so every view of a link to a Rally site paid for a scrape that could
+not succeed and logged an error-level 502.
+
+**Considered and rejected:** Negative-caching the failure. That still pays for
+one doomed scrape per site, and needs a TTL the team has not chosen. Also
+rejected for now: serving the Rally mark for these hosts. The reader already
+shows its fallback on a 404, and that is what these links showed before, since
+they 502'd.
+
+**What a future change has to respect:** If reactive sites ever become public
+to anonymous visitors, or Rally serves a favicon for them, this check is the
+place to change.
 
 ### 2026-11-17 — The streaming caret sits after the last character
 

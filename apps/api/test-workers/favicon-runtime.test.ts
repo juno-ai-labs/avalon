@@ -48,6 +48,21 @@ describe("favicon route on workerd", () => {
     expect(await env.FAVICON_CACHE.get(`favicon:${EXACT_HOST}`)).toBeNull();
   });
 
+  it("answers a Rally reactive-site host with no icon, without asking Firecrawl or caching", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ success: false, error: "unreachable" }));
+    vi.stubGlobal("fetch", fetcher);
+    const host = "sample-site-g.rallyusercontent.test";
+    const app = new Hono<HonoAppEnv>().onError(errorHandler).route("/favicons", faviconRoutes);
+    const ctx = createExecutionContext();
+    const response = await app.request(`https://api.rally.test/favicons/${host}`, undefined,
+      { ...env, FIRECRAWL_API_KEY: "test-firecrawl-key", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.test" }, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(404);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(await env.FAVICON_CACHE.get(`favicon:${host}`)).toBeNull();
+  });
+
   it("returns the exact icon while waitUntil persists the fallback in real KV", async () => {
     let releasePrimaryBranding!: () => void;
     const primaryBranding = new Promise<void>((resolve) => { releasePrimaryBranding = resolve; });

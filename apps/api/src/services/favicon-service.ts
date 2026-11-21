@@ -42,6 +42,18 @@ function publicHostname(hostname: string): { hostname: string; domain: string } 
   return { hostname: normalized, domain: parsed.domain };
 }
 
+/**
+ * Whether a host is one of Rally's own reactive sites (`ARTIFACT_SERVING_DOMAIN`).
+ * Those admit only signed-in viewers, so Firecrawl's anonymous scrape cannot
+ * reach one: it answers `success: false`, and asking costs a paid scrape that
+ * is certain to fail.
+ */
+export function isArtifactServingHost(hostname: string, servingDomain: string): boolean {
+  const host = hostname.toLowerCase();
+  const domain = servingDomain.toLowerCase();
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
 /** The exact host first, then its registrable domain when those differ. */
 export function faviconHostChain(hostname: string): string[] | null {
   const parsed = publicHostname(hostname);
