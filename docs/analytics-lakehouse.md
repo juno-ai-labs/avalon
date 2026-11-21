@@ -93,7 +93,8 @@ through Cloudflare's authenticated HTTP APIs as documented in the
   envelope the live registry no longer accepts is marked `rejected` and
   acknowledged because retry cannot repair either one.
 
-- A D1, Queue, or Pipeline failure is retried and can appear in
+- A D1, Queue, or Pipeline failure is retried with the shared queue backoff
+  (`queueRetryDelaySeconds`) and can appear in
   `avalon-global-analytics-events-lakehouse-dead-letter`; the scheduled outbox
   pass remains able to redrive its canonical row.
 

@@ -255,7 +255,7 @@ describe("analytics events lakehouse", () => {
       ackAll: vi.fn(),
       retryAll: vi.fn(),
     }, env);
-    expect(retry).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 5 });
     expect(database.prepare(
       "SELECT analytics_lakehouse_state FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(eventId)).toEqual({ analytics_lakehouse_state: "queued" });

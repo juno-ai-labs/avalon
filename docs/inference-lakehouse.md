@@ -255,7 +255,9 @@ from `config/usage-lakehouse.json`. See [usage metering](usage-metering.md).
 - The consumer uses Cloudflare's defaults of 10 messages, a 5-second batch
   window, and three retries. There is no user-visible dependency that justifies
   a lower latency or a guessed custom retry number; the Global DLQ is the
-  failure signal.
+  failure signal. A failed delivery retries with the shared queue backoff
+  (`queueRetryDelaySeconds`: 5, 10, then 20 s), so the three retries span about
+  35 s rather than the instant an immediate redelivery takes.
 - The Global sink rolls files every 300 seconds. Data Catalog requires at least
   60 seconds to avoid compaction conflicts, and faster analytical visibility is
   not on the inference request path.
@@ -353,6 +355,29 @@ delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
 ## Changelog
+
+### 2026-11-21 — A failed delivery backs off instead of redelivering at once
+
+**What changed:** The consumer retries a failed delivery with
+`queueRetryDelaySeconds(message.attempts)` and logs `queue_attempts`, instead of
+a bare `message.retry()`. The analytics events consumer got the same change.
+
+**Why:** On 2026-11-20 between 02:00 and 02:03 UTC, R2 reads failed with
+`CF_SB_CACHEW_GET_METAL_HTTP_ERROR` and `…_FETCH_TIMEOUT` (140 failed
+deliveries). Each message was redelivered at once, spent its three retries in
+about nine seconds, and 34 pointers reached
+`avalon-global-inference-lakehouse-dead-letter`. Unlike analytics events, this
+queue has no outbox to redrive them, so they stay out of the lakehouse until
+someone replays the DLQ. The usage and activity consumers had the same failure
+and moved to the shared backoff (#1667, #1666).
+
+**Rejected:** A Wrangler `retry_delay`, because a fixed delay does not grow with
+the attempt and the other consumers already back off in code.
+
+**Consequences:** Backoff covers an outage of about 35 s with the default three
+retries. The 2026-11-20 outage lasted about three minutes, so it would still
+have dead-lettered the messages from its first half. Covering that means raising
+`max_retries`, which is the team's number to set, not this change's.
 
 ### 2026-11-15 — A new lakehouse provisions itself in the pinned account
 
