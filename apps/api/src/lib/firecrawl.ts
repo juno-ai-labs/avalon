@@ -67,9 +67,14 @@ const brandingResponseSchema = z.object({
 
 const errorEnvelopeSchema = z.object({
   success: z.literal(false).optional(),
+  code: z.string().optional(),
   error: z.string().optional(),
   details: z.unknown().optional(),
 });
+
+// Firecrawl can answer a scrape it could not perform with HTTP 200 and this
+// envelope. It is the provider's own verdict, not a body our schema refused.
+const unsuccessfulEnvelopeSchema = errorEnvelopeSchema.extend({ success: z.literal(false) });
 
 export interface FirecrawlSearchInput {
   query: string;
@@ -128,7 +133,8 @@ export interface FirecrawlClientOptions {
   retry?: FirecrawlRetryOptions;
 }
 
-export type FirecrawlErrorKind = "http" | "parse" | "network";
+/** `unsuccessful`: a 2xx whose body says `success: false`. */
+export type FirecrawlErrorKind = "http" | "parse" | "network" | "unsuccessful";
 
 export class FirecrawlError extends Error {
   readonly retryable: boolean;
@@ -141,6 +147,8 @@ export class FirecrawlError extends Error {
     readonly details?: unknown,
     readonly retryAfterMs?: number,
     options?: ErrorOptions,
+    /** Firecrawl's own error code, such as `SCRAPE_TIMEOUT`, when it sent one. */
+    readonly providerCode?: string,
   ) {
     super(message, options);
     this.name = "FirecrawlError";
@@ -291,6 +299,19 @@ export class FirecrawlClient {
       }
 
       const raw = parseJson(responseText, response.status);
+      const unsuccessful = unsuccessfulEnvelopeSchema.safeParse(raw);
+      if (unsuccessful.success) {
+        throw new FirecrawlError(
+          "unsuccessful",
+          response.status,
+          `Firecrawl reported the request unsuccessful (${response.status})`,
+          unsuccessful.data.error,
+          unsuccessful.data.details,
+          undefined,
+          undefined,
+          unsuccessful.data.code,
+        );
+      }
       const parsed = schema.safeParse(raw);
       if (!parsed.success) {
         throw new FirecrawlError(

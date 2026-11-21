@@ -5,7 +5,7 @@ import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { FirecrawlClient } from "../lib/firecrawl";
 import { zValidator } from "../middleware/validation";
-import { faviconFailureReason, faviconHostChain, isArtifactServingHost, resolveFavicon } from "../services/favicon-service";
+import { faviconFailureReason, faviconHostChain, resolveFavicon } from "../services/favicon-service";
 
 export const faviconRoutes = new Hono<HonoAppEnv>();
 const FaviconParamsSchema = z.strictObject({
@@ -14,11 +14,6 @@ const FaviconParamsSchema = z.strictObject({
 
 faviconRoutes.get("/:hostname", zValidator("param", FaviconParamsSchema), async (c) => {
   const { hostname } = c.req.valid("param");
-  // A Rally reactive site has no favicon Firecrawl can discover; the reader's
-  // fallback mark is the answer, without a scrape or a 502.
-  if (isArtifactServingHost(hostname, c.env.ARTIFACT_SERVING_DOMAIN)) {
-    return c.body(null, 404, { "Cache-Control": "private, no-cache" });
-  }
   const apiKey = c.env.FIRECRAWL_API_KEY?.trim();
   if (!apiKey) throw new ApiError(503, "favicon_unavailable", "Favicon discovery is not configured");
   const favicon = await resolveFavicon(

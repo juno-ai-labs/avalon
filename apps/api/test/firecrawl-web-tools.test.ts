@@ -203,6 +203,26 @@ describe("Firecrawl API client", () => {
       .toBe("firecrawl_branding_invalid:data.branding.images.favicon:invalid_type");
   });
 
+  it("names a 200 Firecrawl marked unsuccessful by its code, not as a schema refusal", async () => {
+    const client = (body: unknown) => new FirecrawlClient({
+      apiKey: "fc-test-key",
+      fetch: mockFetchResponse(jsonResponse(body)) as typeof globalThis.fetch,
+      retry: { maxAttempts: 1 },
+    });
+
+    const coded = await client({ success: false, code: "SCRAPE_ALL_ENGINES_FAILED", error: "All engines failed for https://docs.example.com/" })
+      .scrapeBranding("https://docs.example.com/").catch((error: unknown) => error);
+    expect(faviconFailureReason(coded)).toBe("firecrawl_unsuccessful_200:SCRAPE_ALL_ENGINES_FAILED");
+
+    const uncoded = await client({ success: false, error: "Request failed" })
+      .scrapeBranding("https://docs.example.com/").catch((error: unknown) => error);
+    expect(faviconFailureReason(uncoded)).toBe("firecrawl_unsuccessful_200");
+
+    const prose = await client({ success: false, code: "see https://docs.example.com/", error: "x" })
+      .scrapeBranding("https://docs.example.com/").catch((error: unknown) => error);
+    expect(faviconFailureReason(prose)).toBe("firecrawl_unsuccessful_200");
+  });
+
   it("retries transient responses, including a non-JSON 5xx, within Retry-After", async () => {
     const sleep = vi.fn(async () => undefined);
     const fetcher = mockFetchResponse(jsonResponse({ success: true, data: { web: [] } }))

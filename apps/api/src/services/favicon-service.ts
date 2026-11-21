@@ -16,6 +16,7 @@ export const FAVICON_CANDIDATE_TIMEOUT_MS = 25_000;
 // therefore not a usable result for this service.
 const KV_MAX_VALUE_BYTES = 25 * 1024 * 1024;
 const textDecoder = new TextDecoder();
+const PROVIDER_ENUM = /^[A-Z][A-Z0-9_]{0,63}$/u;
 // A Symbol, not an Error: an Error at module scope captures a stack during
 // Worker startup (docs/api-worker-deployment.md).
 const oversizedImageBody = Symbol("favicon_image_body_too_large");
@@ -40,18 +41,6 @@ function publicHostname(hostname: string): { hostname: string; domain: string } 
   const parsed = parseDomain(normalized, { allowPrivateDomains: false });
   if (parsed.isIp || !parsed.domain || parsed.publicSuffix === null) return null;
   return { hostname: normalized, domain: parsed.domain };
-}
-
-/**
- * Whether a host is one of Rally's own reactive sites (`ARTIFACT_SERVING_DOMAIN`).
- * Those admit only signed-in viewers, so Firecrawl's anonymous scrape cannot
- * reach one: it answers `success: false`, and asking costs a paid scrape that
- * is certain to fail.
- */
-export function isArtifactServingHost(hostname: string, servingDomain: string): boolean {
-  const host = hostname.toLowerCase();
-  const domain = servingDomain.toLowerCase();
-  return host === domain || host.endsWith(`.${domain}`);
 }
 
 /** The exact host first, then its registrable domain when those differ. */
@@ -100,7 +89,8 @@ function transientFailure(hostname: string, phase: "branding" | "image", cause?:
  * Why a favicon could not be resolved, as the `favicon_unavailable:<reason>`
  * code a caller and the log both read, or `null` for a failure this module did
  * not anticipate: a fetch that did not complete names its phase, a response
- * the schema refused its path and issue (`firecrawl_branding_invalid:…`), and
+ * the schema refused its path and issue (`firecrawl_branding_invalid:…`), a
+ * 2xx Firecrawl itself marked `success: false` its code (`firecrawl_unsuccessful_200:…`), and
  * any other Firecrawl failure its kind and HTTP status (`firecrawl_http_400`). None
  * carries the provider's message, which may quote the request.
  */
@@ -108,6 +98,13 @@ export function faviconFailureReason(error: unknown): string | null {
   if (error instanceof FaviconFetchError) return `${error.phase}_fetch_failed`;
   if (!(error instanceof FirecrawlError)) return null;
   if (error.kind === "network") return "firecrawl_network";
+  // Firecrawl's own verdict, named by its code when it sent one. Only an
+  // upper-snake enum such as `SCRAPE_TIMEOUT` crosses: that shape cannot carry
+  // a URL or the provider's prose, which may quote the request.
+  if (error.kind === "unsuccessful") {
+    const base = `firecrawl_unsuccessful_${error.status}`;
+    return error.providerCode && PROVIDER_ENUM.test(error.providerCode) ? `${base}:${error.providerCode}` : base;
+  }
   // A schema refusal names the field it refused.
   return zodDiagnosticCode(error.cause, "firecrawl_branding") ?? `firecrawl_${error.kind}_${error.status}`;
 }
