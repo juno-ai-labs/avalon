@@ -17,6 +17,7 @@ import { useSelectedModel } from "./helpers/selected-model";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
+import { SHADOW_BAN_SCHEMA } from "./helpers/shadow-ban-schema";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 
 const ORIGINAL_ORG = asWorkspaceId("00000000-0000-7000-8000-00000000ee01");
@@ -111,6 +112,35 @@ beforeEach(async () => {
     )`),
 
   ]);
+});
+
+describe("engineering Organization creation for a shadow-banned account", () => {
+  const ban = (userId: string, at: string | null) =>
+    env.DB.prepare("UPDATE users SET shadow_banned_at = ? WHERE id = ?").bind(at, userId).run();
+  const written = async () => (await env.DB.batch([
+    env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces WHERE id = ?").bind(ORG),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id = ?").bind(ORG),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM regional_onboarding_operations"),
+  ])).map((result) => (result.results[0] as { n: number }).n);
+
+  beforeEach(async () => {
+    await env.DB.batch(SHADOW_BAN_SCHEMA.map((sql) => env.DB.prepare(sql)));
+  });
+
+  it("refuses a banned creator by name on real D1 and writes none of the Organization, and seats a banned member", async () => {
+    const bridge = new EngineeringInspectionBridge(executionContext(), creationEnv());
+    await ban(CREATOR, "2026-11-22T00:00:00.000Z");
+    // D1 reports the trigger's abort in its own error text; this is the text the refusal is matched on.
+    await expect(createOrg(bridge)).rejects.toThrow("engineering_operation_failed:account_shadow_banned");
+    expect(await written()).toEqual([0, 0, 0]);
+
+    // The ban stops an account creating, not being added.
+    await ban(CREATOR, null);
+    await ban(MEMBER, "2026-11-22T00:00:00.000Z");
+    await createOrg(bridge);
+    expect((await env.DB.prepare("SELECT user_id, role FROM workspace_members WHERE workspace_id = ? ORDER BY user_id").bind(ORG).all()).results)
+      .toEqual([{ user_id: CREATOR, role: "owner" }, { user_id: MEMBER, role: "member" }]);
+  });
 });
 
 describe("engineering Organization creation", () => {

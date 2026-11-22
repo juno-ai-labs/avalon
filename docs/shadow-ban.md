@@ -83,6 +83,10 @@ sign-in, end sessions, or take access away; removing a membership is
 `apps/api/test/shadow-ban.test.ts` runs the trigger and `setUserShadowBan` on
 the checked-in migrations. `apps/api/test/regional-workspace-create.test.ts`
 covers a banned creator in the app and through the operator's create.
+On workerd, `apps/api/test-workers/engineering-creation.test.ts` proves the
+refusal matches real D1's error text, and `test-workers/shadow-ban.test.ts`
+covers the operator bridge and its audit. Both apply the checked-in migration
+through `helpers/shadow-ban-schema.ts`.
 
 ## Changelog
 
