@@ -463,9 +463,7 @@ another Organization for them.
   uniqueness refusal (another regional user holds the verified email). Any
   other database failure keeps its own error.
 - Creating an Organization as a shadow-banned account answers 409
-  `request_unavailable` and writes nothing in the region.
-  It is a regional business refusal, so the Global reservation is released
-  like any other ([`shadow-ban.md`](shadow-ban.md)).
+  `request_unavailable` ([`shadow-ban.md`](shadow-ban.md)).
 
 ## Data model
 

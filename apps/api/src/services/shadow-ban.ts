@@ -2,7 +2,6 @@ import { nowIso } from "@rally/db";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { logWarn } from "../observability/logger";
 
 /**
  * Shadow bans (`docs/shadow-ban.md`). The guard itself is a trigger on
@@ -14,24 +13,17 @@ import { logWarn } from "../observability/logger";
 /** The message the trigger aborts with, which D1 carries in its error text. */
 const SHADOW_BAN_ABORT = "account_shadow_banned";
 
-export function isShadowBanAbort(error: unknown): boolean {
-  return error instanceof Error && error.message.includes(SHADOW_BAN_ABORT);
-}
-
 /**
  * What a failed Organization creation is thrown as. A trigger abort becomes a
  * refusal; anything else is returned as it came.
  *
- * A person is told only that the request could not be completed: the ban is a
- * shadow ban, so the account does not learn of it from the app. An operator
- * creating through the engineering MCP is told the reason, since they are the
- * one who can lift it. The log line is the only place a person's refusal is named.
+ * A person is told only that the request could not be completed, and the
+ * reason travels as the error's `diagnosticCode`, which the request log
+ * records and no response carries. An operator creating through the
+ * engineering MCP is told the reason, since they are the one who can lift it.
  */
-export function shadowBanRefusal(
-  env: Env, error: unknown, context: { userId: string; workspaceId: string }, audience: "person" | "operator" = "person",
-): unknown {
-  if (!isShadowBanAbort(error)) return error;
-  logWarn(env, "shadow_ban_refused", { action: "create_organization", user_id: context.userId, workspace_id: context.workspaceId });
+export function shadowBanRefusal(error: unknown, audience: "person" | "operator"): unknown {
+  if (!(error instanceof Error) || !error.message.includes(SHADOW_BAN_ABORT)) return error;
   return audience === "operator"
     ? new ApiError(409, SHADOW_BAN_ABORT,
       "The creator's account is shadow banned, so it cannot create an Organization. Lift the ban with set_user_shadow_ban first.")
