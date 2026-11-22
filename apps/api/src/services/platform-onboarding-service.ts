@@ -23,7 +23,7 @@ import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, diagnosticCodeField } from "../lib/api-error";
 import { workspaceSlug } from "../lib/workspace-slug";
 import { diagnosticErrorCode } from "../observability/logger";
 import { sha256 } from "../lib/crypto";
@@ -43,6 +43,7 @@ import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-s
 import { claimScopeInvitations } from "./scope-invitation-claims";
 import { membershipAttention } from "./workspace-attention-service";
 import { settledFailureCode } from "../lib/settled-failure-code";
+import { shadowBanRefusal } from "./shadow-ban";
 import {
   PreferenceProjectionSchema,
   applyRegionalPreferenceProjection,
@@ -136,6 +137,8 @@ const regionalRpcBusinessErrorSchema = z.object({
   status: regionalRpcBusinessStatusSchema,
   code: z.string().min(1).max(120),
   message: z.string().min(1).max(1_000),
+  /** The operator's reason behind a coarse `code`, for the log on the calling side. Never in a response body. */
+  diagnosticCode: z.string().min(1).max(120).optional(),
 });
 const regionalRpcEnvelopeSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), value: z.unknown() }),
@@ -172,7 +175,7 @@ export async function serializeRegionalRpcResult<T>(
     if (isRegionalBusinessApiError(error)) {
       return {
         ok: false,
-        error: { status: error.status, code: error.code, message: error.message },
+        error: { status: error.status, code: error.code, message: error.message, ...diagnosticCodeField(error) },
       };
     }
     throw error;
@@ -243,7 +246,7 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
     // ambiguous and keep the workspace reservation fail-closed.
     const envelope = regionalRpcEnvelopeSchema.parse(await pending);
     if (!envelope.ok) {
-      throw new ApiError(envelope.error.status, envelope.error.code, envelope.error.message);
+      throw new ApiError(envelope.error.status, envelope.error.code, envelope.error.message, undefined, envelope.error.diagnosticCode);
     }
     return valueSchema.parse(envelope.value);
   }
@@ -434,7 +437,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     }
 
     const session = await new AuthService(this.env).prepareWorkspaceSession(user.id, input.workspaceId);
-    const results = await this.createOwnedWorkspace(user.id, input, session.statements);
+    const results = await this.createOwnedWorkspace(user.id, input, session.statements, "person");
     return session.issue(results);
   }
 
@@ -493,7 +496,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     await this.createOwnedWorkspace(user.id, reference, members.map((id) => this.env.DB.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
        VALUES (?, ?, 'member', 'active', ?)`,
-    ).bind(input.workspaceId, id, nowIso())));
+    ).bind(input.workspaceId, id, nowIso())), "operator");
   }
 
   /**
@@ -507,11 +510,15 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * are asked for (`seedNewOrganization`). A new member is seated nowhere:
    * there is no General or Personal Channel (plan step C-2), and the client
    * lands on the Canvases home.
+   *
+   * A shadow-banned owner aborts the batch (`docs/shadow-ban.md`); `audience`
+   * says whether the person or an operator hears the refusal.
    */
   private async createOwnedWorkspace(
     userId: string,
     input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
     trailing: D1PreparedStatement[],
+    audience: "person" | "operator",
   ): Promise<D1Result[]> {
     const at = nowIso();
     const slug = workspaceSlug(input.name, input.workspaceId);
@@ -541,7 +548,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       ).bind(input.workspaceId, userId, at, input.workspaceId, this.env.AVALON_REGION),
       this.operationStatement(input, "create", null, at),
       ...trailing,
-    ]);
+    ]).catch((error: unknown) => { throw shadowBanRefusal(error, audience); });
     await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity);
     await this.seedNewOrganization(input.workspaceId, userId);
     return trailing.length === 0 ? [] : results.slice(-trailing.length);

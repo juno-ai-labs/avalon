@@ -157,3 +157,63 @@ describe("creating an Organization in its region", () => {
     expect(queued).toEqual([]);
   });
 });
+
+describe("a shadow-banned account creating an Organization", () => {
+  const organizations = () => database.prepare(
+    `SELECT (SELECT COUNT(*) FROM workspaces) AS workspaces, (SELECT COUNT(*) FROM workspace_members) AS members,
+            (SELECT COUNT(*) FROM regional_onboarding_operations) AS operations, (SELECT COUNT(*) FROM sessions) AS sessions`).get();
+  const nothing = { workspaces: 0, members: 0, operations: 0, sessions: 0 };
+
+  it("is told only that it could not be done, and nothing of the Organization is written or started", async () => {
+    openAuthority();
+    database.prepare("UPDATE users SET shadow_banned_at = ? WHERE id = ?").run(at, platformUserId);
+
+    await expect(create()).rejects.toMatchObject({
+      status: 409, code: "request_unavailable", message: "Rally could not complete this request.", diagnosticCode: "account_shadow_banned",
+    });
+
+    expect(organizations()).toEqual(nothing);
+    expect(initialized).toEqual([]);
+    expect(queued).toEqual([]);
+  });
+
+  it("leaves any other failure of the create as it came, rather than answering it as a refusal", async () => {
+    openAuthority();
+    // The Organization's id is already taken: a database failure with nothing to do with a ban.
+    database.prepare(`INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES (?, 'Taken', 'taken', 'global', ?, ?, ?)`).run(workspaceId, platformUserId, at, at);
+
+    await expect(create()).rejects.toThrow(/UNIQUE constraint failed: workspaces\.id/u);
+  });
+
+  it("creates it once the ban is lifted, under the same operation", async () => {
+    openAuthority();
+    database.prepare("UPDATE users SET shadow_banned_at = ? WHERE id = ?").run(at, platformUserId);
+    await expect(create()).rejects.toMatchObject({ code: "request_unavailable" });
+    database.prepare("UPDATE users SET shadow_banned_at = NULL WHERE id = ?").run(platformUserId);
+
+    const session = await create();
+
+    expect(session.workspace).toMatchObject({ id: workspaceId, name: "Northwind", role: "owner" });
+  });
+
+  it("names the ban to an operator creating for a banned owner, and seats a banned initial member", async () => {
+    openAuthority();
+    const member = "00000000-0000-7000-8000-00000000c005";
+    database.prepare(`INSERT INTO users (id, email, name, created_at, updated_at, platform_user_id, shadow_banned_at)
+      VALUES (?, 'member@example.test', 'Member', ?, ?, ?, ?)`).run(member, at, at, member, at);
+    const forMember = () => service().createWorkspaceForMember({
+      operationId, workspaceId, name: "Northwind", userId: platformUserId, memberUserIds: [member] });
+
+    database.prepare("UPDATE users SET shadow_banned_at = ? WHERE id = ?").run(at, platformUserId);
+    await expect(forMember()).rejects.toMatchObject({ status: 409, code: "account_shadow_banned" });
+    expect(organizations()).toEqual(nothing);
+    expect(initialized).toEqual([]);
+
+    // The ban stops an account creating, not being added: the banned member is seated.
+    database.prepare("UPDATE users SET shadow_banned_at = NULL WHERE id = ?").run(platformUserId);
+    await forMember();
+    expect(database.prepare("SELECT user_id, role FROM workspace_members WHERE workspace_id = ? ORDER BY role").all(workspaceId))
+      .toEqual([{ user_id: member, role: "member" }, { user_id: platformUserId, role: "owner" }]);
+  });
+});

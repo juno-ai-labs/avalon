@@ -14,6 +14,8 @@ import {
   EngineeringPasswordUserInputSchema,
   EngineeringProvisionPasswordResultSchema,
   EngineeringRevokePasswordResultSchema,
+  SetEngineeringUserShadowBanInputSchema,
+  EngineeringUserShadowBanResultSchema,
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1DatabaseSchema,
@@ -131,7 +133,7 @@ function inspectionBindings(env: Env) {
   });
 }
 
-function billingRegionBinding(env: Env, region: Parameters<typeof regionConfiguration>[0]) {
+function regionBinding(env: Env, region: Parameters<typeof regionConfiguration>[0]) {
   const binding = env[`${regionConfiguration(region).bindingPrefix}_INSPECTION`];
   if (!binding) throw new InspectionRefusal("regional_inspection_unavailable", "regional_inspection_unavailable");
   return binding;
@@ -321,8 +323,15 @@ export function createEngineeringMcpServer(
   }, (request) => tool(principal, "revoke_user_password", { user_id: request.userId }, async () =>
     EngineeringRevokePasswordResultSchema.parse(await env.GLOBAL_INSPECTION.revokeUserPassword(request, principal))));
 
+  server.registerTool("set_user_shadow_ban", {
+    description: "Shadow ban a Rally user account (banned: true) or lift the ban (banned: false). A shadow-banned account cannot create an Organization: the attempt fails with a generic message that does not name the ban. It can still be added to an Organization as a member or a guest. Does not remove the account from Organizations it already belongs to, end its sessions, or block sign-in. A person with accounts in two regions needs one call per region. Repeating is safe; a repeated ban keeps its original time.",
+    inputSchema: z.object(SetEngineeringUserShadowBanInputSchema.unwrap().shape),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "set_user_shadow_ban", { region: request.region, user_id: request.userId, banned: request.banned }, async () =>
+    EngineeringUserShadowBanResultSchema.parse(await regionBinding(env, request.region).setUserShadowBan(request, principal))));
+
   server.registerTool("create_org", {
-    description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",
+    description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users), and a shadow-banned creatorUserId is refused (account_shadow_banned). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",
     inputSchema: z.object(CreateEngineeringOrgInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "create_org", {
@@ -437,14 +446,14 @@ export function createEngineeringMcpServer(
     organizationPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_users", {
-    description: "List every Rally user across configured regions, newest first unless ordered otherwise, each with every Organization they belong to (role, guest or member, status, last seen). A person with accounts in two regions appears once per region. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    description: "List every Rally user across configured regions, newest first unless ordered otherwise, each with every Organization they belong to (role, guest or member, status, last seen) and shadowBannedAt, present only when the account is shadow banned. A person with accounts in two regions appears once per region. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
     inputSchema: z.object(userPageInputSchema),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "list_users", {}, () =>
     userPage(inspectionBindings(env), {}, request)));
 
   server.registerTool("search_users", {
-    description: "Search Rally users across configured regions by name, email or ID, or by creation time, newest first unless ordered otherwise. Each result carries every Organization the user belongs to (role, guest or member, status, last seen). Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    description: "Search Rally users across configured regions by name, email or ID, or by creation time, newest first unless ordered otherwise. Each result carries every Organization the user belongs to (role, guest or member, status, last seen) and shadowBannedAt, present only when the account is shadow banned. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
     inputSchema: z.object({ ...SearchEngineeringUsersInputSchema.unwrap().shape, ...userPageInputSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_users", {}, () =>
@@ -654,19 +663,19 @@ export function createEngineeringMcpServer(
   server.registerTool("inspect_billing_catalog", {
     description: "Read a region's effective billing offers, catalog revision, and live Stripe price amounts, currency options, recurring intervals, tax behavior and coupon terms. Amounts use each resource's currency minor units. Deployment configuration enables billing; operator changes override only offers and pilot configuration. Retired offers remain mapped for existing subscriptions.",
     inputSchema: InspectBillingCatalogSchema, annotations: { readOnlyHint: true, openWorldHint: true },
-  }, request => tool(principal, "inspect_billing_catalog", { region: request.region }, async () => BillingCatalogInspectionSchema.parse(await billingRegionBinding(env, request.region).inspectBillingCatalog(request))));
+  }, request => tool(principal, "inspect_billing_catalog", { region: request.region }, async () => BillingCatalogInspectionSchema.parse(await regionBinding(env, request.region).inspectBillingCatalog(request))));
   server.registerTool("create_billing_price", {
     description: "Create an immutable Stripe recurring price on the product of sourceOfferId. amountMinor uses the specified currency; choose interval and inclusive/exclusive tax behavior explicitly. Does not publish the price, reprice subscribers, or edit the landing page. Publish a new offer ID with configure_billing_catalog afterward. Reuse operationId and arguments after uncertainty.",
     inputSchema: CreateBillingPriceSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, request => tool(principal, "create_billing_price", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await billingRegionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "price" }, principal))));
+  }, request => tool(principal, "create_billing_price", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await regionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "price" }, principal))));
   server.registerTool("create_billing_coupon", {
     description: "Create a percentage-off Stripe coupon scoped to paid plan products of offerIds. Select once, repeating months, or forever. Never scopes the coupon to overages. Does not activate the coupon: publish it as first-paid pilot or an offer coupon with configure_billing_catalog, or apply it to an existing subscription with change_subscription. Reuse operationId and arguments after uncertainty.",
     inputSchema: CreateBillingCouponSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, request => tool(principal, "create_billing_coupon", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await billingRegionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "coupon" }, principal))));
+  }, request => tool(principal, "create_billing_coupon", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await regionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "coupon" }, principal))));
   server.registerTool("configure_billing_catalog", {
     description: "Publish the complete commercial catalog for a region using expectedRevision from inspect_billing_catalog. Synchronizes monthly Billing Portal plan choices and subsequent Checkout offers; longer intervals require Checkout or an eligible operator change. Keep every historical offer ID and its plan, priceId and overagePriceId; set enabled:false to retire one. A replacement price requires a new offer ID. signupTrial configures automatic no-card trials (offerId, currency, calendar months, startsAt); signupTrial:null stops new signup awards. Omission preserves the current campaign. pilotCouponId:null stops new checkout pilot awards; existing subscriptions/discounts and open Checkout Sessions are unchanged until refreshed/expired. Does not change infrastructure meters, usage quotas, taxes or static landing-page copy. Reason and stable operationId required.",
     inputSchema: ConfigureBillingCatalogSchema, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-  }, request => tool(principal, "configure_billing_catalog", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await billingRegionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "catalog" }, principal))));
+  }, request => tool(principal, "configure_billing_catalog", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await regionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "catalog" }, principal))));
 
   server.registerTool("grant_trial_months", {
     description: "Grant an Organization extra calendar months without subscription fees. Requires an existing active or trialing monthly paid plan. Extends Stripe's base-subscription trial after the existing paid/trial/pilot period; included plan usage stays available and opted-in overages remain billable on their separate metered subscription. Does not refund existing invoices. A reason and operationId are required; reuse identical arguments and the same ID after an uncertain outcome to avoid awarding twice. Month ends clamp to the shorter month's last day. The result is an award receipt, not a live billing-status read.",

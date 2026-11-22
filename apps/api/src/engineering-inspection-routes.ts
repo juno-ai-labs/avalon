@@ -175,6 +175,7 @@ const UserRowSchema = z.strictObject({
   email: z.string(),
   created_at: z.string(),
   last_seen_at: z.string().nullable(),
+  shadow_banned_at: z.string().nullable(),
   memberships: z.string().transform((json) => z.array(UserMembershipSchema).parse(JSON.parse(json))),
 });
 export type UserRow = z.infer<typeof UserRowSchema>;
@@ -189,7 +190,7 @@ export async function searchInspectionUsers(
   filter: SearchEngineeringUsersInput,
 ): Promise<UserRow[]> {
   const result = await env.DB.prepare(
-    `SELECT person.id, person.name, person.email, person.created_at,
+    `SELECT person.id, person.name, person.email, person.created_at, person.shadow_banned_at,
             (SELECT json_group_array(json_object(
                       'workspace_id', workspace.id, 'name', workspace.name, 'slug', workspace.slug,
                       'role', member.role, 'access_class', member.access_class,
