@@ -89,6 +89,7 @@ The regional bridge uses D1 only for identity and routing:
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
 | `add_org_member` | Resolve the Organization in exactly one region | WorkspaceService.addMember as the named owner or admin |
+| `set_user_shadow_ban` | Caller names the region | Regional D1 `users.shadow_banned_at` ([`shadow-ban.md`](shadow-ban.md)) |
 | `archive_canvas` | Resolve the Organization in exactly one region | CanvasService.archive, which calls HostedCanvas in WorkspaceDO |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |

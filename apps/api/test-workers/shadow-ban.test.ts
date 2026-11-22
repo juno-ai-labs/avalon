@@ -14,6 +14,7 @@ import { SHADOW_BAN_SCHEMA } from "./helpers/shadow-ban-schema";
  */
 
 const USER = "00000000-0000-7000-8000-00000000b909";
+const OTHER = "00000000-0000-7000-8000-00000000b90a";
 const OPERATOR = { subject: "shadow-ban-test-operator", email: "operator@example.test", audience: "engineering" };
 const request = { region: "global", userId: USER, banned: true, reason: "Signup spam" };
 
@@ -25,10 +26,14 @@ beforeEach(async () => {
   await ensureAuditSchema();
   await env.AUDIT_DB.prepare("DELETE FROM audit_events WHERE target_id = ?").bind(USER).run();
   await env.DB.batch([
-    env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL)"),
-    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, created_by_user_id TEXT)"),
+    env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT, created_at TEXT)"),
+    env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, slug TEXT, region TEXT, created_by_user_id TEXT)"),
+    env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT, user_id TEXT, role TEXT, access_class TEXT,
+      status TEXT, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id))`),
     ...SHADOW_BAN_SCHEMA.map((sql) => env.DB.prepare(sql)),
-    env.DB.prepare("INSERT INTO users (id, email) VALUES (?, 'reviewer@example.test')").bind(USER),
+    env.DB.prepare(`INSERT INTO users (id, email, name, created_at) VALUES
+      (?, 'reviewer@example.test', 'Reviewer', '2026-11-01T00:00:00.000Z'),
+      (?, 'other@example.test', 'Other', '2026-11-02T00:00:00.000Z')`).bind(USER, OTHER),
   ]);
 });
 
@@ -39,6 +44,13 @@ it("sets and lifts a ban through the operator bridge, and audits who did it and 
   const banned = await bridge.setUserShadowBan(request, OPERATOR);
   expect(banned).toEqual({ region: "global", userId: USER, email: "reviewer@example.test", shadowBannedAt: await bannedAt() });
   expect(banned.shadowBannedAt).toEqual(expect.any(String));
+  // The search row names the ban only on the banned account. The MCP Worker deploys after the API
+  // and parses rows strictly, so a key on every row would fail the build still running.
+  const row = { region: "global", lastSeenAt: null, organizations: [] };
+  expect((await bridge.searchUsers({})).items.sort((left, right) => left.userId.localeCompare(right.userId))).toStrictEqual([
+    { ...row, userId: USER, name: "Reviewer", email: "reviewer@example.test", createdAt: "2026-11-01T00:00:00.000Z", shadowBannedAt: banned.shadowBannedAt },
+    { ...row, userId: OTHER, name: "Other", email: "other@example.test", createdAt: "2026-11-02T00:00:00.000Z" },
+  ]);
 
   expect(await bridge.setUserShadowBan({ ...request, banned: false, reason: "Cleared on appeal" }, OPERATOR))
     .toEqual({ region: "global", userId: USER, email: "reviewer@example.test", shadowBannedAt: null });
@@ -63,6 +75,8 @@ it("leaves the ban unset without a trusted operator, the region that holds the r
   // A configured deployment, but not the one this Worker serves.
   await expect(bridge.setUserShadowBan({ ...request, region: "enterprise" }, OPERATOR))
     .rejects.toThrow("engineering_operation_failed:region_mismatch");
+  await expect(bridge.setUserShadowBan({ ...request, userId: "00000000-0000-7000-8000-00000000b9ff" }, OPERATOR))
+    .rejects.toThrow("engineering_operation_failed:user_not_found");
   await env.AUDIT_DB.prepare(`CREATE TRIGGER reject_shadow_ban_audit BEFORE INSERT ON audit_events
     WHEN NEW.action = 'engineering.set_user_shadow_ban.attempt'
     BEGIN SELECT RAISE(ABORT, 'shadow_ban_test_audit_unavailable'); END;`).run();

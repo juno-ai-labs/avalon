@@ -622,7 +622,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         region: this.env.AVALON_REGION,
         createdAt: row.created_at,
         lastSeenAt: row.last_seen_at,
-        shadowBannedAt: row.shadow_banned_at,
+        ...(row.shadow_banned_at ? { shadowBannedAt: row.shadow_banned_at } : {}),
         organizations: row.memberships.map((membership) => ({
           workspaceId: membership.workspace_id,
           name: membership.name,

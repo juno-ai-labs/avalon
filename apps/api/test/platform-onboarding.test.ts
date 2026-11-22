@@ -10,6 +10,7 @@ import {
   D1PlatformBindingStore,
   D1PlatformOperationStore,
   PlatformOnboardingService,
+  RegionalIdentityBridgeClient,
   serializeRegionalRpcResult,
   type PlatformBindingRow,
   type PlatformBindingStore,
@@ -459,6 +460,21 @@ describe("single-platform regional onboarding", () => {
     await expect(serializeRegionalRpcResult(async () => {
       throw new ApiError(503, "regional_database_unavailable", "Regional database unavailable");
     })).rejects.toMatchObject({ status: 503, code: "regional_database_unavailable" });
+  });
+
+  it("carries a refusal's diagnostic code across the RPC boundary, for the log on the calling side", async () => {
+    const envelope = await serializeRegionalRpcResult<never>(async () => {
+      throw new ApiError(409, "request_unavailable", "Rally could not complete this request.", undefined, "account_shadow_banned");
+    });
+    expect(envelope).toEqual({ ok: false, error: {
+      status: 409, code: "request_unavailable", message: "Rally could not complete this request.", diagnosticCode: "account_shadow_banned",
+    } });
+    const answer = async () => envelope;
+    const client = new RegionalIdentityBridgeClient({
+      discover: answer, attention: answer, activate: answer, activateBrowser: answer, create: answer, accept: answer, decline: answer,
+    });
+    await expect(client.decline({ identity, invitationId: "00000000-0000-7000-8000-00000000d001" }))
+      .rejects.toMatchObject({ status: 409, code: "request_unavailable", diagnosticCode: "account_shadow_banned" });
   });
 
   it("aggregates an enterprise invitation after the one Global identity login", async () => {

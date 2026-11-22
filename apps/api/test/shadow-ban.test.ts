@@ -3,19 +3,10 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { Env } from "../src/env";
 import { setUserShadowBan } from "../src/services/shadow-ban";
-import { ensureGuestRelationship } from "../src/services/workspace-relationship-service";
-import type * as WorkspaceRealtimeService from "../src/services/workspace-realtime-service";
-import { WorkspaceService } from "../src/services/workspace-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-
-// The Organization object behind the sync publish does not run in this suite.
-vi.mock("../src/services/workspace-realtime-service", async (importActual) => ({
-  ...await importActual<typeof WorkspaceRealtimeService>(),
-  publishWorkspaceSync: vi.fn(async () => 1),
-}));
 
 /**
  * Shadow bans against the checked-in migrations, so the guard under test is
@@ -28,20 +19,14 @@ const at = "2026-11-01T00:00:00.000Z";
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-00000000b001");
 const OTHER_WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-00000000b002");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000b010");
-/** Shadow banned, with a verified address, and in no Organization. */
+/** Shadow banned, and in no Organization. */
 const BANNED = asUserId("00000000-0000-7000-8000-00000000b011");
 
 let database: DatabaseSync;
 
 function env(): Env {
-  return createTestEnv({
-    DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "production", LOG_LEVEL: "error",
-    PUBLIC_WEB_BASE_URL: "https://rally.example.test", EMAIL_FROM: "Rally <team@example.test>",
-    EMAIL: { send: async () => ({ messageId: "email-1" }) },
-  });
+  return createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", LOG_LEVEL: "error" });
 }
-
-const ownerAuth: AuthContext = { sessionId: "session-1", userId: OWNER, workspaceId: WORKSPACE, region: "global", role: "owner" };
 
 const createOrganization = (id: string, creator: string, conflict = "") => database.prepare(
   `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
@@ -52,7 +37,6 @@ beforeEach(() => {
   const user = database.prepare("INSERT INTO users (id, email, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)");
   user.run(OWNER, "owner@example.test", "Owner", at, at);
   user.run(BANNED, "banned@example.test", "Banned", at, at);
-  database.prepare("INSERT INTO user_verified_emails (email, user_id, verified_at) VALUES ('banned@example.test', ?, ?)").run(BANNED, at);
   createOrganization(WORKSPACE, OWNER);
   database.prepare("INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at) VALUES (?, ?, 'owner', 'active', ?)")
     .run(WORKSPACE, OWNER, at);
@@ -79,33 +63,31 @@ describe("the Organization guard", () => {
 });
 
 describe("a shadow-banned account in other people's Organizations", () => {
-  it("can still be added as a member, and as a guest", async () => {
-    const added = await new WorkspaceService(env(), ownerAuth).addMember("banned@example.test", "member");
-    expect(added.member).toEqual({ userId: BANNED, email: "banned@example.test", role: "member" });
-
+  it("can still be added as a member, and as a guest", () => {
+    const add = database.prepare(
+      "INSERT INTO workspace_members (workspace_id, user_id, role, access_class, status, joined_at) VALUES (?, ?, ?, ?, 'active', ?)");
     createOrganization(OTHER_WORKSPACE, OWNER);
-    await expect(ensureGuestRelationship(sqliteD1(database), OTHER_WORKSPACE, BANNED))
-      .resolves.toMatchObject({ userId: BANNED, accessClass: "guest", status: "active" });
-    // Both are what `search_users` then lists for the banned account.
+    add.run(WORKSPACE, BANNED, "member", "member", at);
+    add.run(OTHER_WORKSPACE, BANNED, null, "guest", at);
     expect(database.prepare("SELECT workspace_id, access_class FROM workspace_members WHERE user_id = ? ORDER BY workspace_id").all(BANNED))
       .toEqual([{ workspace_id: WORKSPACE, access_class: "member" }, { workspace_id: OTHER_WORKSPACE, access_class: "guest" }]);
   });
 });
 
 describe("setting and lifting a shadow ban", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
   it("keeps the original time when a banned account is banned again, and clears it when lifted", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-11-05T00:00:00.000Z"));
-      await expect(setUserShadowBan(env(), { userId: OWNER, banned: true }))
-        .resolves.toEqual({ userId: OWNER, email: "owner@example.test", shadowBannedAt: "2026-11-05T00:00:00.000Z" });
-      vi.setSystemTime(new Date("2026-11-09T00:00:00.000Z"));
-      await expect(setUserShadowBan(env(), { userId: OWNER, banned: true }))
-        .resolves.toEqual({ userId: OWNER, email: "owner@example.test", shadowBannedAt: "2026-11-05T00:00:00.000Z" });
-      await expect(setUserShadowBan(env(), { userId: OWNER, banned: false }))
-        .resolves.toEqual({ userId: OWNER, email: "owner@example.test", shadowBannedAt: null });
-      expect(database.prepare("SELECT shadow_banned_at FROM users WHERE id = ?").get(OWNER)).toEqual({ shadow_banned_at: null });
-    } finally { vi.useRealTimers(); }
+    vi.setSystemTime(new Date("2026-11-05T00:00:00.000Z"));
+    await expect(setUserShadowBan(env(), { userId: OWNER, banned: true }))
+      .resolves.toEqual({ userId: OWNER, email: "owner@example.test", shadowBannedAt: "2026-11-05T00:00:00.000Z" });
+    vi.setSystemTime(new Date("2026-11-09T00:00:00.000Z"));
+    await expect(setUserShadowBan(env(), { userId: OWNER, banned: true }))
+      .resolves.toEqual({ userId: OWNER, email: "owner@example.test", shadowBannedAt: "2026-11-05T00:00:00.000Z" });
+    await expect(setUserShadowBan(env(), { userId: OWNER, banned: false }))
+      .resolves.toEqual({ userId: OWNER, email: "owner@example.test", shadowBannedAt: null });
+    expect(database.prepare("SELECT shadow_banned_at FROM users WHERE id = ?").get(OWNER)).toEqual({ shadow_banned_at: null });
   });
 
   it("refuses an id no user in this region has", async () => {

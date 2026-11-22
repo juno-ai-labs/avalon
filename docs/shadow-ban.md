@@ -1,8 +1,8 @@
 # Shadow bans
 
 A shadow ban is a flag an operator sets on a user account. A banned account
-cannot create an Organization, and the app never tells it that a ban is the
-reason. Everything else stays as it was: the account keeps its Organizations,
+cannot create an Organization, and the app never names a ban as the reason.
+Everything else stays as it was: the account keeps its Organizations,
 its sessions and its sign-in methods, and other people can still add it to
 their Organization as a member or a guest. That is deliberate: `search_users`
 then lists every Organization the account reaches.
@@ -34,7 +34,10 @@ never initialized. `shadowBanRefusal` turns the abort into an answer:
 | Who created | What they are told |
 | --- | --- |
 | The account itself | 409 `request_unavailable`, "Rally could not complete this request." |
-| An operator, through `create_org` for a banned `creatorUserId` | 409 `account_shadow_banned`. |
+| An operator, through `create_org` for a banned `creatorUserId` | `account_shadow_banned`. |
+
+Nothing else answers `request_unavailable`, so someone comparing responses can
+recognise the refusal. The ban is unnamed, not undetectable.
 
 `set_user_shadow_ban({ region, userId, banned, reason })` runs one statement
 in the named region. Setting a ban that is already set keeps its time, so
@@ -48,7 +51,7 @@ repeating either call changes nothing.
 - **A ban does not stop an account being added.** Do not add a membership
   check for banned accounts. Guard: "can still be added as a member, and as a
   guest" in the same file.
-- **The account is never told the reason.** A new creation path must go
+- **The response never names the ban.** A new creation path must go
   through `shadowBanRefusal`. A raw D1 error becomes a 500, which the Global
   coordinator treats as an uncertain outcome and answers by keeping a pending
   reservation.
@@ -70,13 +73,19 @@ sign-in, end sessions, or take access away; removing a membership is
 
 - **A ban does not cross deployments.** `users` is one row per deployment and
   the flag is not carried on the platform identity. Global is the only
-  configured deployment, so today one row is the whole account.
+  configured deployment, so today one row is the whole account. Before a
+  second one serves Organizations the flag has to travel on the platform
+  identity: a deployment makes its user row inside the create itself, so
+  there is no row to ban first.
 - **An owner can still be made, just not by creating.** An existing owner can
   add or promote a banned account to owner.
 - **Nothing marks an Organization a banned account joins.** Finding them is a
   `search_users` read.
 - **A refusal has no log line of its own.** The request log's `request_failed`
-  row carries `error_code: account_shadow_banned`.
+  row carries `error_code: account_shadow_banned`, across the regional bridge
+  too, whose error envelope carries the diagnostic code.
+- **`reason` has no length cap.** None was set by the team; it is an
+  operator's text behind Access, stored only in the audit record.
 
 ## Testing
 
@@ -96,16 +105,18 @@ through `helpers/shadow-ban-schema.ts`.
 that refuses an Organization a banned account creates, the
 `set_user_shadow_ban` operator tool, and the refusal in `createOwnedWorkspace`.
 
-**Why:** The owner asked for a way to mark an account so it can no longer
-create Organizations, without telling the account.
+**Why:** The product owner asked for a way to stop an abusive account
+creating Organizations without naming the ban to it.
 
 **Considered and rejected:** Also refusing a banned account a membership or a
-guest relationship. That was built first, as two triggers on
-`workspace_members`, and removed before it merged at the owner's request. Also
-rejected: a check in the creation service, which covers only the paths
+guest relationship, as triggers on `workspace_members`. The product owner
+wants a banned account to stay addable. Also rejected: a check in the
+creation service, which covers only the paths
 somebody remembered and adds a read to every create; and `RAISE(IGNORE)`,
 which skips the row silently and lets the rest of the batch write an owner for
 an Organization that does not exist.
 
 **What a future change has to respect:** A ban must not grow a membership
-check without a new decision from the owner.
+check without a new decision from the product owner.
+
+Shipped in #1693.

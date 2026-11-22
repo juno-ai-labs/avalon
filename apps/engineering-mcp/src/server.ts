@@ -324,9 +324,9 @@ export function createEngineeringMcpServer(
     EngineeringRevokePasswordResultSchema.parse(await env.GLOBAL_INSPECTION.revokeUserPassword(request, principal))));
 
   server.registerTool("set_user_shadow_ban", {
-    description: "Shadow ban a Rally user account (banned: true) or lift the ban (banned: false). A shadow-banned account cannot create an Organization: the attempt fails with a generic message and the account is not told why. It can still be added to an Organization as a member or a guest. Does not remove the account from Organizations it already belongs to, end its sessions, or block sign-in. Users are regional rows: pass the region and userId search_users reports, once per row for a person with rows in two regions. Repeating is safe; a repeated ban keeps its original time. search_users shows the result as shadowBannedAt.",
+    description: "Shadow ban a Rally user account (banned: true) or lift the ban (banned: false). A shadow-banned account cannot create an Organization: the attempt fails with a generic message that does not name the ban. It can still be added to an Organization as a member or a guest. Does not remove the account from Organizations it already belongs to, end its sessions, or block sign-in. A person with accounts in two regions needs one call per region. Repeating is safe; a repeated ban keeps its original time.",
     inputSchema: z.object(SetEngineeringUserShadowBanInputSchema.unwrap().shape),
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "set_user_shadow_ban", { region: request.region, user_id: request.userId, banned: request.banned }, async () =>
     EngineeringUserShadowBanResultSchema.parse(await regionBinding(env, request.region).setUserShadowBan(request, principal))));
 
@@ -446,14 +446,14 @@ export function createEngineeringMcpServer(
     organizationPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_users", {
-    description: "List every Rally user across configured regions, newest first unless ordered otherwise, each with every Organization they belong to (role, guest or member, status, last seen) and shadowBannedAt, which is null unless the account is shadow banned. A person with accounts in two regions appears once per region. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    description: "List every Rally user across configured regions, newest first unless ordered otherwise, each with every Organization they belong to (role, guest or member, status, last seen) and shadowBannedAt, present only when the account is shadow banned. A person with accounts in two regions appears once per region. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
     inputSchema: z.object(userPageInputSchema),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "list_users", {}, () =>
     userPage(inspectionBindings(env), {}, request)));
 
   server.registerTool("search_users", {
-    description: "Search Rally users across configured regions by name, email or ID, or by creation time, newest first unless ordered otherwise. Each result carries every Organization the user belongs to (role, guest or member, status, last seen) and shadowBannedAt, which is null unless the account is shadow banned. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    description: "Search Rally users across configured regions by name, email or ID, or by creation time, newest first unless ordered otherwise. Each result carries every Organization the user belongs to (role, guest or member, status, last seen) and shadowBannedAt, present only when the account is shadow banned. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
     inputSchema: z.object({ ...SearchEngineeringUsersInputSchema.unwrap().shape, ...userPageInputSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_users", {}, () =>

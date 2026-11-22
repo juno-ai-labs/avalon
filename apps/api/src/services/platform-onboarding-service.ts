@@ -23,7 +23,7 @@ import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, diagnosticCodeField } from "../lib/api-error";
 import { workspaceSlug } from "../lib/workspace-slug";
 import { diagnosticErrorCode } from "../observability/logger";
 import { sha256 } from "../lib/crypto";
@@ -137,6 +137,8 @@ const regionalRpcBusinessErrorSchema = z.object({
   status: regionalRpcBusinessStatusSchema,
   code: z.string().min(1).max(120),
   message: z.string().min(1).max(1_000),
+  /** The operator's reason behind a coarse `code`, for the log on the calling side. Never in a response body. */
+  diagnosticCode: z.string().min(1).max(120).optional(),
 });
 const regionalRpcEnvelopeSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), value: z.unknown() }),
@@ -173,7 +175,7 @@ export async function serializeRegionalRpcResult<T>(
     if (isRegionalBusinessApiError(error)) {
       return {
         ok: false,
-        error: { status: error.status, code: error.code, message: error.message },
+        error: { status: error.status, code: error.code, message: error.message, ...diagnosticCodeField(error) },
       };
     }
     throw error;
@@ -244,7 +246,7 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
     // ambiguous and keep the workspace reservation fail-closed.
     const envelope = regionalRpcEnvelopeSchema.parse(await pending);
     if (!envelope.ok) {
-      throw new ApiError(envelope.error.status, envelope.error.code, envelope.error.message);
+      throw new ApiError(envelope.error.status, envelope.error.code, envelope.error.message, undefined, envelope.error.diagnosticCode);
     }
     return valueSchema.parse(envelope.value);
   }
@@ -435,7 +437,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     }
 
     const session = await new AuthService(this.env).prepareWorkspaceSession(user.id, input.workspaceId);
-    const results = await this.createOwnedWorkspace(user.id, input, session.statements);
+    const results = await this.createOwnedWorkspace(user.id, input, session.statements, "person");
     return session.issue(results);
   }
 
@@ -516,7 +518,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     userId: string,
     input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
     trailing: D1PreparedStatement[],
-    audience: "person" | "operator" = "person",
+    audience: "person" | "operator",
   ): Promise<D1Result[]> {
     const at = nowIso();
     const slug = workspaceSlug(input.name, input.workspaceId);

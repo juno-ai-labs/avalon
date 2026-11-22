@@ -1015,7 +1015,6 @@ describe("Rally engineering MCP tools", () => {
       region,
       createdAt,
       lastSeenAt,
-      shadowBannedAt: null,
       organizations: Array.from({ length: organizationCount }, (_, index) => ({
         workspaceId: asWorkspaceId(`00000000-0000-7000-8000-0000000001${String(index).padStart(2, "0")}`),
         name: `Org ${index}`,

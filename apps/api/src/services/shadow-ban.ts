@@ -26,7 +26,7 @@ export function shadowBanRefusal(error: unknown, audience: "person" | "operator"
   if (!(error instanceof Error) || !error.message.includes(SHADOW_BAN_ABORT)) return error;
   return audience === "operator"
     ? new ApiError(409, SHADOW_BAN_ABORT,
-      "The creator's account is shadow banned, so it cannot create an Organization. Lift the ban with set_user_shadow_ban first.")
+      "creatorUserId is shadow banned, so it cannot create an Organization. Choose another creator; lift the ban only if asked.")
     : new ApiError(409, "request_unavailable", "Rally could not complete this request.", undefined, SHADOW_BAN_ABORT);
 }
 

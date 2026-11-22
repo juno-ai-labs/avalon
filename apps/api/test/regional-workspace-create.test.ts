@@ -168,11 +168,22 @@ describe("a shadow-banned account creating an Organization", () => {
     openAuthority();
     database.prepare("UPDATE users SET shadow_banned_at = ? WHERE id = ?").run(at, platformUserId);
 
-    await expect(create()).rejects.toMatchObject({ status: 409, code: "request_unavailable", diagnosticCode: "account_shadow_banned" });
+    await expect(create()).rejects.toMatchObject({
+      status: 409, code: "request_unavailable", message: "Rally could not complete this request.", diagnosticCode: "account_shadow_banned",
+    });
 
     expect(organizations()).toEqual(nothing);
     expect(initialized).toEqual([]);
     expect(queued).toEqual([]);
+  });
+
+  it("leaves any other failure of the create as it came, rather than answering it as a refusal", async () => {
+    openAuthority();
+    // The Organization's id is already taken: a database failure with nothing to do with a ban.
+    database.prepare(`INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES (?, 'Taken', 'taken', 'global', ?, ?, ?)`).run(workspaceId, platformUserId, at, at);
+
+    await expect(create()).rejects.toThrow(/UNIQUE constraint failed: workspaces\.id/u);
   });
 
   it("creates it once the ban is lifted, under the same operation", async () => {

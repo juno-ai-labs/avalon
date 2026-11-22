@@ -39,10 +39,10 @@ export const EngineeringRevokePasswordResultSchema = deferredZodSchema(() => z.s
 export type EngineeringRevokePasswordResult = z.infer<typeof EngineeringRevokePasswordResultSchema>;
 
 export const SetEngineeringUserShadowBanInputSchema = deferredZodSchema(() => z.strictObject({
-  region: RegionSchema.describe("The region search_users reported this user in. Users are regional rows."),
+  region: RegionSchema.describe("The region search_users reported this account in."),
   userId: UserIdSchema.describe("Existing user ID in that region, from search_users."),
   banned: z.boolean().describe("true shadow bans the account; false lifts the ban."),
-  reason: z.string().trim().min(1).max(500).describe("Why, for the audit record."),
+  reason: z.string().trim().min(1).describe("Why, for the audit record."),
 }));
 export type SetEngineeringUserShadowBanInput = z.infer<typeof SetEngineeringUserShadowBanInputSchema>;
 export const EngineeringUserShadowBanResultSchema = deferredZodSchema(() => z.strictObject({
@@ -343,8 +343,12 @@ export const EngineeringUserSchema = deferredZodSchema(() => z.strictObject({
   createdAt: z.string(),
   /** The latest `last_seen_at` across the user's active memberships; null if never seen. */
   lastSeenAt: z.string().nullable(),
-  /** When this account was shadow banned (`set_user_shadow_ban`); null when it is not. */
-  shadowBannedAt: z.string().nullable(),
+  /**
+   * When this account was shadow banned (`set_user_shadow_ban`). Absent when
+   * it is not: the MCP Worker deploys after the API and parses this strictly,
+   * so a key on every row would fail the previous build until it is replaced.
+   */
+  shadowBannedAt: z.string().optional(),
   /** Every membership in this region, whatever its status. */
   organizations: z.array(EngineeringUserOrganizationSchema),
 }));
