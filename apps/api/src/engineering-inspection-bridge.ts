@@ -8,6 +8,7 @@ import { readOrganizationSettings, updateOrganizationSettings } from "./services
 import { publishWorkspaceSync } from "./services/workspace-realtime-service";
 import { readOrganizationUsage, setWorkspacePlan, publishOrganizationUsage } from "./services/usage-metering";
 import { provisionUserPassword, revokeUserPassword } from "./services/password-login-service";
+import { setUserShadowBan } from "./services/shadow-ban";
 import { RegionSchema } from "@rally/contracts/regions";
 import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
@@ -24,6 +25,9 @@ import {
   EngineeringPasswordUserInputSchema,
   EngineeringProvisionPasswordResultSchema,
   EngineeringRevokePasswordResultSchema,
+  SetEngineeringUserShadowBanInputSchema,
+  EngineeringUserShadowBanResultSchema,
+  type EngineeringUserShadowBanResult,
   type EngineeringProvisionPasswordResult,
   type EngineeringRevokePasswordResult,
   ArtifactInspectionInputSchema,
@@ -111,7 +115,7 @@ import {
   workspacePlacementAffinity,
 } from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
-import { asApiError } from "./lib/api-error";
+import { ApiError, asApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
 import { createEngineeringOrg } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringConversation } from "./services/engineering-messages";
@@ -507,6 +511,19 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  async setUserShadowBan(input: unknown, operator: unknown): Promise<EngineeringUserShadowBanResult> {
+    return this.productOperation("setUserShadowBan", async () => {
+      const request = SetEngineeringUserShadowBanInputSchema.parse(input);
+      if (request.region !== this.env.AVALON_REGION) throw new ApiError(409, "region_mismatch", "The user must be named in the region that holds their row");
+      // Setting and lifting are both idempotent, so there is no caller recovery key; a fresh ID pairs the audit rows.
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "set_user_shadow_ban", representedUserId: request.userId, operationId: crypto.randomUUID(),
+      }, async () => EngineeringUserShadowBanResultSchema.parse({
+        region: this.env.AVALON_REGION, ...await setUserShadowBan(this.env, request),
+      }), (result) => ({ shadowBannedAt: result.shadowBannedAt, reason: request.reason }));
+    });
+  }
+
   async createOrg(input: unknown, operator: unknown): Promise<CreateEngineeringOrgResult> {
     return this.productOperation("createOrg", async () => {
       const request = CreateEngineeringOrgInputSchema.parse(input);
@@ -605,6 +622,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         region: this.env.AVALON_REGION,
         createdAt: row.created_at,
         lastSeenAt: row.last_seen_at,
+        shadowBannedAt: row.shadow_banned_at,
         organizations: row.memberships.map((membership) => ({
           workspaceId: membership.workspace_id,
           name: membership.name,

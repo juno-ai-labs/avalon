@@ -190,6 +190,7 @@ Durable Object path: roles live in regional D1 and only the Worker writes them.
 | `member_address_unverified` | 409 | `addMember`: an account holds the address without having verified it, so adding it would add whoever typed that profile address. |
 | `member_account_unavailable` | 409 | `addMember`: no account could be made or found for the address after the write. |
 | `workspace_not_found` | 404 | `addMember`: the Organization is gone or abandoned. |
+| `request_unavailable` | 409 | `addMember` or `promoteGuest`: the account is shadow banned, which the answer does not say. Nothing is written and no email is sent. An operator's `add_org_member` gets `account_shadow_banned` instead. [`shadow-ban.md`](shadow-ban.md). |
 | — (logged only) | 201 | `addMember` added the member but the "you were added" email failed: `workspace_member_added_email_failed`, and the response says `emailDelivery: "failed"`. |
 | — (logged only) | 201 | `addMember` added the member but dispatching the relationship change or the directory push failed: `workspace_relationship_dispatch_failed` or `search_authorization_member_push_failed`. The scheduled retry delivers the relationship later. |
 | `last_workspace_administrator` | 409 | The demotion would leave the workspace with no administrator. |

@@ -14,6 +14,8 @@ import {
   EngineeringPasswordUserInputSchema,
   EngineeringProvisionPasswordResultSchema,
   EngineeringRevokePasswordResultSchema,
+  SetEngineeringUserShadowBanInputSchema,
+  EngineeringUserShadowBanResultSchema,
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1DatabaseSchema,
@@ -321,8 +323,18 @@ export function createEngineeringMcpServer(
   }, (request) => tool(principal, "revoke_user_password", { user_id: request.userId }, async () =>
     EngineeringRevokePasswordResultSchema.parse(await env.GLOBAL_INSPECTION.revokeUserPassword(request, principal))));
 
+  server.registerTool("set_user_shadow_ban", {
+    description: "Shadow ban a Rally user account (banned: true) or lift the ban (banned: false). A shadow-banned account cannot create an Organization, become a member of one, or be added as a guest; each attempt fails with a generic message, and neither the account nor whoever tried to add it is told why. Does not remove the account from Organizations it already belongs to, end its sessions, or block sign-in. Users are regional rows: pass the region and userId search_users reports, once per row for a person with rows in two regions. Repeating is safe; a repeated ban keeps its original time. search_users shows the result as shadowBannedAt.",
+    inputSchema: z.object(SetEngineeringUserShadowBanInputSchema.unwrap().shape),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "set_user_shadow_ban", { region: request.region, user_id: request.userId, banned: request.banned }, async () => {
+    const binding = env[`${regionConfiguration(request.region).bindingPrefix}_INSPECTION`];
+    if (!binding) throw new InspectionRefusal("regional_inspection_unavailable", "regional_inspection_unavailable");
+    return EngineeringUserShadowBanResultSchema.parse(await binding.setUserShadowBan(request, principal));
+  }));
+
   server.registerTool("create_org", {
-    description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",
+    description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users), and none may be shadow banned (account_shadow_banned). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",
     inputSchema: z.object(CreateEngineeringOrgInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "create_org", {
@@ -366,7 +378,7 @@ export function createEngineeringMcpServer(
     await (await organizationBinding(env, request.orgId)).archiveSidekick(request, principal))));
 
   server.registerTool("add_org_member", {
-    description: "Add a person by email to an existing Organization as adminUserId, exactly as the app's Add member action does: they become an active member at once, with no invitation, and are emailed that adminUserId added them. adminUserId must be an active owner or admin there, and an owner to add an owner (workspace_owner_required). A refusal with already_workspace_member means they are already a member, so repeating is safe; it does not resend the email. Abandoned Organizations are refused.",
+    description: "Add a person by email to an existing Organization as adminUserId, exactly as the app's Add member action does: they become an active member at once, with no invitation, and are emailed that adminUserId added them. adminUserId must be an active owner or admin there, and an owner to add an owner (workspace_owner_required). A refusal with already_workspace_member means they are already a member, so repeating is safe; it does not resend the email. A shadow-banned account is refused with account_shadow_banned. Abandoned Organizations are refused.",
     inputSchema: z.object(AddEngineeringOrgMemberInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "add_org_member", {
@@ -437,14 +449,14 @@ export function createEngineeringMcpServer(
     organizationPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_users", {
-    description: "List every Rally user across configured regions, newest first unless ordered otherwise, each with every Organization they belong to (role, guest or member, status, last seen). A person with accounts in two regions appears once per region. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    description: "List every Rally user across configured regions, newest first unless ordered otherwise, each with every Organization they belong to (role, guest or member, status, last seen) and shadowBannedAt, which is null unless the account is shadow banned. A person with accounts in two regions appears once per region. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
     inputSchema: z.object(userPageInputSchema),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "list_users", {}, () =>
     userPage(inspectionBindings(env), {}, request)));
 
   server.registerTool("search_users", {
-    description: "Search Rally users across configured regions by name, email or ID, or by creation time, newest first unless ordered otherwise. Each result carries every Organization the user belongs to (role, guest or member, status, last seen). Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    description: "Search Rally users across configured regions by name, email or ID, or by creation time, newest first unless ordered otherwise. Each result carries every Organization the user belongs to (role, guest or member, status, last seen) and shadowBannedAt, which is null unless the account is shadow banned. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
     inputSchema: z.object({ ...SearchEngineeringUsersInputSchema.unwrap().shape, ...userPageInputSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_users", {}, () =>

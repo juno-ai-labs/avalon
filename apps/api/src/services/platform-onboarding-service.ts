@@ -43,6 +43,7 @@ import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-s
 import { claimScopeInvitations } from "./scope-invitation-claims";
 import { membershipAttention } from "./workspace-attention-service";
 import { settledFailureCode } from "../lib/settled-failure-code";
+import { shadowBanRefusal } from "./shadow-ban";
 import {
   PreferenceProjectionSchema,
   applyRegionalPreferenceProjection,
@@ -493,7 +494,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     await this.createOwnedWorkspace(user.id, reference, members.map((id) => this.env.DB.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
        VALUES (?, ?, 'member', 'active', ?)`,
-    ).bind(input.workspaceId, id, nowIso())));
+    ).bind(input.workspaceId, id, nowIso())), "operator");
   }
 
   /**
@@ -507,11 +508,16 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * are asked for (`seedNewOrganization`). A new member is seated nowhere:
    * there is no General or Personal Channel (plan step C-2), and the client
    * lands on the Canvases home.
+   *
+   * A shadow-banned owner or initial member aborts the batch, so nothing of
+   * the Organization is written (`docs/shadow-ban.md`). `audience` says who
+   * hears the refusal: the person creating, or the operator creating for them.
    */
   private async createOwnedWorkspace(
     userId: string,
     input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
     trailing: D1PreparedStatement[],
+    audience: "person" | "operator" = "person",
   ): Promise<D1Result[]> {
     const at = nowIso();
     const slug = workspaceSlug(input.name, input.workspaceId);
@@ -541,7 +547,12 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       ).bind(input.workspaceId, userId, at, input.workspaceId, this.env.AVALON_REGION),
       this.operationStatement(input, "create", null, at),
       ...trailing,
-    ]);
+    ]).catch((error: unknown) => {
+      // An operator's create can name several accounts, and the abort does not say which.
+      throw shadowBanRefusal(this.env, error, {
+        action: "create_organization", userId: audience === "operator" ? null : userId, workspaceId: input.workspaceId,
+      }, audience);
+    });
     await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity);
     await this.seedNewOrganization(input.workspaceId, userId);
     return trailing.length === 0 ? [] : results.slice(-trailing.length);

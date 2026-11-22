@@ -287,7 +287,10 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   `users` is regional — so it answers for every workspace the person belongs to
   in that region, and a second region's row keeps its own. `syncRegionalProfileStatement`
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
-  zone chosen in one region does not cross to another.
+  zone chosen in one region does not cross to another. `shadow_banned_at` is
+  the time an operator shadow banned the account, or null. No service reads it
+  to decide anything: two triggers on `workspace_members` do, and refuse a
+  banned account any new relationship ([`shadow-ban.md`](shadow-ban.md)).
 
 - `workspace_members` records member/guest access class separately from the
   owner/admin/member administrative role. A guest's role is null. Incarnation

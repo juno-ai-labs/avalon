@@ -462,6 +462,10 @@ another Organization for them.
 - A regional profile refresh reports `regional_identity_conflict` only for a
   uniqueness refusal (another regional user holds the verified email). Any
   other database failure keeps its own error.
+- Creating an Organization, or accepting an invitation, as a shadow-banned
+  account answers 409 `request_unavailable` and writes nothing in the region.
+  It is a regional business refusal, so the Global reservation is released
+  like any other ([`shadow-ban.md`](shadow-ban.md)).
 
 ## Data model
 

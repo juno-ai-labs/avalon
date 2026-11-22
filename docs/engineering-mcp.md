@@ -27,6 +27,8 @@ available to Rally users by virtue of product membership.
   user's authority (`engineeringUserAuth`) for every tool that acts as one.
 - `apps/api/src/services/engineering-members.ts` adapts
   `WorkspaceService.addMember` to an operator acting as an owner or admin.
+- `apps/api/src/services/shadow-ban.ts` holds `setUserShadowBan`, the write
+  behind `set_user_shadow_ban` ([`shadow-ban.md`](shadow-ban.md)).
 - `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer
   and transcript range reader; `conversation-text.ts` formats participant
   prose with shared display and plaintext helpers.
@@ -284,6 +286,16 @@ existing Global identities through the audited private bridge. Password sign-in
 requires the account’s primary email to have been verified independently.
 [Password sign-in](password-login.md) owns secret delivery, rotation, revocation,
 storage and attempt limits.
+
+### Shadow bans
+
+`set_user_shadow_ban` sets or lifts the flag on one user row in the region the
+call names, through the audited bridge, and `search_users` and `list_users`
+show it as `shadowBannedAt`. Unlike the password tools it is regional, because
+the flag is enforced by the D1 that holds the row. A banned account refuses
+`create_org` and `add_org_member` with `account_shadow_banned`.
+[`shadow-ban.md`](shadow-ban.md) owns what a ban refuses and why the guard is
+a trigger.
 
 ### Product creation
 

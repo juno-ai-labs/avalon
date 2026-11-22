@@ -9,6 +9,7 @@ import { ApiError } from "../lib/api-error";
 import { encryptString, decryptString } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { ensureGuestRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
+import { isShadowBanAbort, logShadowBanRefusal } from "../services/shadow-ban";
 import { sendEmail } from "../services/email";
 import { readConversationPreview } from "../services/conversation-preview";
 import { PREVIEW_BYTES, PREVIEW_TURNS, PREVIEW_WORDS, scopeInvitationEmailParts } from "../services/scope-invitation-email";
@@ -131,12 +132,12 @@ export class ScopeInvitationService {
     if (!emails.length) return [];
     const addresses = JSON.stringify(emails);
     const at = new Date().toISOString();
-    const results = await this.env.DB.batch([
+    const statements = (admissible: string) => [
       this.env.DB.prepare(`INSERT OR IGNORE INTO scope_share_recipients (email, workspace_id, parent_id, created_at)
         SELECT value, ?, ?, ? FROM json_each(?)`).bind(workspaceId, this.parentId, at, addresses),
       this.env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, access_class, status, joined_at)
-        SELECT DISTINCT ?, user_id, NULL, 'guest', 'active', ? FROM user_verified_emails
-        WHERE email IN (SELECT value FROM json_each(?))
+        SELECT DISTINCT ?, verified.user_id, NULL, 'guest', 'active', ? FROM user_verified_emails verified
+        WHERE verified.email IN (SELECT value FROM json_each(?)) ${admissible}
         ON CONFLICT(workspace_id, user_id) DO NOTHING`).bind(workspaceId, at, addresses),
       this.env.DB.prepare(`SELECT verified.email, members.workspace_id AS workspaceId, members.user_id AS userId,
         members.access_class AS accessClass, members.role, members.status, members.incarnation, members.revision
@@ -144,7 +145,16 @@ export class ScopeInvitationService {
         JOIN workspaces workspace ON workspace.id = members.workspace_id
         WHERE members.workspace_id = ? AND workspace.abandoned_at IS NULL
           AND verified.email IN (SELECT value FROM json_each(?))`).bind(workspaceId, addresses),
-    ]);
+    ];
+    const results = await this.env.DB.batch(statements("")).catch((error: unknown) => {
+      // The membership guard aborted the batch for a shadow-banned recipient (`docs/shadow-ban.md`),
+      // and with it everyone else's rows. Run it again without the banned accounts: their shares
+      // stay pending, as one to an address with no account does. Only this path pays the second trip.
+      if (!isShadowBanAbort(error)) throw error;
+      logShadowBanRefusal(this.env, { action: "claim_share", userId: null, workspaceId });
+      return this.env.DB.batch(statements(`AND NOT EXISTS (SELECT 1 FROM users banned
+        WHERE banned.id = verified.user_id AND banned.shadow_banned_at IS NOT NULL)`));
+    });
     const parsed = z.array(RecipientRelationshipSchema).safeParse(results[2]!.results);
     if (!parsed.success) throw new Error(zodDiagnosticCode(parsed.error, "scope_invitation_recipients")!);
     return parsed.data
@@ -218,7 +228,16 @@ export class ScopeInvitationService {
     if (blocked) return { status: "denied", reason: blocked };
     // Cross-authority saga: an interruption may leave a relationship without a
     // share. That grants no conversation access and the next claim resumes it.
-    const observed = prepared ?? await ensureGuestRelationship(this.env.DB, workspaceId, userId);
+    let observed: WorkspaceRelationship;
+    try {
+      observed = prepared ?? await ensureGuestRelationship(this.env.DB, workspaceId, userId);
+    } catch (error) {
+      // A shadow-banned account gains no guest relationship (`docs/shadow-ban.md`). The share
+      // stays pending, so it is claimed at the first sign-in after the ban is lifted.
+      if (!isShadowBanAbort(error)) throw error;
+      logShadowBanRefusal(this.env, { action: "claim_share", userId, workspaceId });
+      return { status: "denied", reason: "relationship_required" };
+    }
     this.noteRelationship(observed);
     const retained = await this.readRelationship(workspaceId, userId);
     // Bind to D1's observed incarnation, never to an unordered different live

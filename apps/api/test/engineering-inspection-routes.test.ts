@@ -266,6 +266,18 @@ describe("engineering user search", () => {
     expect([...byId.keys()].sort()).toEqual([ZOE, LONER].sort());
   });
 
+  it("says when a user was shadow banned, and null for one who is not", async () => {
+    const { database, env } = fixture();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at, shadow_banned_at)
+      VALUES ('${ZOE}', 'zoe', 'zoe@example.com', 'Zoe', '${AT}', '${AT}', '2026-11-02T00:00:00.000Z'),
+             ('${LONER}', 'loner', 'loner@example.com', 'Loner', '${AT}', '${AT}', NULL);
+    `);
+    const rows = await searchInspectionUsers(env, {});
+    expect(Object.fromEntries(rows.filter((row) => row.id === ZOE || row.id === LONER).map((row) => [row.id, row.shadow_banned_at])))
+      .toEqual({ [ZOE]: "2026-11-02T00:00:00.000Z", [LONER]: null });
+  });
+
   it("matches name or email with non-ASCII capitals, and filters by a creation window", async () => {
     const env = users();
     await expect(searchInspectionUsers(env, { query: "ÅNGSTRÖM" })).resolves.toEqual([expect.objectContaining({ id: ZOE })]);

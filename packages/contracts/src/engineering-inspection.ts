@@ -38,6 +38,20 @@ export const EngineeringRevokePasswordResultSchema = deferredZodSchema(() => z.s
 }));
 export type EngineeringRevokePasswordResult = z.infer<typeof EngineeringRevokePasswordResultSchema>;
 
+export const SetEngineeringUserShadowBanInputSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema.describe("The region search_users reported this user in. Users are regional rows."),
+  userId: UserIdSchema.describe("Existing user ID in that region, from search_users."),
+  banned: z.boolean().describe("true shadow bans the account; false lifts the ban."),
+  reason: z.string().trim().min(1).max(500).describe("Why, for the audit record."),
+}));
+export type SetEngineeringUserShadowBanInput = z.infer<typeof SetEngineeringUserShadowBanInputSchema>;
+export const EngineeringUserShadowBanResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema, userId: UserIdSchema, email: z.string(),
+  /** When the ban was set; null when the account is not banned. */
+  shadowBannedAt: z.string().nullable(),
+}));
+export type EngineeringUserShadowBanResult = z.infer<typeof EngineeringUserShadowBanResultSchema>;
+
 const creationIdentity = {
   operationId: IdSchema.describe("A fresh UUID for this creation. Reuse it and the same arguments after an uncertain outcome."),
   creatorUserId: UserIdSchema.describe("Existing regional Rally user to create as. For an existing Organization, selects any active member or guest and enforces the app's permissions; no login session is minted."),
@@ -329,6 +343,8 @@ export const EngineeringUserSchema = deferredZodSchema(() => z.strictObject({
   createdAt: z.string(),
   /** The latest `last_seen_at` across the user's active memberships; null if never seen. */
   lastSeenAt: z.string().nullable(),
+  /** When this account was shadow banned (`set_user_shadow_ban`); null when it is not. */
+  shadowBannedAt: z.string().nullable(),
   /** Every membership in this region, whatever its status. */
   organizations: z.array(EngineeringUserOrganizationSchema),
 }));
@@ -554,6 +570,7 @@ export interface EngineeringInspectionRpcBinding {
   changeOrganizationPlan(input: ChangeEngineeringPlanInput, operator: EngineeringOperator): Promise<EngineeringUsageResult>;
   provisionUserPassword(input: EngineeringPasswordUserInput, operator: EngineeringOperator): Promise<EngineeringProvisionPasswordResult>;
   revokeUserPassword(input: EngineeringPasswordUserInput, operator: EngineeringOperator): Promise<EngineeringRevokePasswordResult>;
+  setUserShadowBan(input: SetEngineeringUserShadowBanInput, operator: EngineeringOperator): Promise<EngineeringUserShadowBanResult>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
   archiveSidekick(input: ArchiveEngineeringSidekickInput, operator: EngineeringOperator): Promise<ArchiveEngineeringSidekickResult>;

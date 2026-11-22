@@ -23,6 +23,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     administerBillingCatalog: vi.fn<EngineeringInspectionRpcBinding["administerBillingCatalog"]>(),
     provisionUserPassword: vi.fn<EngineeringInspectionRpcBinding["provisionUserPassword"]>(),
     revokeUserPassword: vi.fn<EngineeringInspectionRpcBinding["revokeUserPassword"]>(),
+    setUserShadowBan: vi.fn<EngineeringInspectionRpcBinding["setUserShadowBan"]>(),
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
     inspectOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationSettings"]>(),
     updateOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["updateOrganizationSettings"]>(),
@@ -143,6 +144,27 @@ describe("Rally engineering MCP tools", () => {
       expect(global.revokeUserPassword).toHaveBeenCalledExactlyOnceWith({ userId }, principal);
       expect(JSON.stringify(log.mock.calls)).not.toContain("test-secret-returned-once");
     } finally { log.mockRestore(); }
+  });
+
+  it("sends a shadow ban to the region that holds the user's row, as the operator", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const userId = asUserId("00000000-0000-7000-8000-000000000ef3");
+    vi.mocked(enterprise.setUserShadowBan).mockResolvedValue({
+      region: "enterprise", userId, email: "spam@example.test", shadowBannedAt: "2026-11-22T10:00:00.000Z",
+    });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    const request = { region: "enterprise", userId, banned: true, reason: "Signup spam" };
+
+    const response = await rpc(env, "tools/call", { name: "set_user_shadow_ban", arguments: request });
+
+    const result = response.result as { isError?: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0]!.text)).toEqual({
+      region: "enterprise", userId, email: "spam@example.test", shadowBannedAt: "2026-11-22T10:00:00.000Z",
+    });
+    expect(enterprise.setUserShadowBan).toHaveBeenCalledExactlyOnceWith(request, principal);
+    expect(global.setUserShadowBan).not.toHaveBeenCalled();
   });
 
   it("advertises its purpose and usage instructions in initialization", async () => {
@@ -325,6 +347,7 @@ describe("Rally engineering MCP tools", () => {
     expect(result.tools.map((tool) => tool.name)).toEqual([
       "provision_user_password",
       "revoke_user_password",
+      "set_user_shadow_ban",
       "create_org",
       "send_message",
       "pause_sidekick",
@@ -992,6 +1015,7 @@ describe("Rally engineering MCP tools", () => {
       region,
       createdAt,
       lastSeenAt,
+      shadowBannedAt: null,
       organizations: Array.from({ length: organizationCount }, (_, index) => ({
         workspaceId: asWorkspaceId(`00000000-0000-7000-8000-0000000001${String(index).padStart(2, "0")}`),
         name: `Org ${index}`,
