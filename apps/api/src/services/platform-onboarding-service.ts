@@ -509,9 +509,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * there is no General or Personal Channel (plan step C-2), and the client
    * lands on the Canvases home.
    *
-   * A shadow-banned owner or initial member aborts the batch, so nothing of
-   * the Organization is written (`docs/shadow-ban.md`). `audience` says who
-   * hears the refusal: the person creating, or the operator creating for them.
+   * A shadow-banned owner aborts the batch, so nothing of the Organization is
+   * written (`docs/shadow-ban.md`). `audience` says who hears the refusal: the
+   * person creating, or the operator creating for them.
    */
   private async createOwnedWorkspace(
     userId: string,
@@ -548,10 +548,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       this.operationStatement(input, "create", null, at),
       ...trailing,
     ]).catch((error: unknown) => {
-      // An operator's create can name several accounts, and the abort does not say which.
-      throw shadowBanRefusal(this.env, error, {
-        action: "create_organization", userId: audience === "operator" ? null : userId, workspaceId: input.workspaceId,
-      }, audience);
+      throw shadowBanRefusal(this.env, error, { userId, workspaceId: input.workspaceId }, audience);
     });
     await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity);
     await this.seedNewOrganization(input.workspaceId, userId);

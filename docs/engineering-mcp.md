@@ -292,8 +292,9 @@ storage and attempt limits.
 `set_user_shadow_ban` sets or lifts the flag on one user row in the region the
 call names, through the audited bridge, and `search_users` and `list_users`
 show it as `shadowBannedAt`. Unlike the password tools it is regional, because
-the flag is enforced by the D1 that holds the row. A banned account refuses
-`create_org` and `add_org_member` with `account_shadow_banned`.
+the flag is enforced by the D1 that holds the row. `create_org` for a banned
+`creatorUserId` is refused with `account_shadow_banned`; a banned account
+among its `userIds`, or added with `add_org_member`, is seated like anyone.
 [`shadow-ban.md`](shadow-ban.md) owns what a ban refuses and why the guard is
 a trigger.
 

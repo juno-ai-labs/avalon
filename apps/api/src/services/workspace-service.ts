@@ -34,7 +34,6 @@ import {
 } from "./invitation-email-service";
 import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
 import { memberByAddress } from "./member-by-address";
-import { shadowBanRefusal } from "./shadow-ban";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { workspaceDOName } from "../durable-objects/names";
@@ -274,10 +273,7 @@ export async function acceptInvitationForUser(
          status = 'active',
          joined_at = COALESCE(workspace_members.joined_at, excluded.joined_at)`,
     ).bind(user.id, acceptedAt, invitation.id, acceptedAt, user.id),
-  ]).catch((error: unknown) => {
-    // The batch is one transaction, so a refused membership leaves the invitation unaccepted.
-    throw shadowBanRefusal(env, error, { action: "accept_invitation", userId: user.id, workspaceId: invitation.workspace_id });
-  });
+  ]);
   const transitioned = Number(results[0]?.meta?.changes ?? 0) === 1;
   if (!transitioned) {
     const raced = await loadInvitationById(env, invitation.id);
@@ -934,8 +930,6 @@ export class WorkspaceService {
     }
     const result = await promoteWorkspaceGuest(this.env.DB, {
       ...input, userId, workspaceId: this.auth.workspaceId, actorUserId: this.auth.userId,
-    }).catch((error: unknown) => {
-      throw shadowBanRefusal(this.env, error, { action: "promote_guest", userId, workspaceId: this.auth.workspaceId });
     });
     if (result.status !== "promoted") {
       throw new ApiError(409, "workspace_relationship_changed", "This person's workspace access changed. Refresh and try again.");
@@ -1069,10 +1063,7 @@ export class WorkspaceService {
            AND NOT EXISTS (SELECT 1 FROM platform_workspace_bindings b WHERE b.platform_user_id = users.platform_user_id
              AND b.region <> ? AND b.status = 'active' AND NOT (b.region = ? AND b.workspace_id = ?))`,
       ).bind(person.id, this.auth.workspaceId, this.env.AVALON_REGION, workspace.region, this.auth.workspaceId)] : []),
-    ]).catch((error: unknown) => {
-      throw shadowBanRefusal(this.env, error, { action: "add_member", userId: person.id, workspaceId: this.auth.workspaceId },
-        this.auth.principal === "engineering" ? "operator" : "person");
-    });
+    ]);
     if (Number(added?.meta?.changes ?? 0) === 0) throw new ApiError(404, "workspace_not_found", "This Organization no longer exists");
     const userId = person.id;
     // The membership trigger recorded the delivery with the write. Dispatch now so the

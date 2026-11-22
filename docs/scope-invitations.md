@@ -89,11 +89,6 @@ was replaced can never be claimed, so a claim that meets one retires it, and its
 row clears instead of costing every later sign-in. Every refusal is logged as
 `scope_invitation_claim_refused` with its reason.
 
-A shadow-banned account gains no guest relationship, so a share to its address
-stays pending: at creation the recipient batch is run again without it, and at
-its sign-in the claim answers `relationship_required`. Lifting the ban lets
-the next sign-in claim it ([`shadow-ban.md`](shadow-ban.md#a-canvas-share)).
-
 `claimScopeInvitations` (`scope-invitation-claims.ts`) looks up rows for the
 user's verified addresses in `user_verified_emails`, plus any address the caller
 has verified itself, in one D1 query, and asks each Canvas to claim, in

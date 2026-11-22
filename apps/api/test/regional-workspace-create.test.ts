@@ -186,20 +186,23 @@ describe("a shadow-banned account creating an Organization", () => {
     expect(session.workspace).toMatchObject({ id: workspaceId, name: "Northwind", role: "owner" });
   });
 
-  it("names the ban to an operator, whether it is on the owner or on an initial member", async () => {
+  it("names the ban to an operator creating for a banned owner, and seats a banned initial member", async () => {
     openAuthority();
     const member = "00000000-0000-7000-8000-00000000c005";
     database.prepare(`INSERT INTO users (id, email, name, created_at, updated_at, platform_user_id, shadow_banned_at)
       VALUES (?, 'member@example.test', 'Member', ?, ?, ?, ?)`).run(member, at, at, member, at);
-    const forMember = (memberUserIds: string[]) => service().createWorkspaceForMember({
-      operationId, workspaceId, name: "Northwind", userId: platformUserId, memberUserIds });
+    const forMember = () => service().createWorkspaceForMember({
+      operationId, workspaceId, name: "Northwind", userId: platformUserId, memberUserIds: [member] });
 
-    await expect(forMember([member])).rejects.toMatchObject({ status: 409, code: "account_shadow_banned" });
-    expect(organizations()).toEqual(nothing);
-
-    database.prepare("UPDATE users SET shadow_banned_at = CASE id WHEN ? THEN ? ELSE NULL END").run(platformUserId, at);
-    await expect(forMember([member])).rejects.toMatchObject({ status: 409, code: "account_shadow_banned" });
+    database.prepare("UPDATE users SET shadow_banned_at = ? WHERE id = ?").run(at, platformUserId);
+    await expect(forMember()).rejects.toMatchObject({ status: 409, code: "account_shadow_banned" });
     expect(organizations()).toEqual(nothing);
     expect(initialized).toEqual([]);
+
+    // The ban stops an account creating, not being added: the banned member is seated.
+    database.prepare("UPDATE users SET shadow_banned_at = NULL WHERE id = ?").run(platformUserId);
+    await forMember();
+    expect(database.prepare("SELECT user_id, role FROM workspace_members WHERE workspace_id = ? ORDER BY role").all(workspaceId))
+      .toEqual([{ user_id: member, role: "member" }, { user_id: platformUserId, role: "owner" }]);
   });
 });

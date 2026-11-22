@@ -36,7 +36,6 @@ import { provisionUserPassword } from "../src/services/password-login-service";
 import passwordMigration from "../../../packages/db/migrations/0129_password_login.sql?raw";
 import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
-import { SHADOW_BAN_SCHEMA } from "./helpers/shadow-ban-schema";
 
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c5000");
 let CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000000c5100");
@@ -401,53 +400,6 @@ describe("sharing a Canvas by email address", () => {
       loginIdentities: [{ provider: "google", subject: "google-newcomer" }], email: "Newcomer@Example.test", name: "Newcomer",
       avatarUrl: null, timezone: "UTC", createdAt: at });
     expect(discovery.workspaces).toEqual([expect.objectContaining({ id: WORKSPACE_ID, accessClass: "guest" })]);
-    expect(await opens(NEWCOMER)).toBe(true);
-  });
-});
-
-describe("sharing a Canvas with a shadow-banned account", () => {
-  const setBan = (userId: string, at: string | null) =>
-    env.DB.prepare("UPDATE users SET shadow_banned_at = ? WHERE id = ?").bind(at, userId).run();
-  const relationship = (userId: string) => env.DB.prepare(
-    "SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?").bind(WORKSPACE_ID, userId).first();
-
-  beforeEach(async () => {
-    await env.DB.batch(SHADOW_BAN_SCHEMA.map((sql) => env.DB.prepare(sql)));
-  });
-
-  it("leaves the banned recipient's share pending, and still admits the others it was made with", async () => {
-    await verifyNewcomer();
-    await setBan(GUEST, new Date().toISOString());
-
-    const result = await workspace().createScopeInvitations({
-      operationId: crypto.randomUUID(), workspaceId: WORKSPACE_ID, parentId: CANVAS_ID, actorUserId: CREATOR,
-      emails: [GUEST_EMAIL, NEWCOMER_EMAIL], targets: [{ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: CANVAS_ID }], expiresAt: null,
-    });
-
-    if (result.status !== "created") throw new Error(JSON.stringify(result));
-    expect(Object.fromEntries(result.invitations.map((invitation) => [invitation.email, invitation.status])))
-      .toEqual({ [GUEST_EMAIL]: "pending", [NEWCOMER_EMAIL]: "accepted" });
-    expect(await relationship(GUEST)).toBeNull();
-    expect(await opens(GUEST)).toBe(false);
-    expect(await relationship(NEWCOMER)).toEqual({ access_class: "guest" });
-    expect(await opens(NEWCOMER)).toBe(true);
-  });
-
-  it("does not admit a banned account that signs in to claim a share, and admits it once the ban is lifted", async () => {
-    await share([NEWCOMER_EMAIL]);
-    await verifyNewcomer();
-    await setBan(NEWCOMER, new Date().toISOString());
-    const claim = () => workspace().claimScopeInvitations({
-      workspaceId: WORKSPACE_ID, parentId: CANVAS_ID, userId: NEWCOMER, emails: [NEWCOMER_EMAIL] });
-
-    // A refusal, not a failure: the sign-in this runs inside goes on, and the share keeps waiting.
-    await expect(claim()).resolves.toEqual([]);
-    expect(await relationship(NEWCOMER)).toBeNull();
-    expect(await opens(NEWCOMER)).toBe(false);
-    expect(await routes(NEWCOMER_EMAIL)).toEqual([{ workspace_id: WORKSPACE_ID, parent_id: CANVAS_ID }]);
-
-    await setBan(NEWCOMER, null);
-    await expect(claim()).resolves.toEqual([expect.objectContaining({ status: "accepted", acceptedByUserId: NEWCOMER })]);
     expect(await opens(NEWCOMER)).toBe(true);
   });
 });
