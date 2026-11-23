@@ -9,7 +9,9 @@ footer, the sitemap, `llms.txt`, and the build.
 A Vite plugin turns the Markdown into pages, the shared reading-card renderer
 draws each post's link-preview image, and the site-chrome markers described in
 [`site-chrome.md`](site-chrome.md) supply the header and footer. The header is
-the homepage's (`rally:home-header`).
+the homepage's (`rally:home-header`). A post whose front matter sets `email` is
+signed by a person: the byline links the author's name to the address and the
+structured data names a `Person`; without it the author is an `Organization`.
 
 ## Where the code lives
 
@@ -60,9 +62,6 @@ post only, so it stays two links long however many posts accumulate.
 - **The date is a real day.** An impossible day such as 2026-02-30 throws
   instead of rendering as a different date. Guard: the blog rendering test.
 - **Renaming a file keeps its URL;** changing its `slug` moves it.
-- **A post with an `email` is signed by a person.** The byline links the
-  author's name to the address, and the structured data names a `Person`
-  rather than an `Organization`. Guard: the blog rendering test.
 
 ## Boundary
 
