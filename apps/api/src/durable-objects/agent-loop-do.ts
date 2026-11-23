@@ -8169,12 +8169,12 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // arms its own wake.
       const stopped = this.backgroundAgentStopped();
       if (!stopped && this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
-      // The room then goes quiet with messages still queued only if the agent
-      // is stopped or an open question is waiting for its answer. A newly
-      // admitted ordinary message cancels that question and supplies the tool
-      // result during promotion.
+      // The room is meant to go quiet with messages still queued only if the
+      // agent is stopped or an open question is waiting for its answer; a newly
+      // admitted ordinary message cancels that question. A queue held by
+      // anything else, such as an unsettled non-question batch, is a wedge.
       const queued = stopped ? [] : this.loop.pendingInputs();
-      if (queued.length > 0) {
+      if (queued.length > 0 && !this.transcript.awaitingQuestionAnswer(loop.loop_id)) {
         logWarn(this.env, "substream_loop_parked_with_queued_input", {
           loop_id: loop.loop_id,
           queued_input_count: queued.length,

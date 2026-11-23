@@ -2390,6 +2390,35 @@ describe("canonical ordered work-stream transcript", () => {
       .toEqual([queued.inputId]);
   });
 
+  it("reports a loop as awaiting an answer only while its withheld batch is all questions and one is unanswered", async () => {
+    const { transcript, sql, storage } = open();
+    await transcript.commitBindTransition(initialize(), NOW);
+    const reserved = await reserveAssistantFixture({
+      transcript, storage, content: "Two calls", toolCount: 2, now: NOW + 1,
+    });
+    await transcript.commitBindTransition(reserved.transition, NOW + 2, reserved.executionFence);
+    const ask = (index: number) => sql.exec(
+      `INSERT INTO elicitation_requests
+         (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+          minimum_selections, maximum_selections, target_user_id, status, answer_json,
+          answered_by_user_id, external_actor_json, created_at, answered_at)
+       VALUES (?, ?, ?, 'Which scope?', 'text', '[]', 0, NULL, NULL,
+               'pending', NULL, NULL, NULL, ?, NULL)`,
+      `elicitation-${index}`, reserved.executionFence.executionId, `run-1:turn:1:tool:${index}`, NOW + 3,
+    );
+
+    // No question behind the withheld calls: the wedge the warning is for.
+    expect(transcript.awaitingQuestionAnswer("run-1")).toBe(false);
+    // A question beside an ordinary call is still a wedge.
+    ask(0);
+    expect(transcript.awaitingQuestionAnswer("run-1")).toBe(false);
+    ask(1);
+    expect(transcript.awaitingQuestionAnswer("run-1")).toBe(true);
+    // Closed with no answer queued: nobody will answer again.
+    sql.exec(`UPDATE elicitation_requests SET status = 'answered'`);
+    expect(transcript.awaitingQuestionAnswer("run-1")).toBe(false);
+  });
+
   it("cancels a withheld question when another message arrives and activates that message", async () => {
     const { transcript, sql, storage } = open();
     seedPendingInputRoot(sql);
