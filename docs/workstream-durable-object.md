@@ -1285,9 +1285,10 @@ example:
 5. reject an object whose schema is ahead of the Worker, warn and continue when
    an applied version's implementation hash changed, and let concrete SQL or
    integrity failures reject construction;
-6. run `PRAGMA foreign_key_check` after a group that turned enforcement or
-   deferral off (see [Durable Object SQLite](durable-object-sqlite.md#schema-and-migrations)),
-   then `PRAGMA optimize` after changes.
+6. validate foreign-key definitions for each migration group. Also run
+   `PRAGMA foreign_key_check` in legacy rebuild groups and groups that set a
+   foreign-key pragma, then run `PRAGMA optimize` after changes.
+   See [Durable Object SQLite](durable-object-sqlite.md#schema-and-migrations).
 
 Migration definitions may not include their own `BEGIN`, `COMMIT`, or
 `ROLLBACK`; the runner owns atomicity. A migration that rebuilds a referenced

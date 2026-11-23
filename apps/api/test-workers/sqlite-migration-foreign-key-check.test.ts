@@ -16,15 +16,20 @@ const PARENT_AND_CHILD: DurableObjectSqliteMigration = {
   ],
 };
 
-/** The storage the runner is handed, with every statement it executes recorded. */
-function recording(storage: DurableObjectStorage): { storage: DurableObjectStorage; statements: string[] } {
+/** Record statements and the actual row counts supplied by workerd. */
+function recording(storage: DurableObjectStorage) {
   const statements: string[] = [];
+  const probes: { rowsRead: number; rowsWritten: number }[] = [];
   const sql = new Proxy(storage.sql, {
     get(target, property) {
       if (property === 'exec') {
         return (query: string, ...bindings: unknown[]) => {
           statements.push(query.trim());
-          return target.exec(query, ...(bindings as SqlStorageValue[]));
+          const cursor = target.exec(query, ...(bindings as SqlStorageValue[]));
+          if (/^EXPLAIN\s/iu.test(query)) {
+            probes.push(cursor);
+          }
+          return cursor;
         };
       }
       const value = Reflect.get(target, property, target);
@@ -38,7 +43,7 @@ function recording(storage: DurableObjectStorage): { storage: DurableObjectStora
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  return { storage: wrapped, statements };
+  return { storage: wrapped, statements, probes };
 }
 
 it('does not scan the whole database for orphans after an ordinary group, which SQLite enforced immediately', async () => {
@@ -52,7 +57,7 @@ it('does not scan the whole database for orphans after an ordinary group, which 
   });
 
   await runInDurableObject(stub, (_instance, state) => {
-    const { storage, statements } = recording(state.storage);
+    const { storage, statements, probes } = recording(state.storage);
     applyDurableObjectSqliteMigrations({
       storage,
       migrations: [PARENT_AND_CHILD, { version: 2, description: 'a column', statements: [`ALTER TABLE child ADD COLUMN note TEXT`] }],
@@ -60,7 +65,9 @@ it('does not scan the whole database for orphans after an ordinary group, which 
       workerVersionId: 'v2',
       now: 2,
     });
-    expect(statements.filter((statement) => /foreign_key_check/iu.test(statement))).toEqual([]);
+    expect(statements.filter((statement) => /^PRAGMA foreign_key_check/iu.test(statement))).toEqual([]);
+    expect(probes.map(({ rowsRead, rowsWritten }) => ({ rowsRead, rowsWritten })))
+      .toEqual([{ rowsRead: 0, rowsWritten: 0 }]);
     expect(state.storage.sql.exec(`SELECT MAX(version) AS version FROM _sql_schema_migrations`).one()).toEqual({ version: 2 });
   });
 
@@ -83,6 +90,75 @@ it('does not scan the whole database for orphans after an ordinary group, which 
   });
 });
 
+it('rolls back a dropped parent key and its migration receipt', async () => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName('foreign-key-check-dropped-index');
+  await stub.ping();
+  const initial: DurableObjectSqliteMigration = {
+    version: 1,
+    description: 'a child referencing a separately indexed parent key',
+    statements: [
+      `CREATE TABLE parent (id INTEGER PRIMARY KEY, code TEXT NOT NULL)`,
+      `CREATE UNIQUE INDEX parent_code ON parent(code)`,
+      `CREATE TABLE "child""records" (parent_code TEXT NOT NULL REFERENCES parent(code))`,
+      `INSERT INTO parent VALUES (1, 'kept')`,
+      `INSERT INTO "child""records" VALUES ('kept')`,
+    ],
+  };
+
+  await runInDurableObject(stub, (_instance, state) => {
+    applyDurableObjectSqliteMigrations({
+      storage: state.storage,
+      migrations: [initial],
+      component: 'probe',
+      workerVersionId: 'v1',
+    });
+  });
+
+  await runInDurableObject(stub, (_instance, state) => {
+    expect(() => applyDurableObjectSqliteMigrations({
+      storage: state.storage,
+      migrations: [initial, { version: 2, description: 'drop the referenced index', statements: ['DROP INDEX parent_code'] }],
+      component: 'probe',
+      workerVersionId: 'v2',
+    })).toThrow('probe_schema_foreign_key_definition_invalid:child"records');
+  });
+
+  await runInDurableObject(stub, (_instance, state) => {
+    const sql = state.storage.sql;
+    expect(sql.exec('SELECT version FROM _sql_schema_migrations').toArray()).toEqual([{ version: 1 }]);
+    expect(sql.exec(`SELECT name FROM sqlite_schema WHERE name = 'parent_code'`).one()).toEqual({ name: 'parent_code' });
+    expect(sql.exec('SELECT parent_code FROM "child""records"').one()).toEqual({ parent_code: 'kept' });
+    sql.exec('INSERT INTO "child""records" VALUES (?)', 'kept');
+  });
+});
+
+it.each([
+  { name: 'missing parent', statements: ['CREATE TABLE broken (value REFERENCES missing(id))'] },
+  { name: 'missing parent column', statements: ['CREATE TABLE broken (value REFERENCES parent(missing))'] },
+  { name: 'wrong composite key arity', statements: [
+    'CREATE TABLE composite (a TEXT, b TEXT, PRIMARY KEY (a, b))',
+    'CREATE TABLE broken (value REFERENCES composite)',
+  ] },
+  { name: 'wrong collation', statements: [
+    'CREATE TABLE collated (code TEXT)',
+    'CREATE UNIQUE INDEX collated_code ON collated(code COLLATE NOCASE)',
+    'CREATE TABLE broken (value REFERENCES collated(code))',
+  ] },
+])('rejects an empty child with $name and leaves no receipt', async ({ name, statements }) => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName(`foreign-key-check-${name}`);
+  await stub.ping();
+  await runInDurableObject(stub, (_instance, state) => {
+    const options = { storage: state.storage, component: 'probe', workerVersionId: 'v1' };
+    applyDurableObjectSqliteMigrations({ ...options, migrations: [PARENT_AND_CHILD] });
+    expect(() => applyDurableObjectSqliteMigrations({
+      ...options,
+      migrations: [PARENT_AND_CHILD, { version: 2, description: name, statements }],
+    })).toThrow('probe_schema_foreign_key_definition_invalid:broken');
+    expect(state.storage.sql.exec('SELECT version FROM _sql_schema_migrations').toArray()).toEqual([{ version: 1 }]);
+    expect(state.storage.sql.exec(`SELECT name FROM sqlite_schema WHERE name = 'broken'`).toArray()).toEqual([]);
+  });
+});
+
 it('still checks for orphans after a group that asked for enforcement off', async () => {
   const stub = env.MIGRATION_PROBE_DO!.getByName('foreign-key-check-disabled');
   await stub.ping();
@@ -96,7 +172,7 @@ it('still checks for orphans after a group that asked for enforcement off', asyn
       workerVersionId: 'v1',
       now: 1,
     });
-    expect(statements.filter((statement) => /foreign_key_check/iu.test(statement))).toHaveLength(1);
+    expect(statements.filter((statement) => /^PRAGMA foreign_key_check/iu.test(statement))).toHaveLength(1);
   });
 });
 

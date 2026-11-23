@@ -248,6 +248,7 @@ export function applyDurableObjectSqliteMigrations(
         }
 
         if (groupIndex === groups.length - 1) options.afterMigrations?.(sql, appliedVersions);
+        validateForeignKeyDefinitions(sql, options.component, group.migrations.at(-1)!.version);
         // `foreign_key_check` reads every row of every table with a foreign key,
         // so it runs only where enforcement might not have caught an orphan
         // (`docs/durable-object-sqlite.md`, Schema and migrations).
@@ -267,6 +268,37 @@ export function applyDurableObjectSqliteMigrations(
   }
 
   return appliedVersions;
+}
+
+/** Resolve foreign-key definitions at prepare time without walking table rows. */
+function validateForeignKeyDefinitions(sql: SqlStorage, component: string, version: number): void {
+  const children = sql.exec<{ name: string; missing_parent: string | null }>(
+    `SELECT child.name, MIN(CASE WHEN parent.name IS NULL THEN fk."table" END) AS missing_parent
+       FROM main.sqlite_schema AS child
+       CROSS JOIN pragma_foreign_key_list(child.name, 'main') AS fk
+       LEFT JOIN main.sqlite_schema AS parent
+         ON parent.type = 'table' AND parent.name = fk."table" COLLATE NOCASE
+      WHERE child.type = 'table'
+      GROUP BY child.name
+      ORDER BY child.name`,
+  ).toArray();
+
+  for (const { name: child, missing_parent: missingParent } of children) {
+    // SQLite's scan treats a missing parent as a row violation, so its
+    // compiler leaves that case to the catalog check.
+    if (missingParent !== null) {
+      throw new Error(`${component}_schema_foreign_key_definition_invalid:${child}:${missingParent}`);
+    }
+    const quoted = '"' + child.replaceAll('"', '""') + '"';
+    try {
+      // Preparing the pragma resolves parent keys. EXPLAIN returns its bytecode
+      // without running the scan. Give each group its own statement so workerd
+      // cannot reuse cached EXPLAIN bytecode from before the group's DDL.
+      sql.exec(`EXPLAIN PRAGMA main.foreign_key_check(${quoted}) /* migration ${version} */`).toArray();
+    } catch (cause) {
+      throw new Error(`${component}_schema_foreign_key_definition_invalid:${child}`, { cause });
+    }
+  }
 }
 
 function setsForeignKeyPragma(migration: DurableObjectSqliteMigration): boolean {
