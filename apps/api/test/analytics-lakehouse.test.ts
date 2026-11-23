@@ -250,12 +250,12 @@ describe("analytics events lakehouse", () => {
     const retry = vi.fn();
     await consumeAnalyticsLakehouseQueue({
       queue: "avalon-global-analytics-events-lakehouse",
-      messages: [{ id: "failed", timestamp: new Date(), body: pointers[0], attempts: 1, ack: vi.fn(), retry }],
+      messages: [{ id: "failed", timestamp: new Date(), body: pointers[0], attempts: 2, ack: vi.fn(), retry }],
       metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
       ackAll: vi.fn(),
       retryAll: vi.fn(),
     }, env);
-    expect(retry).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 10 });
     expect(database.prepare(
       "SELECT analytics_lakehouse_state FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(eventId)).toEqual({ analytics_lakehouse_state: "queued" });

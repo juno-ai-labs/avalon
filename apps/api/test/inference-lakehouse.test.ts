@@ -508,6 +508,33 @@ describe("inference lakehouse", () => {
     expect(delivered).toEqual([[expected]]);
   });
 
+  it("backs off a pointer whose archived payload cannot be read", async () => {
+    const { env } = fixture();
+    const pointer = await stageInferenceLakehouseRecord(env, record());
+    env.PAYLOADS = createCloudflareTestBinding<R2Bucket>({
+      async head() { return null; },
+      async get() {
+        throw new Error("CF_SB_CACHEW_GET_METAL_HTTP_ERROR: CacheW get metal returned an HTTP error");
+      },
+    });
+    const ack = vi.fn();
+    const retried: (number | undefined)[] = [];
+
+    await consumeInferenceLakehouseQueue({
+      queue: "avalon-global-inference-lakehouse",
+      messages: [{
+        id: "blip", timestamp: new Date(), body: pointer, attempts: 2, ack,
+        retry: (options?: QueueRetryOptions) => { retried.push(options?.delaySeconds); },
+      }],
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+      ackAll: vi.fn(),
+      retryAll: vi.fn(),
+    } satisfies MessageBatch<unknown>, env);
+
+    expect(ack).not.toHaveBeenCalled();
+    expect(retried).toEqual([10]);
+  });
+
   it("acknowledges poison and cross-region pointers without touching storage", async () => {
     const { env } = fixture();
     const ack = vi.fn();
