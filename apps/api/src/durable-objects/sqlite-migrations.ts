@@ -272,24 +272,37 @@ export function applyDurableObjectSqliteMigrations(
 
 /** Resolve foreign-key definitions at prepare time without walking table rows. */
 function validateForeignKeyDefinitions(sql: SqlStorage, component: string, version: number): void {
-  const children = sql.exec<{ name: string; missing_parent: string | null }>(
-    `SELECT child.name, MIN(CASE WHEN parent.name IS NULL THEN fk."table" END) AS missing_parent
-       FROM main.sqlite_schema AS child
-       CROSS JOIN pragma_foreign_key_list(child.name, 'main') AS fk
-       LEFT JOIN main.sqlite_schema AS parent
-         ON parent.type = 'table' AND parent.name = fk."table" COLLATE NOCASE
-      WHERE child.type = 'table'
-      GROUP BY child.name
-      ORDER BY child.name`,
+  // REFERENCES is required to declare a foreign key. Use it only to narrow
+  // the catalog read before asking SQLite to inspect the definitions.
+  const tables = sql.exec<{ name: string; may_reference: number }>(
+    `SELECT name, instr(upper(sql), 'REFERENCES') AS may_reference
+       FROM main.sqlite_schema WHERE type = 'table'
+       ORDER BY name`,
   ).toArray();
+  const tableNames = new Set(tables.map(({ name }) => name));
 
-  for (const { name: child, missing_parent: missingParent } of children) {
-    // SQLite's scan treats a missing parent as a row violation, so its
-    // compiler leaves that case to the catalog check.
-    if (missingParent !== null) {
-      throw new Error(`${component}_schema_foreign_key_definition_invalid:${child}:${missingParent}`);
-    }
+  for (const { name: child, may_reference: mayReference } of tables) {
+    if (!mayReference) continue;
     const quoted = '"' + child.replaceAll('"', '""') + '"';
+    let references: { table: string }[];
+    try {
+      references = sql.exec<{ table: string }>(`PRAGMA main.foreign_key_list(${quoted})`).toArray();
+    } catch (cause) {
+      throw new Error(`${component}_schema_foreign_key_list_failed:${child}`, { cause });
+    }
+    if (references.length === 0) continue;
+    for (const { table: parent } of references) {
+      if (tableNames.has(parent)) continue;
+      // SQLite's scan treats a missing parent as a row violation, so its
+      // compiler leaves that case to the catalog check.
+      const exists = sql.exec(
+        `SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = ? COLLATE NOCASE`,
+        parent,
+      ).toArray().length > 0;
+      if (!exists) {
+        throw new Error(`${component}_schema_foreign_key_definition_invalid:${child}:${parent}`);
+      }
+    }
     try {
       // Preparing the pragma resolves parent keys. EXPLAIN returns its bytecode
       // without running the scan. Give each group its own statement so workerd
