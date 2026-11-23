@@ -270,7 +270,7 @@ describe('public Rally site', () => {
   });
 
   it('links the GitHub repository from every header marker', () => {
-    for (const marker of ['site-nav', 'reading-nav', 'home-header', 'market-header', 'github-link', 'github-header-link']) {
+    for (const marker of ['site-nav', 'home-header', 'market-header', 'github-link', 'github-header-link']) {
       const links = [...renderSiteChrome(`<!-- rally:${marker} -->`).matchAll(/<a [^>]*href="https:\/\/github\.com\/[^"]+"[^>]*>/gu)].map(([tag]) => tag);
       expect(links, marker).toHaveLength(1);
       expect(links[0], marker).toContain('href="https://github.com/juno-ai-labs/avalon"');
@@ -305,6 +305,10 @@ describe('public Rally site', () => {
     expect(page).toContain('<div class="blog-body"><p>First paragraph.</p>\n<p>Second <strong>paragraph</strong>.</p>\n</div>');
     expect(page).toContain('<link rel="canonical" href="https://rallywith.ai/blog/hello/" />');
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/blog/hello/social.png" />');
+    const signed = renderBlogPost(parseBlogPost(source.replace('author: "The Rally team"', 'author: "Ada Lovelace"\nemail: "ada@example.com"'), '2026-10-01-hello.md'));
+    expect(signed).toContain('· <a href="mailto:ada@example.com">Ada Lovelace</a></p>');
+    expect(signed).toContain('"author":{"@type":"Person","name":"Ada Lovelace","email":"ada@example.com"}');
+    expect(page).toContain('"author":{"@type":"Organization","name":"The Rally team"}');
     expect(() => parseBlogPost(source, 'hello.md')).toThrow('hello.md: file name must be YYYY-MM-DD-<title>.md');
     expect(() => parseBlogPost(source, '2026-10-01-hello_world.md')).toThrow('2026-10-01-hello_world.md: file name must be YYYY-MM-DD-<title>.md');
     expect(() => parseBlogPost(source.replace('slug: hello', 'slug: hello_world'), '2026-10-01-hello.md'))

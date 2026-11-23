@@ -12,7 +12,7 @@ import { renderHomeHeader } from './home-header';
 import { renderHomeIllustration } from './home-illustrations';
 import { renderHomePricing } from './home-pricing';
 import { marketplaceTemplates, renderMarketHeader, renderMarketplaceCards, renderMarketplaceFilters, templatePagePath } from './marketplace-catalog';
-import { arrow, externalArrow, githubLink, gmailMark } from './site-icons';
+import { arrow, githubLink, gmailMark } from './site-icons';
 
 /** Every blog post, read from `content/blog/YYYY-MM-DD-<title>.md`, newest first. */
 export const blogPosts: readonly BlogPost[] = loadBlogPosts(new URL('../content/blog/', import.meta.url));
@@ -39,14 +39,6 @@ export function renderSiteNav(): string {
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
 }
-
-/** A quiet header for the new reading pages; the earlier product pages keep their own nav. */
-function renderReadingNav(): string {
-  return '<nav class="reading-nav" aria-label="Primary"><a href="/canvases/">Canvases</a><a href="/sidekicks/">Sidekicks</a>'
-    + `<a href="/#pricing">Pricing</a><a href="/help/">The manual ${externalArrow}</a>${githubLink()}`
-    + `<a class="header-login" data-site-action="sign-in-header" href="https://app.rallywith.ai">Open Rally ${externalArrow}</a></nav>`;
-}
-
 
 
 /** A pointy-top hexagon, as SVG points in a 100 x 112 box, inset by `inset`. */
@@ -184,7 +176,6 @@ const markers: Record<string, (argument?: string) => string> = {
   'audience-start': renderAudienceStartLink,
   'gmail-mark': () => gmailMark,
   arrow: () => arrow,
-  'reading-nav': renderReadingNav,
   'home-pricing': renderHomePricing,
   'home-illustration-canvas': () => renderHomeIllustration('canvas'),
   'home-illustration-sidekick': () => renderHomeIllustration('sidekick'),

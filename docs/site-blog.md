@@ -8,13 +8,16 @@ footer, the sitemap, `llms.txt`, and the build.
 
 A Vite plugin turns the Markdown into pages, the shared reading-card renderer
 draws each post's link-preview image, and the site-chrome markers described in
-[`site-chrome.md`](site-chrome.md) supply the header and footer.
+[`site-chrome.md`](site-chrome.md) supply the header and footer. The header is
+the homepage's (`rally:home-header`). A post whose front matter sets `email` is
+signed by a person: the byline links the author's name to the address and the
+structured data names a `Person`; without it the author is an `Organization`.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/content/blog/YYYY-MM-DD-<title>.md` | One post. The file name gives the date; front matter gives `slug`, `title`, `description` and `author`; the rest is the body. |
+| `apps/site/content/blog/YYYY-MM-DD-<title>.md` | One post. The file name gives the date; front matter gives `slug`, `title`, `description`, `author` and, optionally, `email`; the rest is the body. |
 | `apps/site/src/blog-pages.ts` | Loads and validates posts; renders the changelog index, each post, and each post's card. |
 | `apps/site/src/reading.css`, `src/site-theme.css` | The pencil identity, `.changelog` index, `.blog` reading layout, and header/footer styles. |
 | `apps/site/src/site-chrome.ts` | `blogPosts`, the footer's Blog column, the blog sitemap, and the blog part of `llms.txt`. |

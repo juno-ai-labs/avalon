@@ -1,4 +1,5 @@
 @import "./site-theme.css";
+@import "./home-header.css";
 
 * { box-sizing: border-box; }
 html { scroll-padding-top: 32px; -webkit-text-size-adjust: 100%; }
@@ -28,7 +29,6 @@ em { font-family: var(--display-font); }
 .site-header nav a:hover { text-decoration: underline; }
 .site-header nav [aria-current] { color: var(--green); text-decoration: underline; }
 .site-header .header-login { margin-left: auto; }
-.site-header .reading-nav { max-width: 850px; margin-left: auto; }
 .button { display: inline-flex; align-items: center; justify-content: space-between; gap: 24px; padding: 12px 20px; border: 1px solid var(--green); border-radius: 6px; background: var(--green); color: var(--paper); font: 500 13px/1.6 var(--body); text-decoration: none; }
 .button:hover { background: var(--green-hover); color: var(--paper); }
 .button-outline { background: transparent; color: var(--green); border-color: #b7c2a5; }
@@ -105,17 +105,14 @@ em { font-family: var(--display-font); }
   .site-header .wordmark { font-size: 33px; }
   .site-header .button { padding: 8px 10px; font-size: 11px; }
   .site-header .header-login { margin-left: 0; }
-  .site-header .reading-nav .header-login { position: absolute; top: 34px; right: 0; }
-  /* Mark only, so the reading nav keeps to the rows it had before the link. */
-  .site-header .reading-nav .github-link { min-width: 24px; min-height: 24px; justify-content: center; }
-  .site-header .reading-nav .github-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .changelog, .blog, .rally-footer { width: calc(100% - 40px); }
   .reading-hero { grid-template-columns: 1fr; gap: 30px; padding: 38px 0 30px; }
   .reading-hero h1 { font-size: 66px; }
   .reading-hero .lede { font-size: 15px; margin-top: 25px; }
   .pencil-vignette { max-width: 400px; width: 100%; margin-inline: auto; }
   .pencil-vignette figcaption { font-size: 21px; }
-  .changelog-entry { grid-template-columns: 1fr; gap: 22px; padding: 35px 0 50px; }
+  /* minmax keeps a wide code block in the newest post scrolling in its box instead of widening the page. */
+  .changelog-entry { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 35px 0 50px; }
   .changelog-date { position: static; padding: 0; }
   .changelog-title { font-size: 38px; margin-bottom: 25px; }
   .blog { margin-block: 35px 65px; }
@@ -126,6 +123,10 @@ em { font-family: var(--display-font); }
   .footer-brand { grid-column: 1 / -1; display: flex; align-items: flex-start; justify-content: space-between; gap: 30px; }
   .footer-tagline { margin-top: 0; }
   .footer-legal { gap: 12px; flex-wrap: wrap; }
+}
+@media (max-width: 650px) {
+  /* The header's nav hangs below it at this width, as on the homepage; leave it room. */
+  .home-header + main { padding-top: 50px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }

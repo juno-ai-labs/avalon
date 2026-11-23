@@ -1,5 +1,6 @@
 @import "./site-theme.css";
 @import "./story.css";
+@import "./home-header.css";
 
 /* Homepage layout. Each selector has one declaration block per breakpoint. */
 
@@ -72,32 +73,9 @@ h2 {
   top: 12px;
 }
 
-.home-logo,
 .wordmark {
   display: inline-flex; align-items: center; gap: 8px; text-decoration: none; letter-spacing: -0.07em;
   font-weight: 650; font-size: 38px; line-height: 1;
-}
-
-.home-logo img {
-  width: 33px; height: 33px;
-}
-
-.home-nav a {
-  text-decoration: none;
-}
-
-.home-nav a:hover,
-.header-login:hover {
-  text-decoration: underline;
-}
-
-.home-nav a span {
-  font-size: 12px; margin-left: 3px;
-}
-
-/* The rule above is for the manual link's arrow; the GitHub label matches its neighbours. */
-.home-nav .github-label {
-  font-size: inherit; margin-left: 0;
 }
 
 .hero-copy {
@@ -424,35 +402,12 @@ h2 {
   display: none;
 }
 
-.arrow-icon {
-  display: inline-block; width: 13px; height: 13px; vertical-align: -2px; flex-shrink: 0;
-  stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round;
-}
-
 .button .arrow-icon {
   width: 17px; height: 17px;
 }
 
-.header-login .arrow-icon {
-  width: 12px; height: 12px;
-}
-
 .tool-strip li svg {
   width: 21px; height: 21px; fill: currentColor; stroke: none; flex-shrink: 0;
-}
-
-.home-header {
-  max-width: 1352px; width: calc(100% - 80px); margin: auto; border-bottom: 1px solid var(--line);
-  display: flex; align-items: center; gap: 40px; border: 0; height: 105px;
-}
-
-.home-nav {
-  display: flex; gap: 31px; margin: auto; font-size: 13px;
-}
-
-.header-login {
-  text-decoration: none; font-size: 14px; padding: 9px 17px; border-radius: 5px; display: flex;
-  align-items: center; gap: 20px; border: 0; padding-right: 0;
 }
 
 .home-hero {
@@ -1225,14 +1180,6 @@ h2 {
     padding: 20px 17px; gap: 18px;
   }
 
-  .home-header {
-    width: calc(100% - 60px); border: 0; height: 105px;
-  }
-
-  .home-nav {
-    gap: 23px; font-size: 13px;
-  }
-
   .desktop-links {
     gap: 9px; font-size: 10px; margin-top: 30px;
   }
@@ -1300,14 +1247,6 @@ h2 {
     grid-template-columns: 1fr; gap: 28px; margin-top: 36px;
   }
 
-  .home-logo {
-    font-size: 33px;
-  }
-
-  .home-logo img {
-    width: 28px; height: 28px;
-  }
-
   .hero-actions .text-link {
     font-size: 12px;
   }
@@ -1370,14 +1309,6 @@ h2 {
 
   .footer-tagline {
     margin-top: 0; max-width: 180px;
-  }
-
-  .home-nav {
-    gap: 17px; font-size: 13px;
-  }
-
-  .header-login {
-    font-size: 12px; gap: 10px; padding: 8px 13px; border: 0; padding-right: 0;
   }
 
   .desktop-links {
@@ -1512,10 +1443,6 @@ h2 {
   .wrap,
   .rally-footer {
     width: calc(100% - 40px);
-  }
-
-  .home-logo {
-    font-size: 32px;
   }
 
   .hero-copy {
@@ -1676,10 +1603,6 @@ h2 {
     width: 15px; height: 15px;
   }
 
-  .header-login {
-    margin-left: auto; font-size: 11px; padding: 7px 12px; border: 0; padding-right: 0;
-  }
-
   .trial-note {
     font-size: 10px; color: var(--muted);
   }
@@ -1710,27 +1633,6 @@ h2 {
 
   .footer-legal {
     margin-top: 29px; gap: 20px; padding-bottom: 25px; border-color: #e7e8de;
-  }
-
-  .home-header {
-    width: calc(100% - 40px); gap: 15px; flex-wrap: wrap; position: relative; border: 0; height: 77px;
-    /* The nav hangs below the header into the hero's top padding; without this the
-       later, positioned hero paints over it and takes every tap. */
-    z-index: 1;
-  }
-
-  .home-nav {
-    position: absolute; top: 77px; left: 0; right: 0; padding: 15px 0; justify-content: space-between;
-    border-bottom: 1px solid var(--line); gap: 12px; font-size: 13px; border: 0;
-  }
-
-  /* No room for the word beside the four section links: the mark stands alone, and the label stays for screen readers. */
-  .home-nav .github-link {
-    min-width: 24px; min-height: 24px; justify-content: center;
-  }
-
-  .home-nav .github-label {
-    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
   }
 
   .home-hero {

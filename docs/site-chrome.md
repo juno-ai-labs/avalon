@@ -12,7 +12,8 @@ here.
 | --- | --- |
 | `apps/site/src/site-chrome.ts` | `trustPages`, `blogPosts`, the header and footer renderers, the blog sitemap, `/llms.txt`, and the marker table. |
 | `apps/site/src/site-icons.ts` | `externalArrow` and `githubLink`, the header GitHub link every header renderer and the `github-link` and `github-header-link` markers use. |
-| `apps/site/src/home-header.ts` | `renderHomeHeader`, the header of every pencil page: the homepage, the audience pages, `/developer-mode/` and the marketplace. |
+| `apps/site/src/home-header.ts` | `renderHomeHeader`, the header of every pencil page: the homepage, the audience pages, `/developer-mode/`, the marketplace and the blog. |
+| `apps/site/src/home-header.css` | That header's styles at every width. `home.css` and `reading.css` import it, so each page that uses the header draws it the same way. |
 | `apps/site/src/audiences.ts` | The audiences behind the footer's "Who it’s for" column, the homepage grid and the `audience-others` marker ([`site-audience-pages.md`](site-audience-pages.md)). |
 | `apps/site/build/help/layout.ts` | The help center's header, rendered outside `site-chrome.ts`. |
 | `apps/site/src/html.ts` | `escapeHtml` and `longDate`, shared by every page rendered at build time. |
@@ -32,8 +33,8 @@ lists every audience page but that one. The plugin runs with
 `order: 'pre'`, before the access-copy and telemetry plugins. An unknown marker
 throws, so a typo fails `vite build` and `vite dev`.
 
-The pencil pages (the homepage, the audience pages, `/developer-mode/` and
-the marketplace) share one header, `<!-- rally:home-header -->`: Who it’s for,
+The pencil pages (the homepage, the audience pages, `/developer-mode/`, the
+marketplace and the blog) share one header, `<!-- rally:home-header -->`: Who it’s for,
 Marketplace, Pricing, The manual, GitHub, and Open Rally. The earlier product
 pages keep `site-nav`.
 
@@ -74,6 +75,32 @@ build, serve `dist` with `vite preview`, and screenshot the footer at 1440px and
 390px.
 
 ## Changelog
+
+### 2026-11-23: The blog uses the pencil pages' header
+
+**What changed:** The blog's pages take `<!-- rally:home-header -->` in place
+of their own wordmark and the `reading-nav` marker, so they show the same
+links, logo and layout as the homepage. The header's styles moved out of
+`home.css` into `home-header.css`, which `home.css` and `reading.css` both
+import. `renderReadingNav` and its marker are gone; the blog was their only
+user.
+
+**Why:** The blog's header listed different links (Canvases, Sidekicks, no
+Who it’s for or Marketplace) in a different layout from the homepage, so a
+reader moving from the homepage to a post saw the nav change under them. Two
+renderers for one header is how they drifted.
+
+**Considered and rejected:** Importing all of `home.css` into `reading.css`.
+It restyles the body, `.eyebrow`, `.skip-link` and the footer for the
+homepage and would have overridden the reading pages' own type. Keeping the
+reading nav and copying the homepage links into it would have left two
+renderers to drift again.
+
+**Consequences:** A header style change goes in `home-header.css` and shows on
+every pencil page and the blog at once. At 650px and below the nav hangs below
+the header, so a page using it leaves about 50px of room at the top of its
+first section: the homepage hero's padding, and `.home-header + main` in
+`reading.css`.
 
 ### 2026-11-19: One header for the pencil pages, and markers that take a word
 
