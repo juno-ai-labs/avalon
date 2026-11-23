@@ -37,6 +37,10 @@ Code and code comments describe the WHAT and maybe even the HOW but they don't c
 
 Many platforms are introducing harness level memory but we've found these to be closer to auto-skills than long term product memory.
 
+## Pattern matching with human-native development
+
+How do we pattern match with what we've been doing in (modern) software development for the last 20 years? We've always had tribal knowledge ("Oh talk to Susan about that because I know we did some prototypes around that last year and learnings could be useful") that is never captured in the code or documentation.
+
 ## Implementing it yourself
 
 [Our agent instructions are below:](https://github.com/juno-ai-labs/avalon/blob/main/docs/module-documents.md#the-changelog)
