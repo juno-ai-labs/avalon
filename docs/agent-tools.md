@@ -1144,12 +1144,14 @@ and does not invent a charge. It records a null image cost and emits a structure
 operator error instead.
 
 The Azure speech response contains audio bytes and request metadata but no
-token-usage object. Rally therefore makes the call available but records no
-audio charge and logs that usage is unavailable. It probes the shared KV key
-`openai/gpt-4o-mini-tts` for an advisory OpenRouter token-price fingerprint;
-OpenRouter did not expose an endpoint record for that model when this tool was
-added, so the normal state is an unavailable-price log rather than an invented
-price or denied speech request.
+token-usage object, so speech is unpriced: the call is made, its resource
+records `costUsd: null` with fingerprint `unavailable`, and usage metering logs
+it as `usage_unpriced`. There is no price lookup. Nothing writes a speech price
+to `INFERENCE_PRICING_CACHE`, because `openai/gpt-4o-mini-tts` is not in
+`OPENROUTER_PRICING_MODEL_IDS`. The read that once probed it missed on every
+call, on the request's latency path, and logged at `error`. Pricing speech
+needs two things at once: adding the model to that list, and a usage figure to
+multiply the price by. The change that brings both also brings back the read.
 
 ## Model-authored input schemas
 
