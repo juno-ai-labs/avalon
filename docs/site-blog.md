@@ -8,7 +8,8 @@ footer, the sitemap, `llms.txt`, and the build.
 
 A Vite plugin turns the Markdown into pages, the shared reading-card renderer
 draws each post's link-preview image, and the site-chrome markers described in
-[`site-chrome.md`](site-chrome.md) supply the header and footer.
+[`site-chrome.md`](site-chrome.md) supply the header and footer. The header is
+the homepage's (`rally:home-header`).
 
 ## Where the code lives
 

@@ -112,10 +112,7 @@ ${extraHead}    <link rel="stylesheet" href="/src/reading.css" />
   </head>
 <body class="paper-site">
 <a class="skip-link" href="#content">Skip to content</a>
-<header class="site-header"><div class="site-header-inner">
-<a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="">rally</a>
-<!-- rally:reading-nav -->
-</div></header>
+<!-- rally:home-header -->
 <main id="content">
 ${main}
 </main>

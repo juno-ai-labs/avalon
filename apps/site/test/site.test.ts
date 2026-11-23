@@ -270,7 +270,7 @@ describe('public Rally site', () => {
   });
 
   it('links the GitHub repository from every header marker', () => {
-    for (const marker of ['site-nav', 'reading-nav', 'home-header', 'market-header', 'github-link', 'github-header-link']) {
+    for (const marker of ['site-nav', 'home-header', 'market-header', 'github-link', 'github-header-link']) {
       const links = [...renderSiteChrome(`<!-- rally:${marker} -->`).matchAll(/<a [^>]*href="https:\/\/github\.com\/[^"]+"[^>]*>/gu)].map(([tag]) => tag);
       expect(links, marker).toHaveLength(1);
       expect(links[0], marker).toContain('href="https://github.com/juno-ai-labs/avalon"');
