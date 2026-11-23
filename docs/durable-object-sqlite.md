@@ -100,7 +100,10 @@ they create replacements, copy children and parents, remove the old graph
 child-first, and then rename the replacements parent-first. Before committing a
 migration group, the runner checks that each foreign-key parent table exists
 and uses `EXPLAIN PRAGMA foreign_key_check` to make SQLite resolve the parent
-keys without running the row scan. A malformed definition rolls back the group
+keys without running the row scan. It reads only tables whose SQL declares
+`REFERENCES`, which also keeps it off Cloudflare's `_cf_KV`: that table refuses
+every read with `SQLITE_AUTH` once an object has used the key-value API. A
+malformed definition rolls back the group
 and its receipts. The runner scans for orphaned rows with `PRAGMA foreign_key_check`
 only for legacy `disabled_during_rebuild` groups and groups that set
 `foreign_keys` or `defer_foreign_keys`. It rejects migration statements that

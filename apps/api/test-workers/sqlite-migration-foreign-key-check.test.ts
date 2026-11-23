@@ -232,3 +232,17 @@ it('refuses a migration that declares a foreign key deferred to commit, before r
     expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM sqlite_schema WHERE name IN ('parent', 'late')`).one()).toEqual({ count: 0 });
   });
 });
+
+it('validates foreign keys on an object that has used the key-value API, whose Cloudflare tables refuse reads', async () => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName('foreign-key-check-key-value');
+  await stub.ping();
+
+  await runInDurableObject(stub, async (_instance, state) => {
+    await state.storage.put('key', 'value');
+  });
+
+  await runInDurableObject(stub, (_instance, state) => {
+    expect(applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: [PARENT_AND_CHILD], component: 'probe', workerVersionId: 'v1', now: 1 })).toEqual([1]);
+    expect(state.storage.sql.exec(`SELECT MAX(version) AS version FROM _sql_schema_migrations`).one()).toEqual({ version: 1 });
+  });
+});
