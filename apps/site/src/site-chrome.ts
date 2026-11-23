@@ -174,9 +174,7 @@ ${trustPages.map(({ href, name }) => `- [${name}](${ORIGIN}${href})`).join('\n')
 }
 
 /**
- * Everything on the home page below the hero. The home page and its variants,
- * such as `/start-fast/`, differ only in their hero, so they share one copy of
- * the sections rather than drifting apart. Read on each render so the dev
+ * Legacy landing sections. Read on each render so the dev
  * server serves the current file.
  */
 function renderLandingSections(): string {

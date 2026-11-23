@@ -181,15 +181,14 @@ describe('public Rally site', () => {
   it('tags every tracked landing link with a known id, one per installer link', () => {
     const ids = (page: string) => [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
     const home = renderSiteChrome(readProjectFile('index.html'));
-    const variant = renderSiteChrome(readProjectFile('start-fast/index.html'));
     const marketplace = renderSiteChrome(readProjectFile('marketplace/index.html'));
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
-    for (const id of [...ids(home), ...ids(variant), ...ids(marketplace)]) expect(siteActionForLink(id), id).not.toBeNull();
+    for (const id of [...ids(home), ...ids(marketplace)]) expect(siteActionForLink(id), id).not.toBeNull();
     // A tag removed in a redesign is just as silent: every tracked link must still be on the home page,
-    // or, for a template card's link, on the marketplace. Not the variant, so it can't hide a tag the home page lost.
+    // or, for a template card's link, on the marketplace.
     for (const id of Object.keys(SITE_ACTION_LINKS)) expect([...ids(home), ...ids(marketplace)], id).toContain(id);
     // Each installer link carries its own id, so the dashboard can tell them apart.
-    for (const link of `${home}${variant}`.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
+    for (const link of home.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
       expect(link).toMatch(/data-site-action="download-[a-z-]+"/u);
     }
   });

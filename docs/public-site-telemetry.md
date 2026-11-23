@@ -134,20 +134,22 @@ PostHog organization's proxy settings, with the project's public token.
   bootstrap failure, a rejected event, and destination failure are silent to
   navigation, downloads, and desktop handoffs.
 
-### Apollo landing-page tracker
+### Apollo marketing-page tracker
 
-The production homepage and its landing variants additionally load Apollo via
-`apollo-loader.ts`; see [landing-page tracking](landing-page-tracking.md#apollo-visitor-tracking)
-for the paths and app ID. It runs independently of first-party reporting and
-uses Apollo and LiveIntent endpoints permitted only by the landing-page CSP
-overrides. Apollo receives page visits directly rather than closed Rally events.
+Every production marketing page additionally loads Apollo via `apollo-loader.ts`;
+see [landing-page tracking](landing-page-tracking.md#apollo-visitor-tracking) for
+the app ID. The shared credential-path exclusion and the not-found check keep
+handoff URLs out. New marketing pages are included automatically. It runs
+independently of first-party reporting and uses Apollo and LiveIntent endpoints
+permitted by the global CSP, the help override and the homepage's matching Worker
+policy. Apollo receives page visits directly rather than closed Rally events.
 
 ## Boundary
 
 This module owns public-site page classification, anonymous acquisition
 identity, semantic action capture, browser-to-desktop handoff measurement, and,
 for now, the PostHog browser SDK on the marketing pages. The Apollo integration
-additionally owns loading the third-party visitor tracker on landing pages. This
+additionally owns loading the third-party visitor tracker on marketing pages. This
 module does not own account identification, form analytics,
 consent-law determinations, or the desktop action that follows a handoff. Site
 identities are not automatically linked to a Rally login; signup reports join
@@ -227,6 +229,25 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-11-23 — Apollo covers marketing pages without a landing allowlist
+
+**What changed:** Apollo uses the shared credential-path exclusion and not-found
+check, with Apollo and LiveIntent permissions in the global and help CSPs.
+The `/start-fast/` variant and all three `/concepts/` studies, their build inputs
+and dedicated assets are removed. Public tracking disclosures match the wider coverage.
+
+**Why:** The landing allowlist omitted product, comparison, blog and future
+marketing pages. Visitor identification should follow the public marketing site
+without requiring every new page to edit tracking configuration. The old landing
+variant and design studies were explicitly retired.
+
+**Considered and rejected:** Loading on every URL would expose credential-bearing
+handoffs. The existing third-party exclusion already owns that boundary.
+
+**Consequences:** New marketing pages load Apollo automatically; new credential
+routes must still be added to the shared exclusion before shipping. Development,
+previews and not-found pages remain excluded.
 
 ### 2026-10-27 — The Worker sets the homepage's CSP
 

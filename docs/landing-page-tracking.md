@@ -6,15 +6,15 @@ must keep so the reporting keeps working. The mechanism behind it is in
 
 ## Apollo visitor tracking
 
-The production homepage, `/start-fast/`, and the `/concepts/` landing variants
-also load Apollo’s website tracker with app ID `6ad67a1c7cdf770018b4f9bc`.
-`apps/site/src/apollo-loader.ts` loads it asynchronously through the shared site
-entry. Local development, previews, other marketing pages and handoff pages do
-not load it. New landing variants must be included in `runsApollo` and in the
-landing-only CSP overrides in `apps/site/public/_headers`. The homepage's copy is
-set by the site Worker (`apps/site/worker/landing-csp.ts`), not `_headers`:
-an exact `/` rule there was served alongside the global policy in production,
-which blocked Apollo. Keep the three copies identical.
+Every production marketing page loads Apollo’s website tracker with app ID
+`6ad67a1c7cdf770018b4f9bc` through `apps/site/src/apollo-loader.ts` and the shared
+site entry. New pages are covered automatically. The shared
+`allowsThirdPartyScripts` rule in `credential-paths.ts` excludes credential
+handoffs; not-found pages, local development and previews also do not load it.
+Apollo and LiveIntent endpoints are permitted by the global CSP in
+`apps/site/public/_headers`. Its `/help/*` override keeps those permissions and
+adds same-origin fetches. The homepage's matching policy is set by the site
+Worker (`apps/site/worker/landing-csp.ts`) to replace duplicate asset headers.
 
 Apollo sends visits to `aplo-evnt.com` and can load LiveIntent’s identity
 resolution script. Those providers have a separate data path from the bounded
@@ -64,11 +64,11 @@ Tagged links on the landing page, by `data-site-action` id:
 | Id | Link | Action · placement |
 | --- | --- | --- |
 | `sign-in-header` | Open Rally link in the pencil pages' header (homepage, audience pages, marketplace); rolling sign-in button on the supporting pages | primary_cta · header |
-| `web-app-hero` | Homepage Connect your Gmail and closing invitation (app.rallywith.ai); the sign-up buttons on `/developer-mode/`; primary web entry in `/start-fast/` | secondary_cta · hero |
+| `web-app-hero` | Homepage Connect your Gmail and closing invitation (app.rallywith.ai); the sign-up buttons on `/developer-mode/` | secondary_cta · hero |
 | `web-app-offer` | Homepage inline browser-entry link under pricing; retains the historical offer action | primary_cta · offer |
 | `web-app-template` | Each `/marketplace/` card's Start from this, and every sign-up button on an audience page (`/for/<slug>/`), each the link of a template on the web app (`/app/templates/<slug>`) | primary_cta · body |
-| `download-hero` | Homepage macOS text link; desktop download button on `/start-fast/` | download · hero |
-| `download-linux-hero` | Homepage Linux (.deb) text link; desktop download button on `/start-fast/` | download · hero |
+| `download-hero` | Homepage macOS text link | download · hero |
+| `download-linux-hero` | Homepage Linux (.deb) text link | download · hero |
 | `download-pricing-start` / `-grow` / `-max` / `-ultra` | Start for free and paid-plan Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Pricing contact link (emails Adam) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Adam), under the home page's closing invitation and in the `/sidekicks/` hero | demo_request · sidekicks |
@@ -77,8 +77,7 @@ Tagged links on the landing page, by `data-site-action` id:
 `demo-request` still reports the `sidekicks` placement after the home page's Sidekicks band was removed, for the same reason.
 
 `web-app-hero` still reports `secondary_cta · hero`, though it is now the primary
-hero button on `/`: the value is kept so its history stays comparable, and
-`/start-fast/` shares the id. Its clicks cannot be split by device.
+hero button on `/`: the value is kept so its history stays comparable, and its clicks cannot be split by device.
 
 Each activation of `web-app-hero`, `web-app-offer`, `web-app-template` or `sign-in-header` creates a fresh opaque
 `flowId`, reports it on the action, and sends it to the browser as `signupFlowId`.
@@ -95,8 +94,7 @@ the path, and the signup that follows is joined to it by `flowId`. Its sign-up
 buttons are `web-app-template` links to that audience's Marketplace template
 (`template` in `apps/site/src/audiences.ts`), so the person arrives in a Canvas
 that has already asked Rally for their page. The pages add no action ids of
-their own. The audience pages do not run Apollo; adding them means `runsApollo`
-and the landing-only CSP, as for any new landing variant.
+their own. The audience pages run Apollo automatically through the shared marketing-page rule.
 
 Not reported as site events: scrolling, section views, header nav clicks, the
 "See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page
@@ -105,12 +103,6 @@ through the header button rather than a hero button of their own.
 
 The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
 its id live there, not in `index.html`; see [`site-chrome.md`](site-chrome.md).
-
-`/start-fast/` retains the earlier landing design and its sections in
-`apps/site/src/landing-sections.html`; the illustrated homepage has independent
-markup in `index.html`. The variant
-uses the same link ids, so compare the two by `$pathname`, which every page view
-and click now carries. It is `noindex`, so search engines never list it beside `/`.
 
 ## Don't lose on a redesign
 

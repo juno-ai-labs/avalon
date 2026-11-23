@@ -80,7 +80,6 @@ export default defineConfig({
       entryMeta: [{ name: 'rally-posthog-src', entryName: 'posthog', entrySource: '/src/posthog.ts' }],
     }),
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
-    // After access copy, so /start-fast/'s headline is filled in before its card's title is checked against it.
     {
       name: 'rally-page-cards',
       transformIndexHtml: (html, context) => {
@@ -144,7 +143,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: `${projectRoot}index.html`,
-        startFast: `${projectRoot}start-fast/index.html`,
         canvases: `${projectRoot}canvases/index.html`,
         sidekicks: `${projectRoot}sidekicks/index.html`,
         marketplace: `${projectRoot}marketplace/index.html`,
@@ -154,9 +152,6 @@ export default defineConfig({
         technology: `${projectRoot}src/technology.ts`,
         posthog: `${projectRoot}src/posthog.ts`,
         help: `${projectRoot}src/help.ts`,
-        concepts: `${projectRoot}concepts/index.html`,
-        horizonConcepts: `${projectRoot}concepts/horizon/index.html`,
-        heroConcepts: `${projectRoot}concepts/hero/index.html`,
         invite: `${projectRoot}invite/index.html`,
         slackLink: `${projectRoot}slack/link/index.html`,
         desktopOpen: `${projectRoot}open/index.html`,

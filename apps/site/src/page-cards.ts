@@ -10,7 +10,6 @@
  * someone gets from opening the link, in the page's own words.
  */
 import { escapeHtml } from './html';
-import { accessCopy } from './access-copy';
 import { audiencePath, audiences } from './audiences';
 import { getIllustration } from './home-illustrations';
 import { renderReadingCard, type ReadingCard } from './reading-card';
@@ -64,13 +63,6 @@ export const pageCards: readonly PageCard[] = [
     title: 'The AI that keeps\nwork current.',
     description: 'The helper behind a page that updates itself. It watches your email and tools, or runs on a schedule, then does the work.',
     scene: 'sidekick',
-  },
-  {
-    path: '/start-fast/',
-    eyebrow: 'Rally',
-    title: `${accessCopy.headline}\n${accessCopy.headlineTurn}`,
-    description: 'When something changes in Linear, Slack or Gmail, Rally publishes a new version, and your whole team works from the same page.',
-    scene: 'together',
   },
   {
     path: '/marketplace/',

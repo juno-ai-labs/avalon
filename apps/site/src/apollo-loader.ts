@@ -1,7 +1,8 @@
-/** Only the homepage and its landing-page variants run Apollo. */
-export function runsApollo(environment: 'development' | 'staging' | 'production', pathname: string): boolean {
-  const path = pathname.replace(/\/index\.html$/u, '/').replace(/\/$/u, '');
-  return environment === 'production' && ['', '/start-fast', '/concepts', '/concepts/horizon', '/concepts/hero'].includes(path);
+import { allowsThirdPartyScripts } from './credential-paths';
+
+/** Every production marketing page runs Apollo; credential and not-found pages do not. */
+export function runsApollo(environment: 'development' | 'staging' | 'production', pathname: string, notFound: boolean): boolean {
+  return environment === 'production' && !notFound && allowsThirdPartyScripts(pathname);
 }
 
 export function loadApollo(): void {

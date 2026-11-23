@@ -7,7 +7,7 @@ owns their shared fonts and palette. The homepage keeps its own composition;
 `reading.css` provides the blog and Trust Center's reading layouts and shared
 chrome, and `help.css` provides the manual's navigation and reading interface.
 
-The product pages and `/start-fast/` continue to use the
+The product pages continue to use the
 earlier `landing.css` system described later in this document. The download,
 Slack, and 404 pages still load `styles.css`.
 
@@ -62,7 +62,7 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   time by `reading-card.ts` from local static TTF derivatives, avoiding
   network/system font dependencies. Help, blog posts and marketplace templates
   draw theirs from their own front matter. Every hand-written page (home, the
-  audience pages, `/developer-mode/`, Canvases, Sidekicks, `/start-fast/`, the marketplace and blog indexes, and the
+  audience pages, `/developer-mode/`, Canvases, Sidekicks, the marketplace and blog indexes, and the
   Trust Center) has an entry in `page-cards.ts`, which the `rally-page-cards`
   plugin draws to `<page>/social.png` and tags into the page's head. The build
   fails if a card's title is not its page's `<h1>`, or if a page names its own
@@ -103,7 +103,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/reading.css` | Blog layouts and reading-page header, footer and typography |
 | `apps/site/src/reading-card.ts` | Every link preview on the site, drawn from local fonts and shared artwork |
 | `apps/site/src/page-cards.ts` | Card words for each hand-written page, the headline check, and the image tags the build adds |
-| `apps/site/src/landing.css` | The earlier product and start-fast system: tokens, chrome, demos, pricing and page layouts |
+| `apps/site/src/landing.css` | The earlier product-page system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
 | `apps/site/for/`, `apps/site/src/for/`, `apps/site/src/story.ts`, `apps/site/src/story.css`, `apps/site/developer-mode/index.html` | The audience pages, the story player and kit, and the page for everything else: [`site-audience-pages.md`](site-audience-pages.md) |
@@ -111,9 +111,8 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/connector-marks.ts` | Connector marks and Rally plugin glyphs for the marketplace's chips, rendered from the app's components to static SVG at build time |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
 | `apps/site/src/home-pricing.ts` | Homepage plan markup from the product catalog and weekly allocation function |
-| `apps/site/start-fast/index.html` | The earlier landing design, with copy from `access-copy.ts` and shared sections |
-| `apps/site/src/landing-sections.html` | Sections below the hero on `/start-fast/` |
-| `apps/site/src/canvas-demo.html` | The detailed launch-tracker figure on `/start-fast/` and `/canvases/` |
+| `apps/site/src/landing-sections.html` | Legacy landing sections |
+| `apps/site/src/canvas-demo.html` | The detailed launch-tracker figure on `/canvases/` |
 | `apps/site/src/steps.ts` | `applyStep`, the step primitive the Canvas demo and the carousel share, and `whenVisible` |
 | `apps/site/canvases/index.html`, `apps/site/sidekicks/index.html` | The two product pages |
 | `apps/site/src/site-motion.ts` | The demo's timeline and the scroll reveals |
@@ -161,17 +160,9 @@ A page is a header, a hero, then **bands**. Each `.band` opens on a ruled
 index line (`.band-head`): the `.eyebrow` (a two-digit number and a name, in
 mono) sits in the left margin, three twelfths wide, and the serif headline and
 lede sit in the text column beside it. Content inside a band is cards on
-`--card` with hairline borders and a 14px radius. The `/start-fast/` hero sets its
-headline across faint twelve-column guides, then puts the introduction and
-the actions on a ruled line below it, then Figure 1. Every marketing page
+`--card` with hairline borders and a 14px radius. Every marketing page
 ends with the `.closer` plate and the footer, whose oversized italic
 wordmark closes the page.
-
-The hero stacks three equal-width actions vertically: web entry, macOS download,
-then Linux x64 Debian download, labeled Linux (.deb). The group is rendered by
-`rally:desktop-downloads` on `/start-fast/`. At narrower widths the
-hero columns stack and the buttons fill the available width on small screens; touch-only devices retain the web
-entry as their action.
 
 A **highlight** (`<mark class="hl hl-maya" data-name="Maya">`) is a person's
 selection: their colour behind the words, a bar at the start and their name

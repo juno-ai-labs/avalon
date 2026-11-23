@@ -10,7 +10,7 @@ afterEach(() => {
 
 describe('which pages run the X pixel', () => {
   it('runs on marketing pages in production', () => {
-    expect(['/', '/start-fast/', '/compare/notion/', '/blog/', '/help/', '/trust/privacy/']
+    expect(['/', '/canvases/', '/compare/notion/', '/blog/', '/help/', '/trust/privacy/']
       .map((path) => runsXPixel('production', path, false, false))).toEqual([true, true, true, true, true, true]);
   });
 
