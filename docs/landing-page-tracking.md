@@ -6,19 +6,12 @@ must keep so the reporting keeps working. The mechanism behind it is in
 
 ## Apollo visitor tracking
 
-Every production marketing page loads Apollo’s website tracker with app ID
-`6ad67a1c7cdf770018b4f9bc` through `apps/site/src/apollo-loader.ts` and the shared
-site entry. New pages are covered automatically. The shared
-`allowsThirdPartyScripts` rule in `credential-paths.ts` excludes credential
-handoffs; not-found pages, local development and previews also do not load it.
-Apollo and LiveIntent endpoints are permitted by the global CSP in
-`apps/site/public/_headers`. Its `/help/*` override keeps those permissions and
-adds same-origin fetches. The homepage's matching policy is set by the site
-Worker (`apps/site/worker/landing-csp.ts`) to replace duplicate asset headers.
-
-Apollo sends visits to `aplo-evnt.com` and can load LiveIntent’s identity
-resolution script. Those providers have a separate data path from the bounded
-first-party events below. The Cookie & Tracking Notice discloses this use.
+The public website loads Apollo’s tracker through `apps/site/src/apollo-loader.ts`
+and the shared site entry. [Public-site telemetry](public-site-telemetry.md#apollo-public-site-tracker)
+owns its scope, app ID, credential exclusions and Global Privacy Control behavior.
+The global CSP in `apps/site/public/_headers` permits its Apollo and LiveIntent
+endpoints; `/help/*` adds same-origin fetches for the manual. The homepage uses
+the asset-layer policy directly, without a Worker invocation.
 
 ## X conversion pixel
 
@@ -77,7 +70,8 @@ Tagged links on the landing page, by `data-site-action` id:
 `demo-request` still reports the `sidekicks` placement after the home page's Sidekicks band was removed, for the same reason.
 
 `web-app-hero` still reports `secondary_cta · hero`, though it is now the primary
-hero button on `/`: the value is kept so its history stays comparable, and its clicks cannot be split by device.
+hero button on `/`: the value is kept so its history stays comparable. Its clicks
+cannot be split by device.
 
 Each activation of `web-app-hero`, `web-app-offer`, `web-app-template` or `sign-in-header` creates a fresh opaque
 `flowId`, reports it on the action, and sends it to the browser as `signupFlowId`.
@@ -94,7 +88,7 @@ the path, and the signup that follows is joined to it by `flowId`. Its sign-up
 buttons are `web-app-template` links to that audience's Marketplace template
 (`template` in `apps/site/src/audiences.ts`), so the person arrives in a Canvas
 that has already asked Rally for their page. The pages add no action ids of
-their own. The audience pages run Apollo automatically through the shared marketing-page rule.
+their own.
 
 Not reported as site events: scrolling, section views, header nav clicks, the
 "See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page

@@ -1,6 +1,6 @@
 /**
- * The step primitive the Canvas demo (site-motion.ts) and the hero carousel
- * (live-carousel.ts) share. A figure is drawn in its finished state at build
+ * The step primitive the Canvas demo (site-motion.ts) and email stories
+ * (story.ts) share. A figure is drawn in its finished state at build
  * time; `applyStep` puts it at any step n:
  *
  * - `s1` … `s<n>` on the root, so CSS can place things per step;

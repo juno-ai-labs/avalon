@@ -22,7 +22,7 @@
 # The pages whose URL carries a credential (CREDENTIAL_PATHS in
 # src/credential-paths.ts) keep the policy without third-party tracking hosts: the trackers never
 # run there, and an injected script must not be able to reach them either.
-# /auth/desktop/*, /app/* and /download/* carry the same override below.
+# /auth/desktop/* and /app/* carry the same override below; /download redirects.
 /invite/*
   ! Content-Security-Policy
   Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests

@@ -1,8 +1,8 @@
 import { allowsThirdPartyScripts } from './credential-paths';
 
-/** Every production marketing page runs Apollo; credential and not-found pages do not. */
-export function runsApollo(environment: 'development' | 'staging' | 'production', pathname: string, notFound: boolean): boolean {
-  return environment === 'production' && !notFound && allowsThirdPartyScripts(pathname);
+/** Public-site tracking excludes credential pages, not-found pages and Global Privacy Control. */
+export function runsApollo(environment: 'development' | 'staging' | 'production', pathname: string, notFound: boolean, globalPrivacyControl: boolean): boolean {
+  return environment === 'production' && !notFound && !globalPrivacyControl && allowsThirdPartyScripts(pathname);
 }
 
 export function loadApollo(): void {

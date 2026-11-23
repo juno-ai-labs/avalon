@@ -134,22 +134,26 @@ PostHog organization's proxy settings, with the project's public token.
   bootstrap failure, a rejected event, and destination failure are silent to
   navigation, downloads, and desktop handoffs.
 
-### Apollo marketing-page tracker
+### Apollo public-site tracker
 
-Every production marketing page additionally loads Apollo via `apollo-loader.ts`;
-see [landing-page tracking](landing-page-tracking.md#apollo-visitor-tracking) for
-the app ID. The shared credential-path exclusion and the not-found check keep
-handoff URLs out. New marketing pages are included automatically. It runs
-independently of first-party reporting and uses Apollo and LiveIntent endpoints
-permitted by the global CSP, the help override and the homepage's matching Worker
-policy. Apollo receives page visits directly rather than closed Rally events.
+The production public website loads Apollo via `apollo-loader.ts`, including Help,
+Trust Center and Slack pages, with app ID `6ad67a1c7cdf770018b4f9bc`. New public
+pages are covered automatically. `credential-paths.ts` excludes sign-in,
+invitation, download-grant and resource-handoff pages, and the not-found check
+excludes malformed links. Development, previews and browsers sending Global
+Privacy Control also do not load Apollo. GPC suppresses both Apollo and its
+LiveIntent dependency, just as it suppresses X's conversion pixel.
+
+Apollo receives page visits independently of first-party reporting. Its Apollo
+and LiveIntent endpoints are allowed by the global CSP; the help override adds
+same-origin fetches. The homepage uses the global asset policy directly.
 
 ## Boundary
 
 This module owns public-site page classification, anonymous acquisition
 identity, semantic action capture, browser-to-desktop handoff measurement, and,
 for now, the PostHog browser SDK on the marketing pages. The Apollo integration
-additionally owns loading the third-party visitor tracker on marketing pages. This
+additionally owns loading the third-party visitor tracker on public pages. This
 module does not own account identification, form analytics,
 consent-law determinations, or the desktop action that follows a handoff. Site
 identities are not automatically linked to a Rally login; signup reports join
@@ -230,24 +234,36 @@ is allowed.
 
 ## Changelog
 
-### 2026-11-23 — Apollo covers marketing pages without a landing allowlist
+### 2026-11-23 — Apollo follows public pages and honors privacy signals
 
-**What changed:** Apollo uses the shared credential-path exclusion and not-found
-check, with Apollo and LiveIntent permissions in the global and help CSPs.
-The `/start-fast/` variant and all three `/concepts/` studies, their build inputs
-and dedicated assets are removed. Public tracking disclosures match the wider coverage.
+**What changed:** Apollo now follows the public-site credential exclusions and
+not-found check instead of a landing allowlist, and stays off under Global
+Privacy Control. The old landing variant and concept studies, their unused
+renderer chain and three.js dependency are removed. `/start-fast/` redirects
+to the homepage; concept study URLs remain retired. The homepage is served
+directly by static assets with the global tracking CSP.
 
-**Why:** The landing allowlist omitted product, comparison, blog and future
-marketing pages. Visitor identification should follow the public marketing site
-without requiring every new page to edit tracking configuration. The old landing
-variant and design studies were explicitly retired.
+**Why:** The old allowlist omitted all seven Gmail audience pages and would omit
+future public pages. The intended coverage includes Help and Trust Center, so
+those pages must be named in the disclosures. Widening identity resolution
+also makes honoring the site's existing privacy-signal promise necessary.
+The homepage Worker existed to replace two conflicting CSPs; with Apollo in
+the single global policy, its duplicate policy only added an invocation and
+another copy that could drift.
 
-**Considered and rejected:** Loading on every URL would expose credential-bearing
-handoffs. The existing third-party exclusion already owns that boundary.
+**Considered and rejected:** Keeping an opt-in allowlist would repeat the same
+coverage gap on the next page. Excluding Help and Trust Center would preserve
+an extra page-specific tracking policy instead of the requested public-site
+coverage. Keeping the homepage override or orphaned renderer code would add
+latency and maintenance without changing a live page. The supplied Apollo
+cache-busting loader is retained; this change does not guess at the provider's
+asset versioning contract.
 
-**Consequences:** New marketing pages load Apollo automatically; new credential
-routes must still be added to the shared exclusion before shipping. Development,
-previews and not-found pages remain excluded.
+**Consequences:** New public pages load Apollo unless a credential or not-found
+exclusion applies or the browser sends GPC. New credential routes must be added
+to the shared exclusion before shipping. Public tracking stays separate from
+the closed first-party telemetry contract. Keep the help-specific same-origin
+fetch permission; other public pages do not need it.
 
 Pull request: [#1697](https://github.com/juno-ai-labs/avalon/pull/1697).
 

@@ -188,7 +188,9 @@ describe('public Rally site', () => {
     // or, for a template card's link, on the marketplace.
     for (const id of Object.keys(SITE_ACTION_LINKS)) expect([...ids(home), ...ids(marketplace)], id).toContain(id);
     // Each installer link carries its own id, so the dashboard can tell them apart.
-    for (const link of home.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
+    const installers = home.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? [];
+    expect(installers.length).toBeGreaterThan(0);
+    for (const link of installers) {
       expect(link).toMatch(/data-site-action="download-[a-z-]+"/u);
     }
   });

@@ -1,4 +1,3 @@
-import { renderAccessCopy } from './src/access-copy';
 import { addPageCard, pageCardFile, pageCardFor, pageCards, renderPageCard } from './src/page-cards';
 import { helpCenter } from './build/help/plugin';
 import { renderBlogCard, renderBlogIndex, renderBlogPost } from './src/blog-pages';
@@ -79,7 +78,6 @@ export default defineConfig({
       entrySource: '/src/help.ts',
       entryMeta: [{ name: 'rally-posthog-src', entryName: 'posthog', entrySource: '/src/posthog.ts' }],
     }),
-    { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
     {
       name: 'rally-page-cards',
       transformIndexHtml: (html, context) => {
@@ -115,10 +113,6 @@ export default defineConfig({
         });
       },
     },
-    // The technology schematic is its own entry so three.js stays out of the
-    // landing page. `technology-loader.ts` adds its script when the figure
-    // nears the screen, reading the URL from `data-tech-src`.
-    hashedEntrySource('technology', 'data-tech-src', 'technology.ts'),
     // PostHog's SDK is its own entry so pages that never run it never download
     // it. `posthog-loader.ts` adds its script, reading the URL from this meta tag.
     hashedEntrySource('posthog', 'content', 'posthog.ts'),
@@ -149,7 +143,6 @@ export default defineConfig({
         developerMode: `${projectRoot}developer-mode/index.html`,
         // One hand-written page per audience, at `for/<slug>/index.html`.
         ...Object.fromEntries(audiences.map(({ slug }) => [`for-${slug}`, `${projectRoot}${audiencePath(slug).slice(1)}index.html`])),
-        technology: `${projectRoot}src/technology.ts`,
         posthog: `${projectRoot}src/posthog.ts`,
         help: `${projectRoot}src/help.ts`,
         invite: `${projectRoot}invite/index.html`,
