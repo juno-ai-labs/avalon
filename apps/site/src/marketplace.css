@@ -38,8 +38,12 @@
 }
 
 .market-card {
-  border: 1px solid #d4d9c8; border-radius: 12px; overflow: hidden; background: var(--white);
-  display: flex; flex-direction: column;
+  position: relative; border: 1px solid #d4d9c8; border-radius: 12px; overflow: hidden;
+  background: var(--white); display: flex; flex-direction: column; transition: border-color 0.15s;
+}
+
+.market-card:hover {
+  border-color: #b9c2a8;
 }
 
 .market-card[hidden] {
@@ -75,6 +79,17 @@
 
 .market-card .market-more {
   color: var(--muted);
+}
+
+/* The whole card opens the template's page: "More info" stretches over it, and
+   the card's other links sit above that so they keep their own targets. */
+.market-card .market-more::after {
+  content: ""; position: absolute; inset: 0;
+}
+
+.market-card .market-connectors a,
+.market-card [data-site-action="web-app-template"] {
+  position: relative; z-index: 1;
 }
 
 /* Recommended connectors, each a link to how to connect it. */
