@@ -1,16 +1,17 @@
 ---
 slug: internal-changelogs
-title: "Internal changelogs unlock autonomous coding agents"
-description: "An internal changelog gives coding agents a long-term memory that lives next to the code, and records why each change was made."
+title: "Internal Changelogs unlock autonomous coding agents."
+description: "Internal changelogs give coding agents a long-term memory right next to the code."
 author: "Adam Juhasz"
 email: "adam@rallywith.ai"
 ---
 
-The key to enabling a software factory is internal changelogs, which give agents a long-term memory right next to the code. As a primer, LLMs have no “memory” and each turn (let alone each coding session) is completely independent. “Memory” is created by passing in the whole conversation (say, the last 24 turns) or by compressing and extracting earlier conversations and sessions.
+The key to enabling a software factory is internal changelogs, which give agents a long-term memory right next to the code. As a primer, LLMs have no "memory" and each turn (let alone coding session) is completely independent. "Memory" is created by passing the entirety of the conversation (the last 24 turns, let's say) or compression/extraction of previous conversations/sessions.
 
-Expecting human-like memory, as in “Don’t you remember the session last month where we tried that and it failed because of X and Y?”, doesn’t match how coding agents behave. This has led to frustration when autonomous agents build an already-known bad design, or rebuild a feature we removed last month.
+Anthropomorphization of human-like behavior (aka memory) "Don't you see the session last month where we tried that but it failed because of X and Y reasons" doesn't translate to how coding agents behave. This has led to frustrations where autonomous agents have built an already-known bad design or built a feature we removed last month.
 
-The key to coding agent autonomy is having them write an internal changelog ([example below](https://github.com/juno-ai-labs/avalon/blob/main/docs/authorization.md#changelog)) that documents not only what changed at a high level but also why the change was made, and any false starts (a great late addition, based on traces we observed). This has cut down on churn between agent sessions, and on the human oversight needed to catch false starts or rabbit holes the agent may go down.
+The key to coding agent autonomy is having them write an internal changelog [(an example below)](https://github.com/juno-ai-labs/avalon/blob/main/docs/authorization.md#changelog) that documents not only what was changed at a high-level but also why the change was made and any false-starts (this was a great late addition based on some traces we observed). This has cut down on churn between agent sessions and cut down human oversight and monitoring for false starts or incorrect rabbit holes the agent may go down.
+
 
 ```markdown
 ### 2026-10-21 — Admit attachment and artifact reads once per request
@@ -28,13 +29,13 @@ without removing....
 requests reauthenticate and observe canonical grant changes...
 ```
 
-## How this differs from skills, code, code comments, and harness memory
+## Difference with skills, code, code comments, and harness memory
 
-Skills (as well as `AGENTS.md`/`CLAUDE.md` files) instruct the model on HOW to do something. They are great places to encode code style, tool usage, environment quirks, and other gotchas about how to write code or debug a problem.
+Skills (as well as AGENTS.md/CLAUDE.md files) are there to instruct the model on HOW to do something. These are great places to encode code styles, tool usage, environment peculiarities, and other gotchas on how to write code or debug a problem.
 
-Code and code comments describe the WHAT and maybe the HOW, but they don’t communicate the WHY. Code history shows changes and how the code progressed, but (a) it still misses reasoning and context, and (b) many models don’t naturally look at the git history.
+Code and code comments describe the WHAT and maybe even the HOW but they don't communicate the WHY. Code history can be used to see changes and progression but (a) it still misses reasoning and context and (b) many models don't naturally look at the git history.
 
-Many platforms are adding harness-level memory, but we’ve found these to be closer to auto-skills than to long-term product memory.
+Many platforms are introducing harness level memory but we've found these to be closer to auto-skills than long term product memory.
 
 ## Implementing it yourself
 
