@@ -249,6 +249,8 @@ handoffs. The existing third-party exclusion already owns that boundary.
 routes must still be added to the shared exclusion before shipping. Development,
 previews and not-found pages remain excluded.
 
+Pull request: [#1697](https://github.com/juno-ai-labs/avalon/pull/1697).
+
 ### 2026-10-27 — The Worker sets the homepage's CSP
 
 **What changed:** `/` now runs the site Worker (`run_worker_first`), which
