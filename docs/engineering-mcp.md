@@ -464,6 +464,18 @@ The caller names the region and the binding, and the bridge's `runD1Sql` runs
 the statement through that binding. `PLATFORM_DB` is one database every region
 binds, so any region reaches the same rows.
 
+Each binding is the live production primary that product traffic writes to,
+with no read replica, so an operator's statement competes with that traffic for
+the database's capacity. A statement no index answers scans the whole table, and
+D1 refuses every caller with `D1 DB is overloaded` until the window passes.
+`LIMIT` does not bound that scan when it trims a `GROUP BY` or `ORDER BY`, and
+an `OR` across columns uses an index only when every branch has one. Global
+telemetry analysis belongs in the `analytics_events` lakehouse, which
+`query_data_lake` reads without touching a product database; it holds only
+Global acceptances from migration `0095` onward
+([analytics lakehouse](analytics-lakehouse.md)), so other regions and older
+history still need `TELEMETRY_DB`.
+
 `MESSAGE_ISSUES_DB` holds Oopsie reports in the submitting Organization's region
 (only `global` today); the report columns and provenance are documented in
 [message issues](message-issues.md#data-model).
@@ -836,6 +848,27 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-23 — Warn that `run_d1_sql` reads the live primary
+
+**What changed:** `run_d1_sql` now warns that every binding is the production
+primary and sends Global telemetry analysis to the `analytics_events` lakehouse.
+
+**Why:** At 02:23 UTC on 2026-11-23 an ad-hoc `run_d1_sql` aggregation over
+global `TELEMETRY_DB`'s `telemetry_accepted_events`, filtered on an `OR` of
+three columns only one of which is indexed, read 753,900 rows in five seconds. For the next eleven seconds D1
+refused live writes with `D1 DB is overloaded`, and product usage events from a
+running Canvas were dropped (`product_usage_telemetry_failed:d1_overloaded`).
+Nothing in the tool told its caller, often an agent, that the database was
+shared with product writes.
+
+**Rejected:** a row or time cap on the statement, since a limit's number is the
+team's to set and D1 exposes no per-query budget to enforce one with; and an
+index for the columns that query filtered on, since it served one ad-hoc
+question and every telemetry write would pay for it.
+
+**Consequences:** This is guidance, not a guard: a caller can still run the
+same scan. If an overload recurs, the next step is a guard, not more wording.
 
 ### 2026-11-19 — Add a member to an existing Organization
 
