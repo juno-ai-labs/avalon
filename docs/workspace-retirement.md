@@ -496,6 +496,14 @@ cannot invoke retirement.
 - **Nothing re-invokes an interrupted walk.** See **Failure modes and limits**;
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
+- **Six Organization objects ran an earlier migration 141** (receipt
+  `fnv1a64:38659f5e6939033c`; the shipped one is `fnv1a64:ab49aa1c631690e7`).
+  That version's SQL is in no commit. They have no `digest_schedules` and no
+  `schedules.digest_schedule_id`, and each wake logs
+  `workspace_do_schema_hash_mismatch:141`. The warning stays, because the
+  runner never rewrites a receipt. **A later migration that names either must
+  apply on both shapes**: `DROP TABLE IF EXISTS digest_schedules`, and copy
+  `schedules` rows by the columns both shapes share.
 
 ## Engineering MCP
 
