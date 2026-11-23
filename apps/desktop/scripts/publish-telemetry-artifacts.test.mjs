@@ -65,12 +65,14 @@ function objectApi({
   putInvalidJson = false,
   putResultOverrides = {},
   putStatus = 200,
-  putSuccess = putStatus >= 200 && putStatus < 300,
+  putStatuses = [],
+  putSuccess,
 } = {}) {
   const objects = new Map();
   const calls = [];
   let errorBodyCancelled = false;
   const scriptedInventoryStatuses = [...inventoryStatuses];
+  const scriptedPutStatuses = [...putStatuses];
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(input);
     const objectMatch = /\/r2\/buckets\/([^/]+)\/objects\/(.+)/u.exec(url.pathname);
@@ -98,7 +100,9 @@ function objectApi({
       const bytes = Buffer.from(init.body);
       const etag = createHash('md5').update(bytes).digest('hex');
       const uploaded = '2026-08-13T19:09:29.000Z';
-      if (putStatus >= 200 && putStatus < 300 && putSuccess) {
+      const status = scriptedPutStatuses.shift() ?? putStatus;
+      const success = putSuccess ?? (status >= 200 && status < 300);
+      if (status >= 200 && status < 300 && success) {
         objects.set(target, {
           bytes,
           etag,
@@ -106,9 +110,9 @@ function objectApi({
           lastModified: inventoryTimestamp,
         });
       }
-      if (putInvalidJson) return new Response('not-json', { status: putStatus });
+      if (putInvalidJson) return new Response('not-json', { status });
       return Response.json({
-        success: putSuccess,
+        success,
         errors: putErrors,
         result: {
           etag,
@@ -118,7 +122,7 @@ function objectApi({
           version: 'test-upload-version',
           ...putResultOverrides,
         },
-      }, { status: putStatus });
+      }, { status });
     }
     assert.ok(inventoryMatch, 'GET must use the authoritative object inventory');
     const status = scriptedInventoryStatuses.shift() ?? inventoryStatus;
@@ -312,6 +316,12 @@ test('rejects Cloudflare upload failures without exposing provider response bodi
       expected: /HTTP 503 \(success=false; codes: 10001\)/u,
     },
     {
+      name: 'rate limit is not retried',
+      api: objectApi({ putStatus: 429, putSuccess: false, putErrors: [{ code: 10058 }] }),
+      expected: /HTTP 429 \(success=false; codes: 10058\)/u,
+      puts: 1,
+    },
+    {
       name: 'protocol failure',
       api: objectApi({ putSuccess: false }),
       expected: /HTTP 200 \(success=false; codes: none\)/u,
@@ -332,14 +342,39 @@ test('rejects Cloudflare upload failures without exposing provider response bodi
             environment: runtimeEnvironment,
             fetchImpl: failure.api.fetchImpl,
             runCommand: commandRunner().runCommand,
+            sleepImpl: async () => {},
             temporaryRoot: root,
           }),
           (error) => failure.expected.test(error.message) && !error.message.includes('secret detail'),
         );
+        if (failure.puts !== undefined) {
+          assert.equal(failure.api.calls.filter(({ method }) => method === 'PUT').length, failure.puts);
+        }
       } finally {
         await rm(root, { recursive: true, force: true });
       }
     });
+  }
+});
+
+test('retries an upload that Cloudflare refused with a transient server error', async () => {
+  const { root, desktopDirectory } = await fixture();
+  const api = objectApi({ putStatuses: [500, 503], putErrors: [{ code: 10500 }] });
+  const sleeps = [];
+  try {
+    await publishTelemetryArtifacts({
+      desktopDirectory,
+      environment: runtimeEnvironment,
+      fetchImpl: api.fetchImpl,
+      runCommand: commandRunner().runCommand,
+      sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+      temporaryRoot: root,
+    });
+    assert.equal(api.objects.size, 5);
+    assert.equal(api.calls.filter(({ method }) => method === 'PUT').length, 7);
+    assert.deepEqual(sleeps, [500, 1_000]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

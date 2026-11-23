@@ -24,7 +24,8 @@ const repositoryDirectory = resolve(desktopDirectory, '../..');
 const SAFE_PART = /^[0-9A-Za-z][0-9A-Za-z._-]{0,159}$/u;
 const REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INVENTORY_TIMESTAMP_TOLERANCE_MS = 1_000;
-// Attempt count and backoff of publish-r2-release.mjs's R2 verification loops.
+// Attempt count and backoff of publish-r2-release.mjs's R2 verification loops,
+// shared by this script's upload and inventory requests.
 const INVENTORY_ATTEMPTS = 7;
 const INVENTORY_RETRY_BASE_MS = 500;
 // These must not exceed the matching limits enforced by the regional API
@@ -139,16 +140,25 @@ async function uploadAndVerify(
   // R2 includes MD5 by default for non-multipart objects. This endpoint is a
   // single PUT, so its upload ETag is an integrity assertion over these bytes.
   const sourceEtag = createHash('md5').update(sourceBytes).digest('hex');
-  const put = await fetchImpl(url, {
-    method: 'PUT',
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    headers: {
-      Authorization: authorization,
-      'Content-Type': 'application/octet-stream',
-      ...jurisdictionHeaders,
-    },
-    body: sourceBytes,
-  });
+  // A PUT of the same bytes to the same key is idempotent, so a 5xx (an R2
+  // internal error such as code 10500) is retried on the inventory schedule.
+  // 4xx, 429 included, fails the first time for the reasons given below.
+  let put;
+  for (let attempt = 0; attempt < INVENTORY_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await sleepImpl(INVENTORY_RETRY_BASE_MS * 2 ** (attempt - 1));
+    put = await fetchImpl(url, {
+      method: 'PUT',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        Authorization: authorization,
+        'Content-Type': 'application/octet-stream',
+        ...jurisdictionHeaders,
+      },
+      body: sourceBytes,
+    });
+    if (put.status < 500) break;
+    if (attempt < INVENTORY_ATTEMPTS - 1) await discardBody(put);
+  }
   const putBody = await put.json().catch(() => null);
   if (!put.ok || putBody?.success !== true) {
     const detail = putBody === null

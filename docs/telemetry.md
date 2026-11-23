@@ -911,6 +911,27 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-11-23 — Artifact upload retries a transient Cloudflare server error
+
+**What changed:** The private artifact PUT retries an HTTP 5xx response on the
+inventory read's schedule: seven attempts, 500 ms doubling. Every 4xx, 429
+included, and every check on the upload metadata still fails on the first
+response.
+
+**Why:** Release v1.780.0 built, signed and notarized, then aborted before
+distribution because one renderer source-map PUT returned HTTP 500 with
+Cloudflare code 10500 (internal error). The 2026-11-10 entry rejected retrying
+the PUT because no PUT failure had been observed; this is that failure. A PUT of
+the same bytes to the same key is idempotent, and the upload-metadata and
+inventory checks still verify whichever attempt succeeded.
+
+**Considered and rejected:** Retrying 429, for the reason the inventory read
+gives: the account rate limit blocks for five minutes, longer than this backoff.
+Retrying a thrown `fetch` error, which has not been observed here.
+
+**Consequences:** A persistent 5xx now fails after roughly 31 seconds instead
+of immediately, and still names Cloudflare's error codes.
+
 ### 2026-11-18 — Artifact inventory verification accepts a response with no cache status
 
 **What changed:** The inventory read rejects only an explicit non-`DYNAMIC`
