@@ -2,6 +2,11 @@
 /download  https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg#download  302
 /download/*  https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg#download  302
 
+# Preserve circulated links to the retired landing variant.
+/start-fast  /  301
+/start-fast/  /  301
+/start-fast/index.html  /  301
+
 # Legal documents now live together under one Trust Center hierarchy. Preserve
 # public links that predate the consolidation, including their trailing-slash
 # variants, while publishing only the canonical /trust/ URLs.

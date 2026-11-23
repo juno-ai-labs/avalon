@@ -131,14 +131,14 @@ describe('site telemetry reporter', () => {
     await vi.waitFor(() => expect(link.href).toBe('https://app.rallywith.ai/?keep=yes#anchor'));
   });
 
-  it('names the page a click came from, so landing variants can be compared', async () => {
+  it('names the marketing page a click came from', async () => {
     const api = stubApi();
-    history.replaceState(null, '', '/start-fast/');
+    history.replaceState(null, '', '/canvases/');
     await start('<a data-site-action="download-hero" href="#">Download the macOS beta</a>');
     document.querySelector<HTMLElement>('a')!.click();
 
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
-    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/start-fast/', action: 'download', placement: 'hero' });
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/canvases/', action: 'download', placement: 'hero' });
   });
 
   it('reports a click inside a tagged link with its closed values and keepalive', async () => {

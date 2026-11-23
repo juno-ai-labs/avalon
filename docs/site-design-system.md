@@ -7,14 +7,13 @@ owns their shared fonts and palette. The homepage keeps its own composition;
 `reading.css` provides the blog and Trust Center's reading layouts and shared
 chrome, and `help.css` provides the manual's navigation and reading interface.
 
-The product pages and `/start-fast/` continue to use the
+The product pages continue to use the
 earlier `landing.css` system described later in this document. The download,
 Slack, and 404 pages still load `styles.css`.
 
 This document owns the visual decisions. The renderers and content contracts
 belong to [`site-blog.md`](site-blog.md) and [`help-center.md`](help-center.md).
-Tracking belongs to [`landing-page-tracking.md`](landing-page-tracking.md), and
-the three.js figure to [`landing-technology-schematic.md`](landing-technology-schematic.md).
+Tracking belongs to [`landing-page-tracking.md`](landing-page-tracking.md).
 
 ## Pencil-site boundaries
 
@@ -62,7 +61,7 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   time by `reading-card.ts` from local static TTF derivatives, avoiding
   network/system font dependencies. Help, blog posts and marketplace templates
   draw theirs from their own front matter. Every hand-written page (home, the
-  audience pages, `/developer-mode/`, Canvases, Sidekicks, `/start-fast/`, the marketplace and blog indexes, and the
+  audience pages, `/developer-mode/`, Canvases, Sidekicks, the marketplace and blog indexes, and the
   Trust Center) has an entry in `page-cards.ts`, which the `rally-page-cards`
   plugin draws to `<page>/social.png` and tags into the page's head. The build
   fails if a card's title is not its page's `<h1>`, or if a page names its own
@@ -79,7 +78,7 @@ The following decisions apply to the earlier pages using `landing.css`.
 
 The decisions a future editor must keep. The story of how they were reached
 is in the pull request that introduced this document (#1535); the words on
-the page live in the pages and in `access-copy.ts`, not here.
+the page live in the pages, not here.
 
 1. **The shared page.** The site is set as a printed page a team works on:
    warm paper and ink, column guides, ruled section heads, captioned figures.
@@ -103,7 +102,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/reading.css` | Blog layouts and reading-page header, footer and typography |
 | `apps/site/src/reading-card.ts` | Every link preview on the site, drawn from local fonts and shared artwork |
 | `apps/site/src/page-cards.ts` | Card words for each hand-written page, the headline check, and the image tags the build adds |
-| `apps/site/src/landing.css` | The earlier product and start-fast system: tokens, chrome, demos, pricing and page layouts |
+| `apps/site/src/landing.css` | The earlier product-page system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
 | `apps/site/for/`, `apps/site/src/for/`, `apps/site/src/story.ts`, `apps/site/src/story.css`, `apps/site/developer-mode/index.html` | The audience pages, the story player and kit, and the page for everything else: [`site-audience-pages.md`](site-audience-pages.md) |
@@ -111,16 +110,10 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/connector-marks.ts` | Connector marks and Rally plugin glyphs for the marketplace's chips, rendered from the app's components to static SVG at build time |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
 | `apps/site/src/home-pricing.ts` | Homepage plan markup from the product catalog and weekly allocation function |
-| `apps/site/start-fast/index.html` | The earlier landing design, with copy from `access-copy.ts` and shared sections |
-| `apps/site/src/landing-sections.html` | Sections below the hero on `/start-fast/` |
-| `apps/site/src/canvas-demo.html` | The detailed launch-tracker figure on `/start-fast/` and `/canvases/` |
-| `apps/site/src/steps.ts` | `applyStep`, the step primitive the Canvas demo and the carousel share, and `whenVisible` |
+| `apps/site/src/canvas-demo.html` | The detailed launch-tracker figure on `/canvases/` |
+| `apps/site/src/steps.ts` | `applyStep`, the step primitive the Canvas demo and email stories share, and `whenVisible` |
 | `apps/site/canvases/index.html`, `apps/site/sidekicks/index.html` | The two product pages |
 | `apps/site/src/site-motion.ts` | The demo's timeline and the scroll reveals |
-| `apps/site/src/live-examples.ts` | The hero carousel's seven examples as data, and `renderLiveCarousel`, which writes the carousel at build time (Node only) |
-| `apps/site/src/live-carousel.ts` | Plays the carousel: rotation, each slide's steps, the dot that flies from an event to the row it changed, the pause button |
-| `apps/site/src/explorable-figures.ts` | Figures 2 and 4 as SVG, rendered at build time; all their geometry |
-| `apps/site/src/explorables.ts` | Drives Figures 2 and 4: the time slider and playback, and the people slider |
 | `apps/site/src/site-chrome.ts` | The header nav, the footer, and the `<!-- rally:… -->` markers that stitch shared markup into pages |
 | `apps/site/src/fonts/` | Instrument Serif (roman and italic), Geist and Geist Mono, latin |
 | `apps/site/public/brand/rally-mark-paper.svg` | The mark in paper, drawn on the accent (Rally's avatar, the Sidekick hexagon) |
@@ -152,26 +145,15 @@ reading and interface; `--mono` (Geist Mono) for labels and captions. A
 headline is a roman claim and an italic turn; the italic takes the accent
 only in the hero, the product-page heroes and the closing band.
 
-The Technology figure is always a dark plate, in both themes, because the
-three.js scene draws light points that disappear on paper.
-
 ### Page architecture
 
 A page is a header, a hero, then **bands**. Each `.band` opens on a ruled
 index line (`.band-head`): the `.eyebrow` (a two-digit number and a name, in
 mono) sits in the left margin, three twelfths wide, and the serif headline and
 lede sit in the text column beside it. Content inside a band is cards on
-`--card` with hairline borders and a 14px radius. The `/start-fast/` hero sets its
-headline across faint twelve-column guides, then puts the introduction and
-the actions on a ruled line below it, then Figure 1. Every marketing page
+`--card` with hairline borders and a 14px radius. Every marketing page
 ends with the `.closer` plate and the footer, whose oversized italic
 wordmark closes the page.
-
-The hero stacks three equal-width actions vertically: web entry, macOS download,
-then Linux x64 Debian download, labeled Linux (.deb). The group is rendered by
-`rally:desktop-downloads` on `/start-fast/`. At narrower widths the
-hero columns stack and the buttons fill the available width on small screens; touch-only devices retain the web
-entry as their action.
 
 A **highlight** (`<mark class="hl hl-maya" data-name="Maya">`) is a person's
 selection: their colour behind the words, a bar at the start and their name
@@ -191,9 +173,9 @@ replaces it at build time and in the dev server.
 Pricing uses a two-column card grid for Start, Grow, Max and Ultra, stacking to
 one column at the existing phone breakpoint so the Ultra price stays legible.
 
-### Steps: the demo and the carousel
+### Steps: the demo and email stories
 
-Both the launch-tracker demo and each carousel slide are drawn at build time
+Both the launch-tracker demo and each email story are drawn at build time
 at their last step, so they read without a script. `applyStep` (`steps.ts`)
 puts one at any step n: `s1` to `s<n>` on the root for CSS that places things
 per step, `is-on` on every `[data-at]` at or below n, `is-done` on every
@@ -207,59 +189,17 @@ version, then Maya asking and Rally answering while Theo comments. Its tool
 events sit in a rail (`.signals`) beside the window on a wide screen, above it
 on a narrow one, and only the newest shows on a phone.
 
-### The hero carousel
-
-An example is data: its audience, artifact, Sidekick, three events, rows,
-a status line per step and a payoff (`LiveExample` in `live-examples.ts`).
-`renderLiveCarousel` turns all seven into tabs and slides, each slide in its
-finished state, so the page reads without a script. `live-carousel.ts` then
-plays one slide at a time with `applyStep`: step 0 is the page before, steps 1 to 3 are tool
-events (rows arrive with `at`, are ticked with `done`, the version and byline
-move on, a dot flies from the event to the row), and step 4 is a person
-ticking what they own, with the payoff card. A row with `approve` is ticked
-in the accent and stays at full strength, so "advance this candidate" never
-reads as "crossed off". Ranks are a CSS counter over the rows that have
-arrived. A slide's height is the tallest slide's, so rotating never moves the
-page. A click on a tab plays that slide from the start; the pause button
-stops rotation.
-
-To add an audience, add an entry to `liveExamples`. Its events must be ones a
-Sidekick can be started by, as the help center's Triggers and schedules page
-lists them; a tool read on a schedule (Google Drive, Calendar) is labelled
-as the schedule. Every example is a **Site**: its people tick rows, and
-nobody types into a Document or Spreadsheet directly, while a reactive site that
-remembers things takes visitors' entries and a Sidekick's runs write rows
-into it.
-
 ### Moving content
 
-Anything that moves on its own for more than a few seconds has a pause
-control (WCAG 2.2.2): the carousel and the Canvas demo each have a pause
-button, and Fig. 02 a play and pause button. The connector names are a static
-list, not a marquee. Only a person's choice scrolls the carousel's tab row:
-an automatic scroll would count as page input in `traffic-signals.ts`.
-
-### Explorable figures
-
-Figures 2 and 4 draw any state from scratch from one input, a time `t` or a
-head count, so playing, scrubbing and reduced motion are the same code.
-Their SVG is rendered at build time from `explorable-figures.ts`, which owns
-every coordinate and every word, including the Sidekick's status lines
-(`data-arriving`, `data-reading` on each tool) and the version labels; the
-client reads those, moves a pulse along a path, sets transforms and opacity,
-and toggles classes. Figure 4 counts only what is true at any size (people,
-copies of the page, seats); it does not pretend to pick a share setting. Figure 2 plays while on screen
-until the reader touches it. On a phone a figure keeps a minimum width and
-scrolls sideways rather than shrinking its labels. Figure numbers are a CSS
-counter, so moving or reusing a figure never leaves a stale number.
+The Canvas demo has a pause button. Email stories and their pause behavior are
+owned by [`site-audience-pages.md`](site-audience-pages.md).
 
 ### Motion
 
 Elements marked `data-reveal` rise in as they enter the screen.
 `site-motion.ts` adds the `reveals` class to `<html>` only when it runs and
 motion is allowed, so with no script every element is visible. With reduced
-motion the demo shows its final step, the connector strip stops and wraps,
-and nothing reveals or drifts.
+motion the demo shows its final step and nothing reveals or drifts.
 
 ## Invariants
 
@@ -322,6 +262,24 @@ automated test: it is checked in a real browser at desktop and phone widths,
 in light and dark, before a change ships, as the repository's rule on visible changes requires.
 
 ## Changelog
+
+### 2026-11-23 — Remove the retired landing design's renderer chain
+
+**What changed:** Retired `/start-fast/` and the concept studies, including the
+unused carousel, explorable figures, three.js schematic and their dedicated
+styles, build inputs and dependencies. Existing `/start-fast/` links redirect
+to the Gmail homepage.
+
+**Why:** Removing only the HTML left the old landing system in the source tree
+and kept building a three.js bundle that no published page loaded. The Gmail
+homepage and email stories have their own renderers; retaining the old chain
+would make obsolete code appear to be part of the current design system.
+
+**Consequences:** Keep `steps.ts`: the live Canvas demo and email stories still
+share it. Tracking scope and privacy behavior are recorded in
+[`public-site-telemetry.md`](public-site-telemetry.md#changelog).
+
+Pull request: [#1697](https://github.com/juno-ai-labs/avalon/pull/1697).
 
 ### 2026-11-19 — The homepage's general pitch moves to its own page
 

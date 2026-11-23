@@ -4,7 +4,7 @@ import { runsPostHog } from '../src/posthog-loader';
 
 describe('which pages run the PostHog SDK', () => {
   it('runs on every page not denied, including one added later', () => {
-    expect(['/', '/start-fast/', '/compare/notion/', '/blog/', '/help/', '/trust/privacy/', '/slack/', '/some-new-page/']
+    expect(['/', '/canvases/', '/compare/notion/', '/blog/', '/help/', '/trust/privacy/', '/slack/', '/some-new-page/']
       .map((path) => runsPostHog('production', path, false))).toEqual([true, true, true, true, true, true, true, true]);
   });
 

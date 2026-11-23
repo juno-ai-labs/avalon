@@ -2,8 +2,8 @@
 
 Rally ships the same Electron application on macOS arm64 and Linux x64. Linux
 uses AppImage and Debian packages, microphone dictation, and the existing
-Stable/Faster update controls. The browser remains a separate deployment. The landing page and `/start-fast/`
-link directly to `Rally.deb` below the macOS download, labeled Linux (.deb).
+Stable/Faster update controls. The browser remains a separate deployment. The landing page
+links directly to `Rally.deb` below the macOS download, labeled Linux (.deb).
 
 ## Where the code lives
 

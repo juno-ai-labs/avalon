@@ -11,7 +11,7 @@ if (!/^\/download(?:\/|$)/u.test(location.pathname)) {
   if (runsXPixel(environment(), location.pathname, notFound, globalPrivacyControl)) loadXPixel(new URL(location.href).searchParams.get('twclid'));
   // Before the PostHog SDK can read the address bar.
   takeAdClickId();
-  if (!notFound && runsApollo(environment(), location.pathname)) loadApollo();
+  if (runsApollo(environment(), location.pathname, notFound, globalPrivacyControl)) loadApollo();
   if (runsPostHog(environment(), location.pathname, notFound)) {
     awaitAnalyticsSession();
     loadPostHog();
