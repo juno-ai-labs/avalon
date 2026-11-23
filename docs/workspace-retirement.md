@@ -496,6 +496,23 @@ cannot invoke retirement.
 - **Nothing re-invokes an interrupted walk.** See **Failure modes and limits**;
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
+- **Six Organization objects ran an earlier migration 141.** The version that
+  rebuilt `schedules` without `digest_schedule_id` reached production on
+  2026-11-16. It failed on most objects (`no such column:
+  automation_subscription_id`), but six whose `schedules` had the declared
+  shape applied it and kept its receipt, `fnv1a64:38659f5e6939033c`. Those
+  objects have no `digest_schedules` table, and their `schedules` has no
+  `digest_schedule_id` column. Every other object has both, emptied, and the
+  receipt `fnv1a64:ab49aa1c631690e7`. That version's SQL is in no commit on
+  `main`, so its other statements are not recorded. Nothing live reads either
+  name, so those Organizations work normally. Every construction of the six logs
+  `workspace_do_schema_hash_mismatch:141`, about 2,600 lines a day. The warning
+  is accurate and stays, because the runner never rewrites a receipt. **The
+  migration that eventually rebuilds `schedules` without `digest_schedule_id`
+  must also apply on these six**: use `DROP TABLE IF EXISTS digest_schedules`,
+  and copy rows by the columns both shapes share, not by a column list that
+  names `digest_schedule_id`. A migration that alters `digest_schedules`, or
+  reads `schedules.digest_schedule_id`, fails on these six.
 
 ## Engineering MCP
 

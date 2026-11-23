@@ -1257,7 +1257,10 @@ export const THREAD_ERA_TABLES_DROP_MIGRATION: readonly string[] = [
  * from the shape `workspace-domain-schema.ts` declares, and production objects
  * refused it (`no such column: automation_subscription_id`): their
  * `schedules` does not have that shape. Rebuilding it waits until its real
- * columns are known.
+ * columns are known. Six objects did have that shape, applied the first
+ * version, and keep its receipt: they have no `digest_schedules` and no
+ * `schedules.digest_schedule_id`. A later migration on either name must allow
+ * for them (docs/workspace-retirement.md, "Open questions").
  *
  * Every table goes `IF EXISTS`, children before the tables they reference, so
  * an object that never had one, or a retired one, upgrades cleanly; each
