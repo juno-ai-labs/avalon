@@ -414,6 +414,11 @@
     // left at 1 because sampling reduces how many traces carry that content,
     // not what any one of them carries; there is no privacy to buy by lowering
     // it, only diagnostic value to lose.
-    "traces": { "enabled": true, "head_sampling_rate": 1, "destinations": ["posthog-traces"] }
+    //
+    // Trace sampling is 0.1 for cost, not privacy: from 1 December 2026
+    // Cloudflare bills observability per GB ingested, and spans were 95% of this
+    // Worker's events (`durable_object_storage_exec` alone was 75%). Logs stay
+    // at 1. See docs/performance-tracing.md.
+    "traces": { "enabled": true, "head_sampling_rate": 0.1, "destinations": ["posthog-traces"] }
   }
 }

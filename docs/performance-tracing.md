@@ -111,12 +111,14 @@ regions, at `LOG_LEVEL: "info"`. The one-row-per-flow decision below is still
 the right one — per *step* would be roughly forty — but eight is the number to
 budget against, and only for the rows.
 
-What actually leaves at `head_sampling_rate: 1` is every *automatic* span in
-those eight invocations: one `durable_object_storage_exec` per embedded query
-and one D1 span per query, which is a different order of magnitude from the row
-count and is the figure that matters for ingest volume. Sampling is the wrong
-knob for the content question and the right one for this; nothing here has
-measured it under load, and it should be before the export runs unattended.
+What a sampled invocation exports is every *automatic* span in it: one
+`durable_object_storage_exec` per embedded query and one D1 span per query,
+which is a different order of magnitude from the row count and is the figure
+that matters for ingest volume. Sampling is the wrong knob for the content
+question and the right one for this. The Global API samples traces at 0.1 and
+logs at 1, so every `perf_flow` row is still written but only one invocation in
+ten has a span waterfall; the changelog entry of 2026-11-23 has the volumes
+behind that number.
 
 That row is not a duplicate of the trace. A trace answers *what happened in this
 one invocation* and is read in a trace UI or at the OTLP destination; the row
@@ -609,13 +611,14 @@ workspace search and the conversation flows described here.
   reset, so the total and every earlier step stay truthful. Spans themselves are
   not capped here; the platform's own limits apply.
 - **`0ms` means "no I/O", not "instant"** — see the clock note above.
-- **Spans and log rows are billed identically from 1 October 2026** — one
-  observability event each, 20 million a month included on the paid plan, $0.60
-  per million beyond it — and head sampling is 1 in both regional configs. A
-  create emits roughly a dozen custom spans plus one `perf_flow` row on top of
-  the platform's own spans, so lowering `head_sampling_rate` — which can be set
-  separately for logs and traces — is the lever if volume becomes the problem,
-  not deleting spans.
+- **Spans and log rows are billed by size from 1 December 2026**, out of one
+  allowance: 50 GB ingested and 10 GB-month stored per billing cycle on the paid
+  plan, then $0.25 per GB ingested and $0.10 per GB-month stored. A create emits
+  roughly a dozen custom spans plus one `perf_flow` row on top of the platform's
+  own spans, so `head_sampling_rate`, which is set separately for logs and
+  traces, is the lever on volume, not deleting spans. The Global API samples
+  traces at 0.1; a trace you go looking for may not exist, and the `perf_flow`
+  row for that invocation is the fallback.
 - **Span and attribute names are not final upstream.** Cloudflare may rename
   `cloudflare.*` attributes during the beta; a saved query built on one can break
   without a deployment here.
@@ -801,6 +804,34 @@ destination is account configuration; the **attachment is per Worker**, through
 a Worker exports when its own config names one.
 
 ## Changelog
+
+### 2026-11-23 — Global API traces are sampled at one in ten
+
+**What changed:** `avalon-api-global` sets the traces `head_sampling_rate` to
+0.1. Workers Logs stay at 1, so `perf_flow` rows and structured logs are
+unchanged. Other Workers keep full sampling.
+
+**Why:** From 1 December 2026 Cloudflare bills observability per GB ingested
+and per GB-month stored instead of per event. Over 16 to 23 November the
+account sent about 132M events in 6.3 days, 98% of them from this Worker and
+95% of that Worker's events spans; `durable_object_storage_exec` alone was 75%
+of the account. At about 1.8 KB an event that came to roughly 1.1 TB a month,
+or $150 to $300 a month on the new pricing. One in ten should bring it near
+$20 to $30. The size per event is our JSON measure, not Cloudflare's metered
+figure, so the dollar range is a guess and the first invoice is the check.
+
+**Considered and rejected:** `persist: false` on traces, which would keep only
+the PostHog copy; the reason recorded in `wrangler.global.jsonc` for keeping
+the Cloudflare copy still holds, and the engineering MCP reads it. Lowering log
+sampling as well: logs are a small share of the volume and the `perf_flow` rows
+are what aggregate timing is read from. This does not reopen the 2026-08-20
+privacy decision in `telemetry.md`: sampling is changed for cost, and a sampled
+trace still carries message content.
+
+**What a future change has to respect:** a missing trace is now normal, so a
+diagnosis that needs one specific invocation's spans should go through the
+`perf_flow` row or temporarily raise the rate. The 0.1 is the team's number;
+change it here and in the config together.
 
 ### 2026-09-23 — Keep first-dispatch timing accurate after removing repeated checks
 

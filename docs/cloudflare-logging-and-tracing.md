@@ -269,16 +269,14 @@ pipeline's. "PostHog" alone is no longer enough to say which path is meant.
 
 ## Failure modes and limits
 
-- **Pricing changes on 1 October 2026, and spans and logs share one quota.**
-  Cloudflare counts **each span as one observability event, on the same monthly
-  allowance as each log event**: 20 million a month included on Workers Paid,
-  $0.60 per additional million, 200,000 a day on Free. A custom span is
-  therefore exactly as expensive as a log row, which is worth knowing before
-  reaching for either. Rally runs at `head_sampling_rate: 1` for both in both
-  regions and adds roughly a dozen custom spans to a conversation create on top
-  of the platform's own, so lowering the sampling rate — separately for logs and
-  traces, which the config allows — is the lever if the bill becomes the
-  constraint, not deleting spans.
+- **Pricing is by size from 1 December 2026, and spans and logs share one
+  allowance.** Workers Paid includes 50 GB ingested and 10 GB-month stored per
+  billing cycle, then $0.25 per GB ingested and $0.10 per GB-month stored; Free
+  gets 0.5 GB a day and pauses ingestion at the limit. A custom span costs the
+  same per byte as a log row. The Global API samples traces at 0.1 and logs at
+  1; other Workers run both at 1. Sampling, set separately for logs and traces,
+  is the lever on the bill, not deleting spans. The volumes behind the 0.1 are
+  in the 2026-11-23 entry of `performance-tracing.md`.
 - **Beta naming.** A rename by Cloudflare breaks a saved query, not a
   deployment. Prefer filtering on Rally's own `avalon.*` attributes, which we
   control, over `cloudflare.*` ones, which we do not.
