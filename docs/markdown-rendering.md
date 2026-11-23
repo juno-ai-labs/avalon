@@ -339,7 +339,10 @@ neither candidate resolves, the route answers 502
 fetch that did not complete names its phase (`branding_fetch_failed`), and a
 Firecrawl failure its kind and status (`firecrawl_http_400`,
 `firecrawl_network`), never the provider's message. A 200 the schema refused
-names the field instead (`firecrawl_branding_invalid:<path>:<issue>`), and the
+names the field instead (`firecrawl_branding_invalid:<path>:<issue>`), and a
+2xx that Firecrawl itself marks `success: false` names Firecrawl's verdict
+(`firecrawl_unsuccessful_200`, plus its upper-snake `code` such as
+`:SCRAPE_TIMEOUT` when it sends one) rather than reading as a refusal of ours. The
 branding call validates only the metadata it reads — `url`, `sourceURL` and
 `statusCode` — so a page's own tags cannot refuse its favicon. Each KV
 entry expires after 30 days; the next read fetches and overwrites it, so no stale
@@ -1005,6 +1008,31 @@ renderer keeps its existing parsing and code behavior. Source/range mapping and
 restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-21 — Firecrawl's own failure is not read as our schema refusal
+
+**What changed:** `FirecrawlClient` raises a 2xx body with `success: false` as
+a `FirecrawlError` of kind `unsuccessful`, carrying Firecrawl's `code`, before
+the response schema runs. The favicon route names it
+`favicon_unavailable:firecrawl_unsuccessful_200[:<CODE>]`.
+
+**Why:** The field-naming code from 2026-11-17 showed that the repeated
+reactive-site 502s were not a metadata field we refused, as that entry
+guessed. Firecrawl answered 200 with `success: false` and no `data`, which read
+as `firecrawl_branding_invalid:success:invalid_value:data:invalid_type`: our
+schema blamed for the provider's verdict, with the provider's reason discarded.
+
+**Considered and rejected:** Skipping Firecrawl for every
+`ARTIFACT_SERVING_DOMAIN` host on the theory that reactive sites are
+sign-in-only. Public reactive sites admit anonymous visitors, so that would
+hide their icons, and the cause was not proven. Also rejected: forwarding any
+code-shaped `code`. A character class bounds a value without vouching for it,
+so only an upper-snake enum crosses, and never Firecrawl's `error` prose.
+
+**What a future change has to respect:** The `unsuccessful` failure is still
+not negative-cached. Once its code says why these sites fail, the next review
+can choose between a resolver for Rally's own hosts and a short miss TTL, which
+is the team's number to set.
 
 ### 2026-11-17 — The streaming caret sits after the last character
 
