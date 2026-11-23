@@ -97,8 +97,17 @@ Each group and every receipt for it commit in one `transactionSync`; a crash or
 invalid statement cannot leave a half-applied migration with a successful
 receipt. New table rebuilds remain valid with foreign-key enforcement enabled:
 they create replacements, copy children and parents, remove the old graph
-child-first, and then rename the replacements parent-first. The runner executes
-`foreign_key_check` before commit. The released v32 transcript migration retains
+child-first, and then rename the replacements parent-first. Before committing a
+migration group, the runner checks that each foreign-key parent table exists
+and uses `EXPLAIN PRAGMA foreign_key_check` to make SQLite resolve the parent
+keys without running the row scan. It reads only tables whose SQL declares
+`REFERENCES`, which also keeps it off Cloudflare's `_cf_KV`: that table refuses
+every read with `SQLITE_AUTH` once an object has used the key-value API. A
+malformed definition rolls back the group
+and its receipts. The runner scans for orphaned rows with `PRAGMA foreign_key_check`
+only for legacy `disabled_during_rebuild` groups and groups that set
+`foreign_keys` or `defer_foreign_keys`. It rejects migration statements that
+declare `DEFERRABLE INITIALLY DEFERRED`. The released v32 transcript migration retains
 its explicit legacy execution marker solely to preserve its shipped fingerprint;
 new migrations may not copy that mode. Earlier complete groups remain
 receipted if a later group fails, and the next construction resumes at the
@@ -376,6 +385,31 @@ or `localWorkspaceEnv`, because `withWorkspaceRuntimeDatabase` without the local
 executor calls the object back.
 
 ## Changelog
+
+### 2026-11-20 — Validate foreign keys without scanning ordinary migration groups
+
+**What changed:** Before committing each migration group, the runner checks
+that foreign-key parent tables exist and asks SQLite to compile its foreign-key
+check without executing the row scan. The runner retains the full orphan scan for legacy rebuilds and groups
+that set a foreign-key pragma, and rejects `DEFERRABLE INITIALLY DEFERRED`.
+
+**Why:** The 2026-11-19 WorkspaceDO connector-event migration read 276,802 rows
+for the backfill and another 737,342 for `foreign_key_check`. It hit the
+30-second CPU limit and its retry committed about two minutes later. Immediate
+enforcement already checks changed rows. Cross-table definition errors, such
+as a dropped parent UNIQUE index, surface when SQLite prepares DML. Turning
+`defer_foreign_keys` off also clears pending violations, so those groups still
+need the orphan scan.
+
+**Considered and rejected:** Splitting the shipped backfill would leave future
+migrations paying the scan. Rebuilding SQLite's parent-key validation from
+schema metadata would duplicate its rules for unique indexes and collations.
+
+**Consequences:** A bad definition or a detected orphan rolls back its group
+and receipts. A backfill that approaches the CPU limit on its own still needs
+splitting across events.
+
+Shipped in [#1688](https://github.com/juno-ai-labs/avalon/pull/1688).
 
 ### 2026-09-21 — A migration fingerprint cannot take an object offline
 

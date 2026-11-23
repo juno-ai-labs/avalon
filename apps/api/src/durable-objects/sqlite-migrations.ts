@@ -89,6 +89,12 @@ function validateMigrations(
       if (/^\s*(?:BEGIN|COMMIT|ROLLBACK)\b/iu.test(statement)) {
         throw new Error(`${component}_schema_transaction_statement_forbidden:${migration.version}`);
       }
+      // A foreign key deferred to commit is checked at the object event's own
+      // commit, after the receipt, where it fails as an unnamed reset on every
+      // wake rather than as this runner's named rollback.
+      if (/\bDEFERRABLE\s+INITIALLY\s+DEFERRED\b/iu.test(statement)) {
+        throw new Error(`${component}_schema_deferred_foreign_key_forbidden:${migration.version}`);
+      }
     }
     prior = migration.version;
   }
@@ -242,9 +248,18 @@ export function applyDurableObjectSqliteMigrations(
         }
 
         if (groupIndex === groups.length - 1) options.afterMigrations?.(sql, appliedVersions);
-        const violation = sql.exec<Record<string, SqlStorageValue>>(`PRAGMA foreign_key_check`)
-          .toArray()[0];
-        if (violation) throw new Error(`${options.component}_schema_foreign_key_violation`);
+        validateForeignKeyDefinitions(sql, options.component, group.migrations.at(-1)!.version);
+        // `foreign_key_check` reads every row of every table with a foreign key,
+        // so it runs only where enforcement might not have caught an orphan
+        // (`docs/durable-object-sqlite.md`, Schema and migrations).
+        if (group.foreignKeysDisabled || group.migrations.some(setsForeignKeyPragma)) {
+          const violation = sql.exec<{ table: string; parent: string } & Record<string, SqlStorageValue>>(
+            `PRAGMA foreign_key_check`,
+          ).toArray()[0];
+          if (violation) {
+            throw new Error(`${options.component}_schema_foreign_key_violation:${violation.table}:${violation.parent}`);
+          }
+        }
         sql.exec(`PRAGMA optimize`);
       });
     } finally {
@@ -253,4 +268,52 @@ export function applyDurableObjectSqliteMigrations(
   }
 
   return appliedVersions;
+}
+
+/** Resolve foreign-key definitions at prepare time without walking table rows. */
+function validateForeignKeyDefinitions(sql: SqlStorage, component: string, version: number): void {
+  // REFERENCES is required to declare a foreign key. Use it only to narrow
+  // the catalog read before asking SQLite to inspect the definitions.
+  const tables = sql.exec<{ name: string; may_reference: number }>(
+    `SELECT name, instr(upper(sql), 'REFERENCES') AS may_reference
+       FROM main.sqlite_schema WHERE type = 'table'
+       ORDER BY name`,
+  ).toArray();
+  const tableNames = new Set(tables.map(({ name }) => name));
+
+  for (const { name: child, may_reference: mayReference } of tables) {
+    if (!mayReference) continue;
+    const quoted = '"' + child.replaceAll('"', '""') + '"';
+    let references: { table: string }[];
+    try {
+      references = sql.exec<{ table: string }>(`PRAGMA main.foreign_key_list(${quoted})`).toArray();
+    } catch (cause) {
+      throw new Error(`${component}_schema_foreign_key_list_failed:${child}`, { cause });
+    }
+    if (references.length === 0) continue;
+    for (const { table: parent } of references) {
+      if (tableNames.has(parent)) continue;
+      // SQLite's scan treats a missing parent as a row violation, so its
+      // compiler leaves that case to the catalog check.
+      const exists = sql.exec(
+        `SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = ? COLLATE NOCASE`,
+        parent,
+      ).toArray().length > 0;
+      if (!exists) {
+        throw new Error(`${component}_schema_foreign_key_definition_invalid:${child}:${parent}`);
+      }
+    }
+    try {
+      // Preparing the pragma resolves parent keys. EXPLAIN returns its bytecode
+      // without running the scan. Give each group its own statement so workerd
+      // cannot reuse cached EXPLAIN bytecode from before the group's DDL.
+      sql.exec(`EXPLAIN PRAGMA main.foreign_key_check(${quoted}) /* migration ${version} */`).toArray();
+    } catch (cause) {
+      throw new Error(`${component}_schema_foreign_key_definition_invalid:${child}`, { cause });
+    }
+  }
+}
+
+function setsForeignKeyPragma(migration: DurableObjectSqliteMigration): boolean {
+  return migration.statements.some((statement) => /\bPRAGMA\s+(?:defer_)?foreign_keys\b/iu.test(statement));
 }
