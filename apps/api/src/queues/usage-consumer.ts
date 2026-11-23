@@ -2,8 +2,9 @@ import { configuredRegions } from "@rally/contracts/regions";
 import { ORGANIZATION_PAYS, UsageEventSchema, type UsageEvent } from "@rally/contracts/usage";
 import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import type { Env } from "../env";
-import { logStructuredEvent } from "../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import { applyUsageBatch } from "../services/usage-metering";
+import { queueRetryDelaySeconds } from "./retry-backoff";
 
 export const USAGE_QUEUE_NAMES = new Set(configuredRegions.map((region) => `avalon-${region}-usage`));
 
@@ -15,7 +16,11 @@ export function isUsageQueue(queue: string): boolean {
  * The only writer of the usage ledger. An invalid message is acked and logged,
  * since retrying cannot fix it. A message from another region is a misrouted
  * producer: it retries here until it reaches the dead-letter queue and is
- * never applied to this region's ledger. See docs/usage-metering.md.
+ * never applied to this region's ledger. A failed ledger write or lakehouse
+ * send retries each accepted message with backoff rather than throwing: a
+ * thrown batch is redelivered at once, so a seconds-long Pipelines or D1
+ * outage would spend every retry and dead-letter the batch. See
+ * docs/usage-metering.md.
  */
 export async function consumeUsageQueue(
   batch: MessageBatch<unknown>,
@@ -50,13 +55,27 @@ export async function consumeUsageQueue(
   }
   const receivedAt = new Date(now()).toISOString();
   const events = accepted.map((entry) => entry.event);
-  const outcome = await applyUsageBatch(env, events, receivedAt);
-  // D1 first, so a Pipelines outage never stalls the meter. If this send
-  // fails the batch retries: D1 skips what it already holds, and the whole
-  // batch is sent again, so R2 can hold an event twice and readers
-  // deduplicate by event_id. Local hosts without the binding skip it.
-  if (env.USAGE_LAKEHOUSE && events.length > 0) {
-    await env.USAGE_LAKEHOUSE.send(events.map((event) => usageLakehouseRecord(event, receivedAt)));
+  let outcome: Awaited<ReturnType<typeof applyUsageBatch>>;
+  try {
+    outcome = await applyUsageBatch(env, events, receivedAt);
+    // D1 first, so a Pipelines outage never stalls the meter. If this send
+    // fails the batch retries: D1 skips what it already holds, and the whole
+    // batch is sent again, so R2 can hold an event twice and readers
+    // deduplicate by event_id. Local hosts without the binding skip it.
+    if (env.USAGE_LAKEHOUSE && events.length > 0) {
+      await env.USAGE_LAKEHOUSE.send(events.map((event) => usageLakehouseRecord(event, receivedAt)));
+    }
+  } catch (error) {
+    logStructuredEvent(env, "warn", "usage_batch_retry", {
+      queue: batch.queue,
+      messages: accepted.length,
+      queue_attempts: accepted.reduce((most, entry) => Math.max(most, entry.message.attempts), 0),
+      code: diagnosticErrorCode(error, "usage_batch_failed"),
+    });
+    for (const entry of accepted) {
+      entry.message.retry({ delaySeconds: queueRetryDelaySeconds(entry.message.attempts) });
+    }
+    return;
   }
   for (const entry of accepted) entry.message.ack();
   logStructuredEvent(env, "info", "usage_batch_applied", {

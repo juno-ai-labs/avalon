@@ -307,10 +307,13 @@ describe("consumeUsageQueue", () => {
     const { usage, env } = seed();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const acked: string[] = [];
+    const retried: [string, number | undefined][] = [];
     const queued = (id: string, body: unknown) => ({
-      id, timestamp: new Date(RECEIVED), body, attempts: 1,
-      ack: () => { acked.push(id); }, retry: vi.fn(),
+      id, timestamp: new Date(RECEIVED), body, attempts: 2,
+      ack: () => { acked.push(id); },
+      retry: (options?: QueueRetryOptions) => { retried.push([id, options?.delaySeconds]); },
     }) satisfies Message<unknown>;
     const batch = (): MessageBatch<unknown> => ({
       queue: "avalon-global-usage",
@@ -319,14 +322,21 @@ describe("consumeUsageQueue", () => {
       retryAll: vi.fn(), ackAll: vi.fn(),
     });
     const consumerEnv = (send: (records: unknown[]) => Promise<void>) => ({
-      ...env, APP_ENV: "test" as const, LOG_LEVEL: "error" as const,
+      ...env, APP_ENV: "test" as const, LOG_LEVEL: "warn" as const,
       USAGE_LAKEHOUSE: createCloudflareTestBinding<NonNullable<Env["USAGE_LAKEHOUSE"]>>({ send }),
     });
 
-    await expect(consumeUsageQueue(batch(), consumerEnv(async () => { throw new Error("pipeline_unavailable"); }), () => Date.parse(RECEIVED)))
-      .rejects.toThrow("pipeline_unavailable");
-    // The meter is current even while Pipelines is down; the batch is not acked.
+    await consumeUsageQueue(batch(), consumerEnv(async () => {
+      throw new Error("CF_SB_CACHEW_LIST_PARTITIONS_HTTP_ERROR: CacheW list partitions returned an HTTP error");
+    }), () => Date.parse(RECEIVED));
+    // The meter is current even while Pipelines is down; the batch is not acked
+    // but retried with backoff, since an immediate redelivery would spend every
+    // retry inside the outage.
     expect(acked).toEqual([]);
+    expect(retried.sort()).toEqual([["again", 10], ["one", 10]]);
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      event: "usage_batch_retry", messages: 2, queue_attempts: 2, code: "usage_batch_failed:pipeline_storage_unavailable",
+    }));
     expect(usage.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 1 });
 
     const sent: unknown[] = [];
@@ -338,6 +348,34 @@ describe("consumeUsageQueue", () => {
     ]);
     expect(acked.sort()).toEqual(["again", "one"]);
     expect(usage.prepare(`SELECT organization_microusd FROM usage_rollups`).all()).toEqual([{ organization_microusd: 2_000_000 }]);
+  });
+  it("backs off a batch whose ledger write fails without sending it to the lakehouse", async () => {
+    const { usage, env } = seed();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    usage.exec(`DROP TABLE usage_events`);
+    const acked: string[] = [];
+    const retried: [string, number | undefined][] = [];
+    const send = vi.fn(async () => undefined);
+    await consumeUsageQueue({
+      queue: "avalon-global-usage",
+      messages: [{
+        id: "one", timestamp: new Date(RECEIVED), body: event("inf:one"), attempts: 3,
+        ack: () => { acked.push("one"); },
+        retry: (options?: QueueRetryOptions) => { retried.push(["one", options?.delaySeconds]); },
+      } satisfies Message<unknown>],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: vi.fn(), ackAll: vi.fn(),
+    } satisfies MessageBatch<unknown>, {
+      ...env, APP_ENV: "test" as const, LOG_LEVEL: "warn" as const,
+      USAGE_LAKEHOUSE: createCloudflareTestBinding<NonNullable<Env["USAGE_LAKEHOUSE"]>>({ send }),
+    }, () => Date.parse(RECEIVED));
+
+    expect(acked).toEqual([]);
+    expect(retried).toEqual([["one", 20]]);
+    expect(send).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      event: "usage_batch_retry", messages: 1, queue_attempts: 3, code: "usage_batch_failed:sqlite_no_such_table",
+    }));
   });
 });
 

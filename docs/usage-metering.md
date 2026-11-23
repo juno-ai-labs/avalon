@@ -122,9 +122,11 @@ outbox for [Stripe synchronization](stripe-billing.md#synchronization-and-source
 They preserve included, free-period and Rally-paid usage as well as overages;
 Stripe transport remains outside the queue consumer and inference path.
 
-Then it sends the whole batch to the usage lakehouse and acks. If that send
-fails the batch retries: D1 skips what it already holds, and the batch is sent
-again, so R2 can hold an event twice. The consumer computes no overage.
+Then it sends the whole batch to the usage lakehouse and acks. If the ledger
+write or that send fails, each accepted message is retried with the shared queue
+backoff (5 s doubling, capped at 300 s) and `usage_batch_retry` names the
+failure: D1 skips what it already holds, and the batch is sent again, so R2 can
+hold an event twice. The consumer computes no overage.
 
 ### Retention
 
@@ -275,8 +277,9 @@ desktop meter is owned by the settings screens and
 
 - **Queue send fails:** the event is lost and `usage_emit_failed` is logged with
   its cost. The PRD accepts this best-effort loss for this phase.
-- **Consumer fails:** the batch retries with the platform's defaults and then
-  lands in `avalon-<region>-usage-dead-letter`. A non-empty dead-letter queue
+- **Consumer fails:** the batch retries with backoff, up to the platform's
+  default of 3 retries (about 35 s in all: 5, 10 and 20 s), and then lands in
+  `avalon-<region>-usage-dead-letter`. A longer outage still dead-letters it. A non-empty dead-letter queue
   is the alarm; its messages replay safely.
 - **Lakehouse send fails:** the meter stays current, since D1 is written first.
   The batch retries, and after the retries it lands in the dead-letter queue:
@@ -371,6 +374,29 @@ An uncertain write may have committed: inspect before retrying.
 
 
 ## Changelog
+
+### 2026-11-19 — A failed usage batch backs off instead of throwing
+
+**What changed:** When the ledger write or the lakehouse send fails, the
+consumer retries each accepted message with `queueRetryDelaySeconds` and logs
+`usage_batch_retry` with a code, rather than throwing the batch. Pipelines'
+storage-tier failure (`CF_SB_CACHEW_…`) is named `pipeline_storage_unavailable`.
+
+**Why:** On 2026-11-18 at 01:42 UTC a Pipelines storage error failed one
+three-message batch. The thrown batch was redelivered at once, all four
+deliveries ran inside about one second, and the batch went to
+`avalon-global-usage-dead-letter`. Those events are in D1 but not R2 until
+replayed, and the 90-day prune makes that gap permanent. The same immediate
+redelivery dead-lettered activity messages (#1666).
+
+**Considered and rejected:** Setting `retry_delay` on the consumer in Wrangler
+config: a fixed delay does not grow with the attempt, and the other consumers
+already back off per message in code.
+
+**What a future change has to respect:** Do not let a transient failure throw
+out of this consumer. Retry with the shared backoff. With the default 3 retries
+that covers an outage of about 35 s; covering a longer one means raising
+`max_retries`, which is the team's number to set.
 
 ### 2026-11-12 — An exhausted allowance is named, shown and emailed
 
