@@ -39,7 +39,7 @@ Many platforms are introducing harness level memory but we've found these to be 
 
 ## Pattern matching with human-native development
 
-How do we pattern match with what we've been doing in (modern) software development for the last 20 years? We've always had tribal knowledge ("Oh talk to Susan about that because I know we did some prototypes around that last year and learnings could be useful") that is never captured in the code or documentation.
+How do we pattern match with what we've been doing in (modern) software development for the last 20 years? We've always had tribal knowledge ("Oh talk to Susan about that because I know we did some prototypes around that last year and learnings could be useful") that is never captured in the code or documentation. Or our own long term memory where we track previous directions taken, experiments done, failed attempts, and lessons learned. While just living changes our natural neural network, models are still stiff and unchanging run-to-run and thus we need to work around it.
 
 ## Implementing it yourself
 
