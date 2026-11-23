@@ -20,6 +20,8 @@ export interface BlogPost {
   /** `YYYY-MM-DD`: the day the post was published, from the file name. */
   date: string;
   author: string;
+  /** Optional. When set, the author is a person: the byline links to it. */
+  email?: string;
   body: string;
   /** The whole file, front matter included, as published beside the page. */
   source: string;
@@ -56,6 +58,7 @@ export function parseBlogPost(source: string, file: string): BlogPost {
   return {
     slug, title: String(data.title), description: String(data.description),
     date, author: String(data.author), body: match[2] ?? '', source,
+    ...(data.email ? { email: String(data.email) } : {}),
   };
 }
 
@@ -160,13 +163,13 @@ export function renderBlogIndex(posts: readonly BlogPost[]): string {
 }
 
 export function renderBlogPost(post: BlogPost): string {
-  const { slug, title, description, date, author } = post;
+  const { slug, title, description, date, author, email } = post;
   const path = `/blog/${slug}/`;
   const image = `${ORIGIN}${path}social.png`;
   const structured = {
     '@context': 'https://schema.org', '@type': 'BlogPosting', headline: title, description, datePublished: date,
     url: ORIGIN + path, image, inLanguage: 'en',
-    author: { '@type': 'Organization', name: author },
+    author: email ? { '@type': 'Person', name: author, email } : { '@type': 'Organization', name: author },
     publisher: { '@type': 'Organization', name: 'Juno AI Labs Inc', url: `${ORIGIN}/` },
   };
   // `<` cannot appear raw inside a script element's JSON.
@@ -178,7 +181,7 @@ export function renderBlogPost(post: BlogPost): string {
       + `    <script type="application/ld+json">${json}</script>\n`,
     main: `<article class="blog">\n<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a href="/">Rally</a></li><li><a href="/blog/">Blog</a></li><li aria-current="page">${escapeHtml(title)}</li></ol></nav>\n`
       + `<h1 class="display blog-title">${escapeHtml(title)}</h1>\n`
-      + `<p class="blog-meta"><time datetime="${date}">${longDate(date)}</time> · ${escapeHtml(author)}</p>\n`
+      + `<p class="blog-meta"><time datetime="${date}">${longDate(date)}</time> · ${email ? `<a href="mailto:${escapeHtml(email)}">${escapeHtml(author)}</a>` : escapeHtml(author)}</p>\n`
       + `<div class="blog-body">${renderMarkdown(post.body)}</div>\n</article>`,
   });
 }

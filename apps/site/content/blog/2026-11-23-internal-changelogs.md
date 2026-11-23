@@ -2,7 +2,8 @@
 slug: internal-changelogs
 title: "Internal changelogs unlock autonomous coding agents"
 description: "An internal changelog gives coding agents a long-term memory that lives next to the code, and records why each change was made."
-author: "The Rally team"
+author: "Adam Juhasz"
+email: "adam@rallywith.ai"
 ---
 
 The key to enabling a software factory is internal changelogs, which give agents a long-term memory right next to the code. As a primer, LLMs have no “memory” and each turn (let alone each coding session) is completely independent. “Memory” is created by passing in the whole conversation (say, the last 24 turns) or by compressing and extracting earlier conversations and sessions.

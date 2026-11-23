@@ -14,7 +14,7 @@ draws each post's link-preview image, and the site-chrome markers described in
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/content/blog/YYYY-MM-DD-<title>.md` | One post. The file name gives the date; front matter gives `slug`, `title`, `description` and `author`; the rest is the body. |
+| `apps/site/content/blog/YYYY-MM-DD-<title>.md` | One post. The file name gives the date; front matter gives `slug`, `title`, `description`, `author` and, optionally, `email`; the rest is the body. |
 | `apps/site/src/blog-pages.ts` | Loads and validates posts; renders the changelog index, each post, and each post's card. |
 | `apps/site/src/reading.css`, `src/site-theme.css` | The pencil identity, `.changelog` index, `.blog` reading layout, and header/footer styles. |
 | `apps/site/src/site-chrome.ts` | `blogPosts`, the footer's Blog column, the blog sitemap, and the blog part of `llms.txt`. |
@@ -59,6 +59,9 @@ post only, so it stays two links long however many posts accumulate.
 - **The date is a real day.** An impossible day such as 2026-02-30 throws
   instead of rendering as a different date. Guard: the blog rendering test.
 - **Renaming a file keeps its URL;** changing its `slug` moves it.
+- **A post with an `email` is signed by a person.** The byline links the
+  author's name to the address, and the structured data names a `Person`
+  rather than an `Organization`. Guard: the blog rendering test.
 
 ## Boundary
 
