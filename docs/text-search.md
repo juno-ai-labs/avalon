@@ -138,8 +138,12 @@ batches. Turns with many links therefore do not accumulate all page-planning CPU
 in one invocation. Document and embedding children load only their selected
 canonical document; resource category tombstones remain separate documents.
 The final freshness read never recaptures a failed page. Browser failures record
-only numeric HTTP status and provider code, preserving the reference in the DLQ
-when retries are exhausted. A failed page does not retry sibling documents.
+only numeric HTTP status, provider code and whether the failure retries. A page
+Browser Run answers with 422 (it could not render it) is indexed by label and
+URL and acknowledged. Its row stays uncaptured, but a turn is re-projected only
+on a message edit or a forced migration pass, so such a page is not recaptured
+automatically. Any other failure retries and, once retries are exhausted,
+preserves the reference in the DLQ. A failed page does not retry sibling documents.
 
 All current message, upload, generated-artifact, and captured-page sources emit
 reference-only jobs through their transactional outboxes to the existing regional
@@ -635,12 +639,12 @@ passes a third time, so every lexical row written before migration 76 is
 rewritten with its `audience`. Existing semantic chunk rows keep no audience
 (see the changelog). Force both classes in each region, then confirm with a
 Turbopuffer count that no live lexical row lacks `audience` before search
-filters on it. This pass does leave dead letters: every link whose capture
-failed before is captured again, and one that still fails throws
-`search_capture_retry_required` after its lexical row is written, so its job
-exhausts the activity Queue's retries (six Browser Run calls) and dead-letters.
-Those are expected and harmless; count them against the
-`search_link_capture_failed` logs, and treat any other dead letter as real.
+filters on it. This pass captures every link whose capture failed before
+again. One Browser Run cannot render (a 422) is indexed without a body and acknowledged;
+one that still fails transiently throws `search_capture_retry_required` after
+its lexical row is written, exhausts the activity Queue's retries and
+dead-letters. Count those against `search_link_capture_failed` logs with
+`retryable: true`, and treat any other dead letter as real.
 Since the 2026-09-28 change member search filters on `audience`, so a row still
 missing it is invisible until its object migrates: force the migrations before
 that deploy, and re-count afterwards. The old search-authorization store is no
@@ -731,7 +735,9 @@ literal local/private hosts, including mapped and site-local IPv6, but is not a 
 or redirect firewall. Browser Run executes remotely rather than on a user's or
 Worker's private network. Captures are snapshots and are not refreshed just because
 the same URL is mentioned again. Missing extraction/capture work remains observable
-through Queue failure rather than silent truncation. Document-size and capture
+through Queue failure rather than silent truncation, except a page Browser Run
+answers with 422: it is indexed without a body, and its only signal is a
+`search_link_capture_failed` log with `retryable: false`. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Fleet migration
@@ -742,6 +748,33 @@ with `--class=WorkspaceDO`. Constructors still apply migrations on ordinary
 wakeups; the CLI provides the eager fleet pass without the retired tracker.
 
 ## Changelog
+
+### 2026-11-20 — Settle a link Browser Run cannot render instead of dead-lettering it
+
+**What changed:** `prepareConversationLinks` no longer asks for a retry when
+Browser Run answers a capture with 422. The link's label and URL are indexed
+without a body and the job is acknowledged; the row stays `captured = 0`.
+Every other failure still retries. The `search_link_capture_failed` log gains
+`retryable`.
+
+**Why:** A 422 means Browser Run could not render the page, and a retry
+seconds later renders it the same way: six Browser Run calls, an embedding
+re-plan per attempt, then a dead letter in the activity DLQ that operators
+are told to treat as real.
+
+**Considered and rejected:** Keeping the DLQ as the record of a failed capture;
+nothing replays it, and the uncaptured row is already the record. Settling every
+4xx except 408/429: a 400 or 401/403 is our request, binding or entitlement
+breaking, and would then index every link body-less without a dead letter to
+notice. Add another status only when the `retryable` log shows it deterministic.
+Every 422 settles, whatever its provider code; the 2026-09 probe below saw 422 /
+5006 (connection closed) on one page while a control page succeeded, so that
+code is accepted as page-specific too. The same entry's "swallowing capture
+failures would falsely imply page content had migrated" still holds: the row
+stays `captured = 0` and carries no body.
+
+**Consequences:** A settled page stays uncaptured permanently unless the turn
+is revised or a fleet re-projection runs.
 
 ### 2026-11-19 — Settle a display job for an erased Chat instead of dead-lettering it
 

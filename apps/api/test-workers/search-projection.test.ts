@@ -44,7 +44,7 @@ describe('resource searchable contents', () => {
 
 describe('conversation page capture', () => {
   it('isolates failed captures and returned contents to the requested document', async () => {
-    const capture = vi.fn(async () => Response.json({ success: false, errors: [{ code: 5006 }] }, { status: 422 }));
+    const capture = vi.fn(async () => Response.json({ success: false, errors: [{ code: 1000 }] }, { status: 503 }));
     const captureEnv: Env = { ...env, BROWSER: createCloudflareTestBinding<BrowserRun>({ quickAction: capture }) };
     const stub = env.MIGRATION_PROBE_DO!.getByName('search-isolated-capture');
     await stub.ping();
@@ -73,6 +73,14 @@ describe('conversation page capture', () => {
       expect(failure.documents.map((document) => document.id)).toEqual([failed.id]);
       expect(failure.documents[0]?.text).toContain('/failed');
       expect(capture).toHaveBeenCalledTimes(1);
+      // A page Browser Run could not render settles with its label and URL
+      // rather than retrying into the dead-letter queue, and stays uncaptured.
+      capture.mockImplementation(async () => Response.json({ success: false, errors: [{ code: 5002 }] }, { status: 422 }));
+      const unrenderable = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'pages', read, true, failed.id);
+      expect(unrenderable.retry).toBe(false);
+      expect(unrenderable.documents.map((document) => document.text)).toEqual(['https://example.com/failed\nhttps://example.com/failed']);
+      expect(capture).toHaveBeenCalledTimes(2);
+      expect(state.storage.sql.exec<{ captured: number }>('SELECT captured FROM conversation_search_links WHERE id = ?', failed.id).one().captured).toBe(0);
       expect(readConversationSearchLink(state.storage.sql, ready.id, read())?.text).toContain('retained body');
     });
   });
