@@ -191,6 +191,12 @@ selected product regions.
     scripts/ensure-cloudflare-inference-lakehouse.mjs --check` before retrying
     again.
 
+- The Global API's five-minute cron (`worker-events.ts`) runs its tasks through
+  `runScheduledTasks` (`src/scheduled-tasks.ts`): every task runs to completion,
+  each failure is logged once as `scheduled_task_failed` with the innermost
+  `task` name and an `error_code`, and the tick then ends in an exception. A
+  failed tick is diagnosed by that event, not by the invocation's message.
+
 - A missing target Worker makes caller deployment fail. The workflow deploys or
   uploads target services first.
 
@@ -344,6 +350,25 @@ for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
 ## Changelog
+
+### 2026-11-24 — Name every failed task in the Global cron
+
+**What changed:** The five-minute cron's tasks run through `runScheduledTasks`
+instead of a bare `Promise.all`, which logs each failure once as
+`scheduled_task_failed` with the task's name and code before rethrowing.
+
+**Why:** Two failed ticks in 33 hours carried, as their only diagnosis, an R2
+sentence in one case and a D1 internal error in the other; neither named the
+task, so each cost a trace read. Under `Promise.all` the first rejection also
+settled the tick while sibling tasks were still running.
+
+**Considered and rejected:** Catching inside each task: eight call sites
+repeating the same naming, and a new task would ship without it.
+
+**Consequences:** A failed tick still ends in an exception, so the platform's
+failed-invocation count stays the signal. A runner nested inside a task (the
+telemetry stages do this) logs under the innermost name and the outer runner
+does not repeat it, so one fault is one log entry.
 
 ### 2026-11-19 — Defer `@rally/contracts` schemas; keep both Durable Objects out of the HTTP and queue graphs
 

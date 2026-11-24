@@ -24,6 +24,7 @@ embedded in the renderer or a source of product truth.
 | `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
 | `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace and `AgentLoopDO`-feed hooks; it also reports every `AgentLoopDO`-feed connection start. |
+| `apps/api/src/telemetry/crash-pass.ts` | The scheduled crash pass: retention, then opt-out purge, processing and delivery. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/telemetry-delivery-worker.ts` | Global-only private Worker that owns telemetry destination adapters; PostHog is the first adapter. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
@@ -848,7 +849,12 @@ it has neither R2 credentials nor internet access. Telemetry secrets have no
 Every five-minute scheduled pass reaps expired rows/objects, purges opted-out
 crashes, processes event/profile/crash work, repairs stale crash claims, and emits
 one `telemetry_operations_snapshot`. The snapshot contains only pending/terminal
-counts, rejection count, open-circuit count, and oldest backlog ages. Alert on an
+counts, rejection count, open-circuit count, and oldest backlog ages. A failed
+stage is logged once as `scheduled_task_failed` under its own name
+(`telemetry_outbox`, `analytics_lakehouse_recovery`, `crash_report_retention`,
+`crash_object_retention`, or `crash_telemetry` for the purge and delivery), and
+the snapshot is skipped on that tick; see
+[`api-worker-deployment.md`](api-worker-deployment.md#failure-modes-and-limits). Alert on an
 open circuit, any terminal count, oldest age approaching 15 minutes, persistent
 processing failures, missing symbols, or deletion survivors.
 
@@ -910,6 +916,29 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-11-24 — A crash-retention failure no longer holds back purge and delivery
+
+**What changed:** The crash pass moved to `telemetry/crash-pass.ts`. Its two
+retention reapers run under `runScheduledTasks`, and their failure is held until
+the opt-out purge, processing and delivery have run. The telemetry stages each
+run as named tasks.
+
+**Why:** A log review on 2026-11-24 found an R2 `list` internal error (`10001`)
+in the orphan sweep ending the crash pass before that tick's opt-out purge and
+delivery, with an exception that named neither the task nor the stage. A
+second failed tick, a D1 internal error in analytics lakehouse recovery, was
+equally unattributed.
+
+**Considered and rejected:** Swallowing the R2 failure in the reaper: the next
+tick resumes from its stored cursor, but a persistent R2 fault would then never
+surface. Letting the purge also run past its own failure: a report whose owner
+opted out must be deleted before processing or delivery reads it, so the purge
+still gates both.
+
+**Consequences:** The two reapers run concurrently; both only delete, and an R2
+delete of a key the other already removed is a no-op. The operations snapshot
+is still skipped on a tick where any telemetry stage failed.
 
 ### 2026-11-18 — Artifact inventory verification accepts a response with no cache status
 

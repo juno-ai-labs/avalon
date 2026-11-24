@@ -42,6 +42,9 @@ const PLATFORM_ERRORS: readonly (readonly [RegExp, string])[] = [
   // Pipelines' stream backend (`CF_SB_…`): its storage tier failing a send.
   [/^CF_SB_CACHEW_[A-Z_]{1,60}:/u, "pipeline_storage_unavailable"],
   [/: syntax error/u, "sqlite_syntax_error"],
+  // R2's binding error is `<operation>: <sentence> (<code>)`; 10001 is its
+  // retryable internal error.
+  [/We encountered an internal error\. Please try again\. \(10001\)/u, "r2_internal_error"],
 ];
 
 /**

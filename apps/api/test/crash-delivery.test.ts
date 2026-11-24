@@ -7,6 +7,7 @@ import {
   reapExpiredCrashReports,
   reapExpiredOrphanedCrashObjects,
 } from '../src/telemetry/crash-delivery';
+import { processCrashTelemetry } from '../src/telemetry/crash-pass';
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -210,6 +211,70 @@ describe('Global native crash delivery', () => {
     expect(deleteObject).toHaveBeenCalledTimes(101);
     expect(database.prepare('SELECT COUNT(*) AS count FROM telemetry_crash_reports').get())
       .toEqual({ count: 0 });
+    database.close();
+  });
+  it('purges, processes and delivers even when the orphan sweep cannot list R2', async () => {
+    const database = migratedSqliteDatabase();
+    const insertUser = database.prepare(`INSERT INTO users
+      (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
+      VALUES (?, ?, ?, 'User', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ?)`);
+    insertUser.run('opted-out', 'google-1', 'out@example.com', 0);
+    insertUser.run('opted-in', 'google-2', 'in@example.com', 1);
+    database.prepare(`INSERT INTO telemetry_crash_reports
+      (crash_id, upload_id, installation_analytics_id, route, object_key, byte_size,
+       content_sha256, release, build_id, platform, architecture, process_role,
+       launch_id, channel, received_at, delete_at, subject_user_id)
+      VALUES ('crash-opted-out', 'upload-1', 'installation-1', 'global',
+              'telemetry/crashes/global/opted-out.dmp', 4, 'hash-1', '1.0.0', 'build',
+              'darwin', 'arm64', 'renderer', 'launch-1', 'stable',
+              '2026-08-12T19:00:00.000Z', '2026-11-10T19:00:00.000Z', 'opted-out')`).run();
+    const objects = new Map<string, Uint8Array>();
+    objects.set('telemetry/symbols/1.96.0/build-123/darwin/arm64.tar', new Uint8Array([1]));
+    const listFailure = new Error('list: We encountered an internal error. Please try again. (10001)');
+    const bucket = createCloudflareTestBinding<R2Bucket>({
+      put: vi.fn(async (key: string, value: Uint8Array) => { objects.set(key, value); }),
+      get: vi.fn(async (key: string) => {
+        const value = objects.get(key);
+        return value ? { size: value.byteLength, arrayBuffer: async () => value.buffer.slice(0) } : null;
+      }),
+      delete: vi.fn(async (key: string) => { objects.delete(key); }),
+      list: vi.fn(async () => { throw listFailure; }),
+    });
+    const deliverCrashBatch = vi.fn(async () => ({
+      postHog: { result: 'delivered' as const, requestId: 'posthog-crash-request-1', retryAfterMs: null },
+    }));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: 'global', TELEMETRY_PAYLOADS: bucket,
+      POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      TELEMETRY_DELIVERY: { deliverCrashBatch },
+      CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
+        idFromName: () => createTestDurableObjectId('crash-symbolicator'),
+        get: () => ({
+          symbolicate: vi.fn(async () => ({
+            parserState: 'symbolicated' as const,
+            reportJson: JSON.stringify({ status: 'ok', crash_info: { type: 'EXC_BAD_ACCESS' } }),
+          })),
+        }),
+      }),
+    });
+    const dump = new Uint8Array(32);
+    dump.set(new TextEncoder().encode('MDMP'));
+    await new CrashIngestService(env).accept({
+      uploadId: '018f22f2-4c22-7abc-8def-0123456789ab',
+      installationId: '018f22f2-4c22-7abc-8def-0123456789ac',
+      route: 'global', release: '1.96.0', buildId: 'build-123', platform: 'darwin',
+      architecture: 'arm64', processRole: 'renderer',
+      launchId: '018f22f2-4c22-7abc-8def-0123456789ad', channel: 'stable',
+      dump, subjectUserId: 'opted-in', rateLimitSubject: 'opted-in',
+    });
+
+    await expect(processCrashTelemetry(env)).rejects.toBe(listFailure);
+    expect(database.prepare(`SELECT subject_user_id, parser_state, destination_state
+      FROM telemetry_crash_reports`).all()).toEqual([{
+      subject_user_id: 'opted-in', parser_state: 'symbolicated', destination_state: 'delivered',
+    }]);
+    expect(deliverCrashBatch).toHaveBeenCalledOnce();
     database.close();
   });
 });

@@ -28,33 +28,20 @@ import {
   recoverUndeliveredAnalyticsLakehouseEvents,
 } from "./services/analytics-lakehouse";
 import { processTelemetryOutbox } from "./telemetry/delivery";
-import { processPendingCrashReports } from "./telemetry/crash-processing";
-import {
-  processCrashOutbox,
-  purgeIneligibleCrashReports,
-  reapExpiredOrphanedCrashObjects,
-  reapExpiredCrashReports,
-} from "./telemetry/crash-delivery";
+import { processCrashTelemetry } from "./telemetry/crash-pass";
+import { runScheduledTasks } from "./scheduled-tasks";
 import { readTelemetryOperationalSnapshot } from "./telemetry/operations";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
 } from "./services/workstream-authority";
 
-async function processCrashTelemetry(env: Env): Promise<void> {
-  await reapExpiredCrashReports(env);
-  await reapExpiredOrphanedCrashObjects(env);
-  await purgeIneligibleCrashReports(env);
-  await processPendingCrashReports(env);
-  await processCrashOutbox(env);
-}
-
 async function processTelemetry(env: Env): Promise<void> {
-  await Promise.all([
-    processTelemetryOutbox(env),
-    processCrashTelemetry(env),
-    recoverUndeliveredAnalyticsLakehouseEvents(env),
-  ]);
+  await runScheduledTasks(env, {
+    telemetry_outbox: () => processTelemetryOutbox(env),
+    crash_telemetry: () => processCrashTelemetry(env),
+    analytics_lakehouse_recovery: () => recoverUndeliveredAnalyticsLakehouseEvents(env),
+  });
   const snapshot = await readTelemetryOperationalSnapshot(env);
   const unhealthy = snapshot.openCircuits > 0
     || snapshot.acceptedTerminal > 0
@@ -203,17 +190,16 @@ export default {
     return consumeActivityQueue(batch, env);
   }),
   scheduled: withEnvContract((_controller, env, context) => {
-    context.waitUntil((async () => {
-      await Promise.all([
-        reapExpiredSessions(env),
-        dispatchWorkspaceRelationshipChanges(env),
-        recoverEmailLoginDeliveries(env),
-        purgeExpiredEmailLoginChallenges(env),
-        purgeExpiredPasswordLoginAttempts(env),
-        pruneUsageEvents(env, Date.now()),
-        settleBillingAccounts(env),
-        processTelemetry(env),
-      ]);
-    })());
+    // Each task is named so a failed tick says which one failed.
+    context.waitUntil(runScheduledTasks(env, {
+      reap_expired_sessions: () => reapExpiredSessions(env),
+      dispatch_workspace_relationship_changes: () => dispatchWorkspaceRelationshipChanges(env),
+      recover_email_login_deliveries: () => recoverEmailLoginDeliveries(env),
+      purge_expired_email_login_challenges: () => purgeExpiredEmailLoginChallenges(env),
+      purge_expired_password_login_attempts: () => purgeExpiredPasswordLoginAttempts(env),
+      prune_usage_events: () => pruneUsageEvents(env, Date.now()),
+      settle_billing_accounts: () => settleBillingAccounts(env),
+      telemetry: () => processTelemetry(env),
+    }));
   }),
 } satisfies ExportedHandler<Env>;
