@@ -7,6 +7,7 @@ import {
   reapExpiredCrashReports,
   reapExpiredOrphanedCrashObjects,
 } from '../src/telemetry/crash-delivery';
+import { processCrashTelemetry } from '../src/telemetry/crash-pass';
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -208,6 +209,38 @@ describe('Global native crash delivery', () => {
 
     await expect(reapExpiredCrashReports(env)).resolves.toBe(101);
     expect(deleteObject).toHaveBeenCalledTimes(101);
+    expect(database.prepare('SELECT COUNT(*) AS count FROM telemetry_crash_reports').get())
+      .toEqual({ count: 0 });
+    database.close();
+  });
+  it('purges an opted-out report even when the orphan sweep cannot list R2', async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO users
+      (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
+      VALUES ('user-1', 'google-1', 'user@example.com', 'User', ?, ?, 0)`)
+      .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+    database.prepare(`INSERT INTO telemetry_crash_reports
+      (crash_id, upload_id, installation_analytics_id, route, object_key, byte_size,
+       content_sha256, release, build_id, platform, architecture, process_role,
+       launch_id, channel, received_at, delete_at, subject_user_id)
+      VALUES ('crash-1', 'upload-1', 'installation-1', 'global',
+              'telemetry/crashes/global/crash-1.dmp', 4, 'hash-1', '1.0.0', 'build',
+              'darwin', 'arm64', 'renderer', 'launch-1', 'stable',
+              '2026-08-12T19:00:00.000Z', '2026-11-10T19:00:00.000Z', 'user-1')`).run();
+    const listFailure = new Error('list: We encountered an internal error. Please try again. (10001)');
+    const deleteObject = vi.fn(async () => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: 'global',
+      TELEMETRY_PAYLOADS: createCloudflareTestBinding<R2Bucket>({
+        list: vi.fn(async () => { throw listFailure; }),
+        delete: deleteObject,
+      }),
+    });
+
+    await expect(processCrashTelemetry(env)).rejects.toBe(listFailure);
+    expect(deleteObject.mock.calls).toEqual([['telemetry/crashes/global/crash-1.dmp']]);
     expect(database.prepare('SELECT COUNT(*) AS count FROM telemetry_crash_reports').get())
       .toEqual({ count: 0 });
     database.close();

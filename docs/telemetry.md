@@ -24,6 +24,7 @@ embedded in the renderer or a source of product truth.
 | `apps/desktop/src/main/telemetry-intent.ts` | The renderer-intent allowlist and validator every `telemetry:product-intent` call passes through, kept out of the entry point so it can be tested by running it. |
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
 | `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace and `AgentLoopDO`-feed hooks; it also reports every `AgentLoopDO`-feed connection start. |
+| `apps/api/src/telemetry/crash-pass.ts`, `apps/api/src/scheduled-tasks.ts` | The scheduled crash pass (retention, opt-out purge, processing, delivery) and the runner that names each failed scheduled task. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/telemetry-delivery-worker.ts` | Global-only private Worker that owns telemetry destination adapters; PostHog is the first adapter. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
@@ -848,7 +849,10 @@ it has neither R2 credentials nor internet access. Telemetry secrets have no
 Every five-minute scheduled pass reaps expired rows/objects, purges opted-out
 crashes, processes event/profile/crash work, repairs stale crash claims, and emits
 one `telemetry_operations_snapshot`. The snapshot contains only pending/terminal
-counts, rejection count, open-circuit count, and oldest backlog ages. Alert on an
+counts, rejection count, open-circuit count, and oldest backlog ages. A task that
+fails is logged as `scheduled_task_failed` with its `task` name and `error_code`
+before the tick ends in an exception; crash retention logs its own
+`crash_report_retention` or `crash_object_retention` entry beneath `telemetry`. Alert on an
 open circuit, any terminal count, oldest age approaching 15 minutes, persistent
 processing failures, missing symbols, or deletion survivors.
 
@@ -910,6 +914,35 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-11-24 — A crash-retention failure no longer holds back purge and delivery
+
+**What changed:** The five-minute cron runs its tasks through
+`runScheduledTasks` (`apps/api/src/scheduled-tasks.ts`), which lets every task
+finish, logs each failure as `scheduled_task_failed` with the task's name and
+code, then rethrows. The crash pass moved to `telemetry/crash-pass.ts`, where
+the two retention reapers run under the same runner and their failure is held
+until the opt-out purge, processing and delivery have run. `platformErrorCode`
+maps R2's retryable internal error (`10001`) to `r2_internal_error`.
+
+**Why:** A log review on 2026-11-24 found two cron exceptions in 33 hours, one
+reading only `list: We encountered an internal error. Please try again.
+(10001)` and the other carrying no message at all. The orphan sweep's R2
+`list` had failed and, because the crash stages ran in sequence, ended the pass
+before the opt-out purge and delivery for that tick; the exception named
+neither the task nor the stage.
+
+**Considered and rejected:** Catching and swallowing the R2 failure in the
+reaper: the next tick resumes from its stored cursor anyway, but a persistent
+R2 fault would then never surface. Letting the purge also run past its own
+failure: a report whose owner opted out must be deleted before processing or
+delivery reads it, so the purge still gates both.
+
+**Consequences:** A tick that loses a task still ends in an exception, so the
+platform's failed-invocation count stays the signal; the log now says which
+task. The two reapers now run concurrently; both only delete, and an R2 delete
+of a key the other already removed is a no-op. The operations snapshot is still
+skipped on a tick where any telemetry stage failed.
 
 ### 2026-11-18 — Artifact inventory verification accepts a response with no cache status
 
