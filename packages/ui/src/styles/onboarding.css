@@ -106,6 +106,7 @@ html[data-personal-color] {
 .starter-avatar { width: 76px; height: 76px; }
 .guided-starters { width: min(100%, 510px); display: flex; gap: 12px; }
 .guided-starters button { flex: 1; text-align: left; border: 0; border-radius: 14px; padding: 14px; background: var(--av-sys-color-surface-subtle); color: var(--av-sys-color-text-muted); }
+.guided-connections { width: min(100%, 510px); display: flex; flex-direction: column; gap: 12px; }
 .onboarding-teammates { width: min(100%, 510px); display: flex; flex-direction: column; gap: 12px; font-size: var(--av-sys-type-callout); }
 .onboarding-teammates p { margin: 0; color: var(--av-sys-color-text-muted); }
 .onboarding-date-range { display: flex; gap: 12px; }

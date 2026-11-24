@@ -1,7 +1,7 @@
 # New-user onboarding
 
-Rally helps organization creators connect their tools and
-add teammates, then guides each person through personal appearance. Adding teammates finishes creator
+Rally guides each person through personal appearance and connecting Gmail and
+Google Drive, then helps organization creators add teammates. Adding teammates finishes creator
 setup and open the main app at New. Existing accounts are exempted when the migration runs. This
 ships directly for newly created accounts, with no feature flag.
 
@@ -35,16 +35,24 @@ completion waits on it, so an eligible account that has not recorded it shows
 account gate optionally notifies its host when account-read or introduction-save
 recovery is actionable, so a native loading cover cannot hide Retry.
 Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
-choose the regional workspace. Everyone starts at personal setup. Connecting
-tools is not a journey step; it lives in Settings → Connections. The step
-that adds teammates can be skipped.
+choose the regional workspace. Everyone starts at personal setup, then
+connects Gmail and Google Drive. Every other connector lives in Settings →
+Connections. The Google step and the step that adds teammates can both be
+skipped.
 
 WorkspaceDO migration 34 adds `onboarding_journeys`, keyed by regional user ID.
 This migration includes the persisted scoped connector selection. Deploy the identity migration
 and API before releasing the desktop client; existing accounts are exempted by
 the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through personal
-appearance, then adding teammates; members finish after personal appearance.
+appearance, connecting Google, then adding teammates; members finish after
+connecting Google. The Google step (stage `connectors`) shows the same
+`ConnectorConnectionCard` a conversation shows, for the personal
+`google-mail-calendar` and `google-drive` connections, so connecting,
+reconnecting and the OAuth return behave as they do there; the workspace socket
+refreshes `['connections']` when an authorization lands. A host with no
+`connectorSetup` (it cannot start a connection) skips the step: personal setup
+then asks for the stage after it, which the store also accepts.
 Finishing saves `complete` and then leaves for the Canvases home through
 `useOpenLanding`, replacing the journey's entry, unless the route under the
 journey opens one Canvas or one Sidekick by its id (a shared link, or a
@@ -118,11 +126,15 @@ the same notice for anyone whose email could not be sent.
   onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt. The guide Canvas is asked for by creating the Organization, not by the journey, and no model runs to make it.
 - The visible email list and Add action authorize adding through the existing workspace service.
-- `connectors` stays in the stage enum, the table's check and the contract, and
-  `connectorIds` stays on the journey, because rows written before the step was
-  retired hold them. Reading a journey stored at `connectors` moves it to
-  `profile`, and no transition leads back. Reads of a stored selection drop ids
-  the catalog no longer has, so an old row stays readable.
+- `connectors` means the Google step after personal setup. Before WorkspaceDO
+  migration 155 it meant the retired picker before personal setup; that
+  migration moved rows still parked there to `profile`. `connectorIds` stays on
+  the journey only because old rows hold it, and nothing writes it. Reads of a
+  stored selection drop ids the catalog no longer has, so an old row stays
+  readable.
+- Personal setup may go to `connectors` or straight to the stage after it.
+  Clients built before the Google step ask for the latter, and so does a host
+  that cannot connect accounts.
 
 ## Boundary
 
@@ -164,7 +176,8 @@ equal projections do not emit repeated invalidations.
 Run API Node tests `account-onboarding.test.ts`,
 `platform-onboarding.test.ts`, and `workspace-do-schema.test.ts`, plus workerd
 `test-workers/onboarding-journey.test.ts`, whose retired-connector and
-retired-stage cases cover reading old rows. The desktop journey itself is
+retired-stage cases cover reading old rows; the retired-stage case commits a
+row at schema v154 and upgrades it, as production does. The desktop journey itself is
 covered by `src/renderer/screens/guided-onboarding.test.tsx`. Account tests apply the actual regional
 migrations; journey tests apply the actual WorkspaceDO migrations in workerd.
 The desktop tests use the real error-notice provider to cover editing without a
@@ -176,9 +189,32 @@ cover existing authentication and activation behavior.
 
 Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
-Onboarding no longer starts an agent run or a connector authorization.
+Onboarding starts no agent run; the Google step starts a connector
+authorization only when the person presses Connect. A local stack without a
+Google OAuth client shows both cards as Unavailable.
 
 ## Changelog
+
+### 2026-11-24 — Connect Gmail and Google Drive after personal setup
+
+**What changed:** A new step after personal setup offers the personal Google
+Mail + Calendar and Google Drive connections, on both paths, with Skip for now.
+It reuses the stage value `connectors`; WorkspaceDO migration 155 moves rows
+still at the old pre-profile `connectors` stage to `profile`, replacing the
+rewrite `get` did on every read.
+
+**Why:** Product asked for new people to connect Gmail and Google Drive during
+onboarding. Those two carry most of the context Rally works from.
+
+**Considered and rejected:** A new stage name, which needs a rebuild of
+`onboarding_journeys` to change its `CHECK`, paid by every Organization object
+on its next wake. A client-only screen, which would not resume after a restart.
+Bringing back the full connector picker, which product removed in October.
+
+**Consequences:** `profile` still accepts the stage after `connectors`, so
+older clients and hosts that cannot connect keep working. Rows at `connectors`
+written after this ships are post-profile; a later change must not read them
+as the retired stage.
 
 ### 2026-11-16 — Finishing setup keeps the Canvas a link opened
 

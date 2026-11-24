@@ -15,12 +15,8 @@ export class OnboardingJourneyStore {
 
   get(userId: string, path: 'creator' | 'member'): OnboardingJourney {
     z.string().uuid().parse(userId);
-    // Every journey now starts at personal setup. Connecting tools left the
-    // journey for Settings; a journey stored at that retired stage moves on
-    // to the next one, which a creator reached from it before.
     this.sql.exec(`INSERT INTO onboarding_journeys(user_id, path, stage)
-      VALUES (?, ?, 'profile') ON CONFLICT(user_id) DO UPDATE SET stage = 'profile', revision = revision + 1
-      WHERE onboarding_journeys.stage = 'connectors'`, userId, path);
+      VALUES (?, ?, 'profile') ON CONFLICT(user_id) DO NOTHING`, userId, path);
     const row = this.sql.exec<{ path: string; stage: string; revision: number; connector_ids: string }>(
       'SELECT * FROM onboarding_journeys WHERE user_id = ?', userId).one();
     return OnboardingJourneySchema.parse({ path: row.path, stage: row.stage, revision: row.revision,
@@ -32,8 +28,13 @@ export class OnboardingJourneyStore {
     const current = this.get(userId, path);
     if (current.stage === input.stage) return current;
     if (current.revision !== input.expectedRevision) return null;
+    // Personal setup leads to connecting Gmail and Google Drive, and that to
+    // adding teammates (a creator) or to the end (a member). Personal setup may
+    // still skip the connectors step: a host that cannot connect accounts asks
+    // for the next stage directly, as clients built before the step do.
+    const after = path === 'creator' ? 'people' : 'complete';
     const next: Record<OnboardingJourney['stage'], OnboardingJourney['stage'][]> = {
-      connectors: [], people: path === 'creator' ? ['complete'] : [], profile: path === 'creator' ? ['people'] : ['complete'],
+      profile: ['connectors', after], connectors: [after], people: path === 'creator' ? ['complete'] : [],
       complete: [],
     };
     if (!next[current.stage].includes(input.stage)) return null;

@@ -26,7 +26,7 @@ export class OnboardingJourneyService {
   async get(update?: UpdateOnboardingJourney) {
     const { stub, input, hasPresentation } = await this.authority();
     if (!update) return OnboardingJourneySchema.parse(await stub.onboardingJourney(input));
-    if ((update.stage === 'people' || update.stage === 'complete') && !hasPresentation) {
+    if (update.stage !== 'profile' && !hasPresentation) {
       throw new ApiError(409, 'profile_required', 'Save your name, color, and initials before continuing.');
     }
     const result = await stub.onboardingJourney({ ...input, ...(update ? { update } : {}) });
