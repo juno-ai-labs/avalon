@@ -37,11 +37,11 @@ import {
 } from "./services/workstream-authority";
 
 async function processTelemetry(env: Env): Promise<void> {
-  await Promise.all([
-    processTelemetryOutbox(env),
-    processCrashTelemetry(env),
-    recoverUndeliveredAnalyticsLakehouseEvents(env),
-  ]);
+  await runScheduledTasks(env, {
+    telemetry_outbox: () => processTelemetryOutbox(env),
+    crash_telemetry: () => processCrashTelemetry(env),
+    analytics_lakehouse_recovery: () => recoverUndeliveredAnalyticsLakehouseEvents(env),
+  });
   const snapshot = await readTelemetryOperationalSnapshot(env);
   const unhealthy = snapshot.openCircuits > 0
     || snapshot.acceptedTerminal > 0
@@ -190,8 +190,7 @@ export default {
     return consumeActivityQueue(batch, env);
   }),
   scheduled: withEnvContract((_controller, env, context) => {
-    // Each task is named so a failed tick says which one failed; the exception
-    // alone carried only the platform's sentence, or nothing.
+    // Each task is named so a failed tick says which one failed.
     context.waitUntil(runScheduledTasks(env, {
       reap_expired_sessions: () => reapExpiredSessions(env),
       dispatch_workspace_relationship_changes: () => dispatchWorkspaceRelationshipChanges(env),

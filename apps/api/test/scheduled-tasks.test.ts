@@ -50,6 +50,20 @@ describe("runScheduledTasks", () => {
     })).rejects.toThrow("scheduled_tasks_failed: first, second");
   });
 
+  it("logs a nested runner's failure once, under the innermost task", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failure = r2InternalError();
+
+    await expect(runScheduledTasks(env, {
+      telemetry: () => runScheduledTasks(env, {
+        crash_object_retention: async () => { throw failure; },
+      }),
+    })).rejects.toBe(failure);
+
+    expect(logged.mock.calls.map(([entry]) => (entry as Record<string, unknown>).task))
+      .toEqual(["crash_object_retention"]);
+  });
+
   it("resolves when every task succeeds", async () => {
     await expect(runScheduledTasks(env, { only: async () => 1 })).resolves.toBeUndefined();
   });
