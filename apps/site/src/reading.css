@@ -46,7 +46,8 @@ em { font-family: var(--display-font); }
 .pencil-vignette figcaption { margin-top: 6px; text-align: center; font: italic 23px/1.4 var(--display-font); color: #878d78; }
 
 /* A date and a little space to read. The newest entry remains complete. */
-.changelog { max-width: 1240px; width: calc(100% - 112px); margin: auto; }
+.changelog, .not-found { max-width: 1240px; width: calc(100% - 112px); margin: auto; }
+.not-found-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
 .changelog-entries { max-width: 1090px; padding-bottom: 50px; }
 .changelog-entry { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 40px; padding: 50px 0 80px; }
 .changelog-entry + .changelog-entry { border-top: 1px solid var(--line); }
@@ -93,7 +94,7 @@ em { font-family: var(--display-font); }
 .footer-mark { display: none; }
 
 @media (max-width: 1150px) {
-  .changelog, .blog, .rally-footer { width: calc(100% - 72px); }
+  .changelog, .not-found, .blog, .rally-footer { width: calc(100% - 72px); }
   .reading-hero { gap: 35px; }
   .changelog-entry { grid-template-columns: 130px minmax(0, 1fr); gap: 30px; }
   .footer-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 35px; }
@@ -105,7 +106,7 @@ em { font-family: var(--display-font); }
   .site-header .wordmark { font-size: 33px; }
   .site-header .button { padding: 8px 10px; font-size: 11px; }
   .site-header .header-login { margin-left: 0; }
-  .changelog, .blog, .rally-footer { width: calc(100% - 40px); }
+  .changelog, .not-found, .blog, .rally-footer { width: calc(100% - 40px); }
   .reading-hero { grid-template-columns: 1fr; gap: 30px; padding: 38px 0 30px; }
   .reading-hero h1 { font-size: 66px; }
   .reading-hero .lede { font-size: 15px; margin-top: 25px; }

@@ -63,10 +63,6 @@ html.js .reveal { opacity: 0; transform: translateY(22px); transition: opacity 6
 html.js .reveal.is-visible { opacity: 1; transform: none; }
 
 .button-arrow { color: #65665f; font-size: 14px; margin-left: 8px; }
-.not-found { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; padding-block: 2rem 4rem; }
-.not-found > div { align-self: center; max-width: 720px; }
-.not-found h1 { font-size: clamp(3rem, 8vw, 6.5rem); margin-bottom: 1.5rem; }
-.not-found p:not(.kicker) { color: var(--muted); margin-bottom: 2rem; }
 .invite-page { background: radial-gradient(circle at 50% 28%, rgba(var(--brand-primary-rgb), 0.07), transparent 28rem), var(--canvas); min-height: 100vh; }
 .invite-shell { align-items: center; display: flex; justify-content: center; min-height: 100vh; padding: 2rem; }
 .invite-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 28px 80px rgba(0, 0, 0, 0.28); max-width: 500px; padding: clamp(2rem, 6vw, 3.5rem); width: 100%; }

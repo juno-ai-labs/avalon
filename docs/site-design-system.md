@@ -8,8 +8,8 @@ owns their shared fonts and palette. The homepage keeps its own composition;
 chrome, and `help.css` provides the manual's navigation and reading interface.
 
 The product pages continue to use the
-earlier `landing.css` system described later in this document. The download,
-Slack, and 404 pages still load `styles.css`.
+earlier `landing.css` system described later in this document. The download
+and Slack pages still load `styles.css`; the 404 page uses `reading.css`.
 
 This document owns the visual decisions. The renderers and content contracts
 belong to [`site-blog.md`](site-blog.md) and [`help-center.md`](help-center.md).
