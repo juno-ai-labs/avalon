@@ -127,4 +127,14 @@ describe("several Google accounts for one person", () => {
       { provider_account_id: "account-a", status: "healthy" },
     ]);
   });
+
+  it("leaves a connection holding both products alone when the same account signs in for one of them", async () => {
+    const context = fixture();
+    const both = await connectGoogle(context, "account-c", [...GOOGLE_MAIL_CALENDAR_CAPABILITIES, ...GOOGLE_DRIVE_CAPABILITIES]);
+    const driveOnly = await connectGoogle(context, "account-c", GOOGLE_DRIVE_CAPABILITIES);
+    expect(driveOnly.connectionId).not.toBe(both.connectionId);
+    const kept = context.object.prepare("SELECT granted_scopes_json FROM connector_connections WHERE id = ?")
+      .get(both.connectionId) as { granted_scopes_json: string };
+    expect(JSON.parse(kept.granted_scopes_json)).toEqual(expect.arrayContaining([...GOOGLE_MAIL_CALENDAR_CAPABILITIES]));
+  });
 });

@@ -3993,8 +3993,9 @@ export class ConnectionService {
    */
   /**
    * The live Google connection of this owner and scope that already holds the
-   * account a sign-in returned, for the same product (Mail and Calendar, or
-   * Drive). One account legitimately has one connection per product.
+   * account a sign-in returned, for exactly the same products (Mail and
+   * Calendar, Drive, or both). One account legitimately has one connection
+   * per product set.
    */
   private async sameGoogleAccountConnection(
     workspaceId: string,
@@ -4004,17 +4005,20 @@ export class ConnectionService {
     capabilities: readonly string[],
   ): Promise<StoredConnection | null> {
     if (!providerAccountId) return null;
-    const requested = new Set(connectorProductsForConnection({ connectorType: "google", capabilities }));
+    // The same product set, not an overlap: reconnecting replaces the grants,
+    // so matching a Mail-and-Drive connection on a Drive-only sign-in would
+    // take its Mail away.
+    const requested = [...connectorProductsForConnection({ connectorType: "google", capabilities })].sort().join(",");
     const candidates = await this.env.DB.prepare(
       `SELECT * FROM connector_connections
        WHERE workspace_id = ? AND connector_type = 'google' AND scope = ? AND owner_user_id IS ?
          AND provider_account_id = ? AND status <> 'disabled'
        ORDER BY created_at`,
     ).bind(workspaceId, scope, ownerUserId, providerAccountId).all<StoredConnection>();
-    return (candidates.results ?? []).find((candidate) => connectorProductsForConnection({
+    return (candidates.results ?? []).find((candidate) => [...connectorProductsForConnection({
       connectorType: "google",
       capabilities: parseJson<string[]>(candidate.granted_scopes_json, []),
-    }).some((product) => requested.has(product))) ?? null;
+    })].sort().join(",") === requested) ?? null;
   }
 
   private async allocateModelPluginId(
