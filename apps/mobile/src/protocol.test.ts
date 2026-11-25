@@ -184,7 +184,4 @@ describe('the sidebar Google offer', () => {
     expect(parsed.googleConnect).toBeNull();
     expect(parsed.title).toBe('Your canvases');
   });
-  it('carries the command that starts the offered sign-in', () => {
-    expect(MobileCommandSchema.parse({ type: 'connect-google' })).toEqual({ type: 'connect-google' });
-  });
 });

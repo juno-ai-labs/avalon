@@ -6,7 +6,7 @@ import { canvasCanonicalUrl, parseLinkTarget } from '@rally/contracts/links';
 import { ConfiguredRegionSchema } from '@rally/contracts/regions';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
 import { canvasNeedsConversation, mobileStorage, rememberMobileWorkspace } from './mobile-session';
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles, Store } from 'lucide-react';
@@ -304,7 +304,8 @@ function ReportGoogleConnect({ offer, report, start }: {
   report: (value: MobileSnapshot['googleConnect']) => void;
   start: React.RefObject<(() => void) | null>;
 }): null {
-  start.current = offer.start;
+  // In an effect, so a product switch's unmount cleanup always runs before this sets it.
+  useLayoutEffect(() => { start.current = offer.start; });
   useEffect(() => { report({ product: offer.product, busy: offer.busy }); }, [offer.product, offer.busy, report]);
   useEffect(() => () => { report(null); start.current = null; }, [report, start]);
   useEffect(() => { if (offer.error) window.alert(offer.error); }, [offer.error]);

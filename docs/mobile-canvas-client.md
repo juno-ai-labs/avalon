@@ -680,7 +680,6 @@ landing does.
 **Consequences:** The row's products, order and wording are copied from the
 desktop tile's table; a change to one should change both.
 
-
 ### 2026-11-16 — Native Settings list, with the desktop's Settings pages
 
 **What changed:** The plain "Settings and diagnostics" page became an inset

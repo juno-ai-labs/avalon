@@ -101,10 +101,6 @@ export const MobileSnapshotSchema = z.object({
   artifactId: z.string().nullable(),
   artifactPicker: z.boolean(),
   inlineChat: z.boolean().optional(),
-  /** The settings pages this person may open through `settings`. An older
-   * host omits it and can open none, so the shell offers none. It stays open
-   * to any string: a newer host's section would otherwise fail an older
-   * shell's whole snapshot. The shell keeps the sections it knows. */
   /** The Google product the sidebar offers to connect (`connect-google`), and
    * whether a sign-in holds it. Absent from an older host, and null when there
    * is nothing to offer; the shell then draws no row. A product this shell
@@ -113,6 +109,10 @@ export const MobileSnapshotSchema = z.object({
     .transform((offer) => offer && (GOOGLE_CONNECT_PRODUCTS as readonly string[]).includes(offer.product)
       ? { product: offer.product as GoogleConnectProduct, busy: offer.busy } : null)
     .optional(),
+  /** The settings pages this person may open through `settings`. An older
+   * host omits it and can open none, so the shell offers none. It stays open
+   * to any string: a newer host's section would otherwise fail an older
+   * shell's whole snapshot. The shell keeps the sections it knows. */
   settingsSections: z.array(z.string())
     .transform((sections) => sections.filter((section): section is MobileSettingsSection => MobileSettingsSectionSchema.safeParse(section).success))
     .optional(),
