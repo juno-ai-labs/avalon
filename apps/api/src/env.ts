@@ -344,8 +344,11 @@ export interface IdentityAuthContext {
    * are minted lazily: null means no PostHog identity exists yet, and there is
    * therefore nothing for a trace to match against.
    *
-   * They are correlation values only. Nothing authorizes on them; the
-   * authority for who this is remains `userId` and `workspaceId`.
+   * Nothing authorizes on them; the authority for who this is remains
+   * `userId` and `workspaceId`. Authenticated telemetry ingest uses a non-null
+   * value as the event's analytics subject instead of re-reading it, so a path
+   * that sets them must read them from `users` and `workspaces`, never derive
+   * them.
    */
   analyticsPersonId?: string | null;
   analyticsWorkspaceId?: string | null;

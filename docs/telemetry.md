@@ -917,6 +917,29 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-11-25 — Authenticated ingest reuses the surrogates the session already read
+
+**What changed:** `acceptAuthenticatedTelemetry` takes the person and workspace
+analytics ids from `IdentityAuthContext`, which the session query already
+selects, and calls `ensurePersonAnalyticsId`/`ensureWorkspaceAnalyticsId` only
+when one is null — a person or workspace that has never had one minted, or a
+context built without the session query.
+
+**Why:** A log review on 2026-11-25 found a burst of `POST /telemetry/events`
+500s (`internal_error:d1_error`) from one desktop client. Each batch ran two
+`UPDATE … COALESCE` writes and two reads on the D1 primary although the auth
+query had read both ids moments earlier, and a D1 internal error on the
+`users` write failed the whole batch. A minted surrogate never changes, so a
+value in hand is final and the write bought nothing.
+
+**Considered and rejected:** Retrying the write, or swallowing its failure:
+both keep a primary write on every telemetry batch for no gain.
+
+**Consequences:** Ingest for an established person is two D1 writes and two
+reads cheaper per batch. The surrogates on `IdentityAuthContext` are now used as
+the analytics subject, not only as span correlation, so a future auth path that
+populates them must read them from `users`/`workspaces` rather than derive them.
+
 ### 2026-11-24 — A crash-retention failure no longer holds back purge and delivery
 
 **What changed:** The crash pass moved to `telemetry/crash-pass.ts`. Its two

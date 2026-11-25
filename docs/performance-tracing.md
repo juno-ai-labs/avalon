@@ -779,7 +779,8 @@ Spans carry raw `user.id` and `rally.workspace.id` — the same ids every other
 diagnostic in Workers Logs already carries. PostHog is keyed on neither.
 `users.analytics_person_id` and `workspaces.analytics_workspace_id` are random
 UUIDv7 surrogates, minted lazily by `ensurePersonAnalyticsId` and
-`ensureWorkspaceAnalyticsId` in `apps/api/src/telemetry/authenticated.ts`, and
+`ensureWorkspaceAnalyticsId` in `apps/api/src/telemetry/authenticated.ts` (which
+authenticated ingest calls only when the session query read a null), and
 they are what the adapter sends as `distinct_id` and `$groups.workspace`. The
 mapping between a product id and its analytics id exists only in that region's
 D1; nothing derives one from the other.

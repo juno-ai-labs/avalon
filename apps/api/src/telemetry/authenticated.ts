@@ -51,9 +51,17 @@ export async function acceptAuthenticatedTelemetry(
   if (batch.events.some((event) => event.identityScope === "workspace")) {
     throw new ApiError(403, "telemetry_identity_scope_forbidden", "The request is invalid");
   }
+  // The session query that authenticated this request already read both
+  // surrogates, and once minted they never change (`COALESCE`), so a value in
+  // hand is final. Only a person or workspace that has never had one minted
+  // pays for the write on the D1 primary; every other batch would otherwise
+  // run two writes and two reads it does not need, and a transient D1 failure
+  // on that redundant write failed the whole batch with a 500.
   const [personAnalyticsId, workspaceAnalyticsId] = await Promise.all([
-    ensurePersonAnalyticsId(env, auth.userId),
-    auth.workspaceId ? ensureWorkspaceAnalyticsId(env, auth.workspaceId) : Promise.resolve(null),
+    auth.analyticsPersonId ?? ensurePersonAnalyticsId(env, auth.userId),
+    auth.workspaceId
+      ? auth.analyticsWorkspaceId ?? ensureWorkspaceAnalyticsId(env, auth.workspaceId)
+      : Promise.resolve(null),
   ]);
   await queueProfileJobs(env, auth, personAnalyticsId, workspaceAnalyticsId);
   const collector = new TelemetryCollector(env);
