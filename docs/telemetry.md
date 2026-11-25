@@ -935,10 +935,12 @@ value in hand is final and the write bought nothing.
 **Considered and rejected:** Retrying the write, or swallowing its failure:
 both keep a primary write on every telemetry batch for no gain.
 
-**Consequences:** Ingest for an established person is two D1 writes and two
-reads cheaper per batch. The surrogates on `IdentityAuthContext` are now used as
-the analytics subject, not only as span correlation, so a future auth path that
-populates them must read them from `users`/`workspaces` rather than derive them.
+**Consequences:** The surrogates on `IdentityAuthContext` are now the analytics
+subject, not only span correlation. Rotating or clearing a surrogate would keep
+sending events under the old id through every carried copy until that copy is
+re-read, so such a change must also invalidate them.
+
+Shipped in #1706.
 
 ### 2026-11-24 — A crash-retention failure no longer holds back purge and delivery
 
