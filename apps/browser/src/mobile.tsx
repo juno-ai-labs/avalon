@@ -6,7 +6,7 @@ import { canvasCanonicalUrl, parseLinkTarget } from '@rally/contracts/links';
 import { ConfiguredRegionSchema } from '@rally/contracts/regions';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
 import { canvasNeedsConversation, mobileStorage, rememberMobileWorkspace } from './mobile-session';
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles, Store } from 'lucide-react';
@@ -26,6 +26,7 @@ import { useOtherOrganizationCanvases, type OtherOrganizationCanvas } from '../.
 import { mobileCapability, mobileScreenReady, postMobileEvent, shellExternalLinkOpener } from './mobile-bridge';
 import { setExternalLinkOpener } from '../../desktop/src/renderer/lib/platform';
 import { selectMobileConnectorHandoff } from '../../desktop/src/renderer/lib/mobile-connector-handoff';
+import { GoogleConnectOffer, type GoogleConnectOfferState } from '../../desktop/src/renderer/components/google-connect-offer';
 import { ConnectorOAuthClaimSchema, parseConnectorClaimLink } from '@rally/contracts/connector-oauth-claim';
 import { BrowserApiError, browserRequest } from './transport';
 
@@ -72,6 +73,9 @@ function MobileContent(): React.JSX.Element {
   const [pinBusy, setPinBusy] = useState(false);
   const pinInFlight = useRef(false);
   const [pinNotice, setPinNotice] = useState<string | null>(null);
+  // The sidebar's Google row (`googleConnect`): what to offer, and how to start it on `connect-google`.
+  const [googleConnect, setGoogleConnect] = useState<MobileSnapshot['googleConnect']>(null);
+  const startGoogleConnect = useRef<(() => void) | null>(null);
   const rows = useMemo(() => directory ?? [], [directory]);
   const pinnedIds = useMemo<string[]>(() => rows.filter((row) => row.pinnedPosition !== null)
     .sort((a, b) => a.pinnedPosition! - b.pinnedPosition!).map((row) => row.id), [rows]);
@@ -181,6 +185,7 @@ function MobileContent(): React.JSX.Element {
       // Native sends this on resume and on reconnection. A socket that slept
       // can still read OPEN with its connection gone, so replace it outright.
       case 'refresh': socket.replace(); void queryClient.invalidateQueries({ queryKey: ['canvas'] }); break;
+      case 'connect-google': startGoogleConnect.current?.(); break;
       case 'sign-out':
         // Session revocation also disables every device bound only to that session.
         void signOut(); break;
@@ -275,10 +280,12 @@ function MobileContent(): React.JSX.Element {
       view: settingsSection ? 'settings' : creating ? 'create' : conversation ? 'conversation' : canvasId ? descriptor?.view ?? 'artifact' : 'home',
       title: settingsSection ? MOBILE_SETTINGS_TITLES[settingsSection] : marketplace ? 'Marketplace' : creating ? 'New canvas' : canvasId ? descriptor?.title ?? rows.find((row) => row.id === canvasId)?.title ?? 'Canvas' : 'Your canvases',
       artifactId: descriptor?.artifactId ?? null, artifactPicker: descriptor?.artifactPicker ?? false,
-      settingsSections,
+      settingsSections, googleConnect,
     } });
-  }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, marketplace, conversation, descriptors, settingsSection, settingsSections]);
+  }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, marketplace, conversation, descriptors, settingsSection, settingsSections, googleConnect]);
   return <main className="mobile-canvas-app">
+    {/* Commands reach Home, so only Home makes the offer; a pinned tab shows Home's. */}
+    {!params.has('tab') && <GoogleConnectOffer>{(offer) => <ReportGoogleConnect offer={offer} report={setGoogleConnect} start={startGoogleConnect} />}</GoogleConnectOffer>}
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
     <section hidden={Boolean(canvasId || creating || settingsSection)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={session?.workspace?.accessClass === 'guest' ? undefined : () => create(true)} userId={session?.user.id} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
@@ -286,6 +293,25 @@ function MobileContent(): React.JSX.Element {
     {settingsSection && <section key={location.key} className="mobile-page mobile-settings"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileSettings /></Suspense></AppErrorBoundary></section>}
     {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas marketplace={marketplace} created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
   </main>;
+}
+
+/**
+ * Hands the native sidebar the Google offer (`googleConnect`) and keeps its
+ * `start` for `connect-google`. Gone with the offer, so the row goes too.
+ * A sign-in that could not start is said natively, as a claim failure is.
+ */
+function ReportGoogleConnect({ offer, report, start }: {
+  offer: GoogleConnectOfferState;
+  report: (value: MobileSnapshot['googleConnect']) => void;
+  start: React.RefObject<(() => void) | null>;
+}): null {
+  // In an effect, so a product switch's unmount cleanup always runs before this
+  // sets it. Nothing while busy, so a second tap cannot start a second sign-in.
+  useLayoutEffect(() => { start.current = offer.busy ? null : offer.start; });
+  useEffect(() => { report({ product: offer.product, busy: offer.busy, pending: offer.pending }); }, [offer.product, offer.busy, offer.pending, report]);
+  useEffect(() => () => { report(null); start.current = null; }, [report, start]);
+  useEffect(() => { if (offer.error) window.alert(offer.error); }, [offer.error]);
+  return null;
 }
 
 const SETTINGS_ROUTE = '/settings';

@@ -34,6 +34,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/CanvasWebView.web.tsx` | Development-only iframe preview of the native shell. |
 | `apps/mobile/src/background.ts`, `runtime.ts` | Top-level background update task and registration; downloads never interrupt an open canvas. |
 | `apps/mobile/src/notifications.ts`, `notification-target.ts` | Platform permission/token lifecycle and canonical notification routing. |
+| `apps/mobile/src/GoogleConnectRow.tsx`, `google-marks.ts` | The sidebar's Google row (`googleConnect`, `connect-google`), its rolling mark and name, and Google's inlined mono marks. |
 | `apps/mobile/src/SettingsScreen.tsx`, `SettingsList.tsx` | Native Settings: an inset grouped list of the shared Settings pages Home can show, this device's notifications and updates, Diagnostics and sign-out. |
 | `apps/mobile/src/diagnostics.ts`, `DiagnosticsScreen.tsx`, `RecoveryBoundary.tsx` | Local content-free diagnostics, user-requested sharing and recovery. |
 | `apps/mobile/.eas/workflows/`, `.github/workflows/release-mobile.yml` | One-channel native-build/OTA releases and explicit store submission. |
@@ -376,6 +377,12 @@ shell runs it in an auth session that returns to
 `rally-mobile://connections/complete`, and hands that link back as
 `connector-complete` for the page to claim
 ([connectors.md](connectors.md#claiming-a-connector-authorization)).
+The sidebar offers Google the way the desktop rail does, from the same
+`GoogleConnectOffer`: Home reports `googleConnect` (Gmail, then Drive, and
+whether a sign-in holds it), and the row above the account footer sends
+`connect-google`, which Home answers by starting that sign-in on this path. An
+older host sends no `googleConnect` and the shell draws no row; a product this
+shell does not know reads as none.
 Notification permission is requested only through This device › Push
 notifications. The
 native installation ID is in SecureStore; APNs device tokens pass through the
@@ -651,6 +658,31 @@ retention remain unmeasured. The full method, before/after table and limitations
 are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
+
+### 2026-11-25 — The sidebar offers Gmail, then Drive
+
+**What changed:** A sidebar row above the account footer offers Gmail, then
+Drive, with its mark and name rolling as the desktop rail tile's do. Home
+reports the offer in the snapshot's `googleConnect` and starts the sign-in on
+a new `connect-google` command. The desktop's offer logic moved into
+`GoogleConnectOffer`, which the rail tile and Home both use.
+
+**Why:** Product asked for the Expo app to offer Google as the desktop rail
+does. The native shell has no rail and no React DOM, so the choice stays in
+the page, where the connections and the sign-in already live, and the shell
+only draws.
+
+**Considered and rejected:** A native read of the connections, which would be
+a second data client beside Home's socket. Mounting `@thesvg/react` in React
+Native, which renders DOM; the marks are its mono art inlined, as the static
+landing does.
+
+**Consequences:** The row's products, order and wording are copied from the
+desktop tile's table; a change to one should change both. A step that
+outlives a product switch is read within the new product's marks
+(`rolling-step.ts`), and a tap while the offer is busy does nothing.
+
+Shipped in #1705.
 
 ### 2026-11-16 — Native Settings list, with the desktop's Settings pages
 

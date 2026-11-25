@@ -1,6 +1,6 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { MobileCommandSchema, mobileContentReady, type MobileSnapshot, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact, webBuildFromHtml } from './protocol';
+import { MobileCommandSchema, MobileSnapshotSchema, mobileContentReady, type MobileSnapshot, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact, webBuildFromHtml } from './protocol';
 
 const app = 'https://app.rallywith.ai';
 const token = 'main-frame-capability';
@@ -162,5 +162,29 @@ describe('Canvases shared from other Organizations', () => {
   it('accepts an open in another Organization only when it names the Organization and the Canvas', () => {
     expect(MobileCommandSchema.safeParse({ type: 'open-elsewhere', region: 'enterprise', workspaceId: 'w2', canvasId: 'c9' }).success).toBe(true);
     expect(MobileCommandSchema.safeParse({ type: 'open-elsewhere', region: 'enterprise', canvasId: 'c9' }).success).toBe(false);
+  });
+});
+
+describe('the sidebar Google offer', () => {
+  const snapshot = {
+    userId: 'u', userName: 'Person', workspaceId: 'w', workspaceName: 'Team', workspacePath: '/app/workspaces/global/w',
+    canvases: [], pins: [], hasMore: false, loading: false, pinBusy: false, pinError: null, canvasId: null, tabId: null,
+    view: 'home', title: 'Your canvases', artifactId: null, artifactPicker: false,
+  };
+  it('reads the offered product and whether a sign-in holds it', () => {
+    expect(MobileSnapshotSchema.parse({ ...snapshot, googleConnect: { product: 'google-drive', busy: true, pending: true } }).googleConnect)
+      .toEqual({ product: 'google-drive', busy: true, pending: true });
+    // An older page sends no `pending`: busy for another reason, so nothing is loading.
+    expect(MobileSnapshotSchema.parse({ ...snapshot, googleConnect: { product: 'google-drive', busy: true } }).googleConnect)
+      .toEqual({ product: 'google-drive', busy: true, pending: false });
+    expect(MobileSnapshotSchema.parse({ ...snapshot, googleConnect: null }).googleConnect).toBeNull();
+  });
+  it('draws nothing for an older page that sends no offer', () => {
+    expect(MobileSnapshotSchema.parse(snapshot).googleConnect).toBeUndefined();
+  });
+  it('reads a product a newer page offers but this shell does not know as nothing to offer, keeping the snapshot', () => {
+    const parsed = MobileSnapshotSchema.parse({ ...snapshot, googleConnect: { product: 'google-photos', busy: false } });
+    expect(parsed.googleConnect).toBeNull();
+    expect(parsed.title).toBe('Your canvases');
   });
 });

@@ -33,7 +33,8 @@ routes the shell serves, who owns the slot, or how a panel takes a side.
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `activity-sidebar-section.tsx` | `CanvasesSection` and `ActivitySection` (with `useActivityList`), the two visible lists; `lib/sidekicks.ts` supplies live Sidekick data through `useSidekickList` to menus and screens. |
 | `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives both lists draw: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
-| `apps/desktop/src/renderer/components/google-connect-rail-item.tsx` | `GoogleConnectRailItem`: the rail's Google quick action above the account tile. |
+| `apps/desktop/src/renderer/components/google-connect-offer.tsx` | `GoogleConnectOffer`: which Google product to offer and how to start it, shared by the rail tile and the Expo app's sidebar. |
+| `apps/desktop/src/renderer/components/google-connect-rail-item.tsx` | `GoogleConnectRailItem`: the rail's Google quick action, drawn from `GoogleConnectOffer`. |
 | `apps/desktop/src/renderer/components/rolling-cycle.tsx` | `RollingSlot`, the one rolling wheel (the composer's running count and the Google tile), and `useRollingCycle`, which steps through items on it. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id` ([`automation-lifecycle.md`](automation-lifecycle.md)). |
@@ -144,8 +145,8 @@ It holds two columns:
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
   Under the usage warning, the rail offers Google to a member who has not
   connected it: Gmail, then Drive, then nothing once both exist. It starts the
-  same sign-in as a connection card; `google-connect-rail-item.tsx` holds when
-  it shows and how it animates.
+  same sign-in as a connection card; `google-connect-offer.tsx` holds when it
+  shows, and `google-connect-rail-item.tsx` how it animates.
   Sidekicks have no rail tile, list or sidebar creation action. The account
   menu still opens the Sidekicks library, and direct Sidekick routes remain
   available with Canvases beside them (or Activity if it was selected).

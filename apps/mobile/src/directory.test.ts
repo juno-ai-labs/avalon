@@ -25,6 +25,11 @@ it('sees a change the native shell shows', () => {
   // A guest made a member gains the Organization's Settings pages.
   expect(directoryKey({ ...snapshot, settingsSections: ['account', 'workspace'] })).not.toBe(directoryKey({ ...snapshot, settingsSections: ['account'] }));
   expect(directoryKey(null)).toBe('');
+  // The sidebar's Google row appears, waits on a sign-in, and goes.
+  const offer = { ...snapshot, googleConnect: { product: 'google-mail-calendar' as const, busy: false, pending: false } };
+  expect(directoryKey(offer)).not.toBe(directoryKey(snapshot));
+  expect(directoryKey({ ...offer, googleConnect: { product: 'google-mail-calendar', busy: true, pending: true } })).not.toBe(directoryKey(offer));
+  expect(directoryKey({ ...offer, googleConnect: { product: 'google-drive', busy: false, pending: false } })).not.toBe(directoryKey(offer));
   // A Sidekick starting to wake on a schedule moves the Canvas into Reactive.
   const facts = { reactive: false, dataBacked: false, mine: true, sharedWithMe: false };
   const filed = { ...snapshot, canvases: [{ ...snapshot.canvases[0]!, facts }] };

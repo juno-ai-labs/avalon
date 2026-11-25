@@ -1,4 +1,5 @@
 import { CanvasIcon } from './CanvasIcon';
+import { GoogleConnectRow } from './GoogleConnectRow';
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ComponentRef, type Ref } from 'react';
 import { AccessibilityInfo, Animated, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -260,6 +261,7 @@ export function Sidebar({ visible, snapshot, close, send, openSettings, pull, re
           <Pressable style={styles.destination} accessibilityRole="button" accessibilityLabel="Create a canvas" onPress={() => action({ type: 'create' }, true)}><Ionicons name="add-circle-outline" size={21} color={colors.accent} /><Text style={[styles.title, { color: colors.accent }]}>Create a canvas</Text></Pressable>
         </ScrollView>
         </View>
+        {snapshot.googleConnect && <GoogleConnectRow key={snapshot.googleConnect.product} offer={snapshot.googleConnect} reduceMotion={reduceMotion} onPress={() => action({ type: 'connect-google' })} />}
         <View style={[styles.footer, { borderTopColor: colors.line }]}>
           <View style={[styles.avatar, { backgroundColor: colors.tonal }]}><Text style={{ color: colors.text }}>{snapshot.userName.slice(0, 1).toUpperCase()}</Text></View>
           <Pressable accessibilityRole="button" accessibilityLabel="Switch organization" onPress={() => action({ type: 'switch-workspace' }, true)} style={{ flex: 1, minHeight: 48, justifyContent: 'center' }}><Text numberOfLines={1} style={{ color: colors.text, fontWeight: '600' }}>{snapshot.userName}</Text><Text numberOfLines={1} style={{ color: colors.muted, fontSize: 11, marginTop: 3 }}>{snapshot.workspaceName} · Switch</Text></Pressable>
