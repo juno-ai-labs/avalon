@@ -149,7 +149,7 @@ import {
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
 import { AuthorizationStorage, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
-import { OnboardingJourneyStore } from './onboarding-journey';
+import { OnboardingJourneyStore, type OnboardingJourneyRefusal } from './onboarding-journey';
 import { ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema, resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
 import { isDraftUpload, requiresAttachment, resourceCanvasState } from '../services/resource-read-rules';
 import { searchAudienceGroup, searchAudienceGroupIds } from '../services/search-audience';
@@ -4236,7 +4236,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** Per-person learning progress stays inside the workspace authority. */
-  async onboardingJourney(input: { workspaceId: string; placementAffinity: WorkspacePlacementAffinity; userId: string; path: 'creator' | 'member'; update?: UpdateOnboardingJourney }): Promise<OnboardingJourney | null> {
+  async onboardingJourney(input: { workspaceId: string; placementAffinity: WorkspacePlacementAffinity; userId: string; path: 'creator' | 'member'; update?: UpdateOnboardingJourney }): Promise<OnboardingJourney | OnboardingJourneyRefusal> {
     await this.initialized;
     this.ensureIdentity(input.workspaceId, input.placementAffinity);
     z.string().uuid().parse(input.userId);

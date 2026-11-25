@@ -22,7 +22,7 @@ ships directly for newly created accounts, with no feature flag.
 | `packages/db/migrations/0123_organization_name_suggestions.sql` | The per-domain suggestion cache. |
 | `apps/api/src/lib/html-metadata.ts` | Reading `<title>` and `<meta>` out of page source; shared with site social previews. |
 | `apps/desktop/src/renderer/screens/create-organization.tsx` | The create-organization card, shared by the Mac app and the browser. |
-| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup and adding teammates. |
+| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup, connecting Gmail and Google Drive, and adding teammates. |
 | `apps/desktop/src/renderer/components/invite-emails.tsx` | The email-chip field, its validation, and adding a list as members; shared with the account menu's **Add new member** dialog (`add-members-dialog.tsx`). |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
@@ -42,7 +42,7 @@ skipped.
 
 WorkspaceDO migration 34 adds `onboarding_journeys`, keyed by regional user ID.
 This migration includes the persisted scoped connector selection. Deploy the identity migration
-and API before releasing the desktop client; existing accounts are exempted by
+and API before releasing the desktop client or the browser; existing accounts are exempted by
 the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through personal
 appearance, connecting Google, then adding teammates; members finish after
@@ -50,7 +50,18 @@ connecting Google. The Google step (stage `connectors`) shows the same
 `ConnectorConnectionCard` a conversation shows, for the personal
 `google-mail-calendar` and `google-drive` connections, so connecting,
 reconnecting and the OAuth return behave as they do there; the workspace socket
-refreshes `['connections']` when an authorization lands.
+refreshes `['connections']` when an authorization lands. The journey reads
+`['connections']` and `['connector-catalog']` while personal setup is open, so
+the step opens on known state; it shows a loading line until the connections
+arrive and a notice with Retry if they cannot be read. Only one sign-in is
+tracked at a time, so while one card waits the other's Connect is held, as in
+Settings. A deployment whose catalog has no Google client skips the step.
+The browser deploys on its own and can be live before the API: when the API
+refuses `connectors` with `onboarding_revision_conflict`, the code an API from
+before this step gives, personal setup moves to the stage after it instead.
+The store names its two refusals apart, and the API reports them as
+`onboarding_revision_conflict` (another session moved first) and
+`onboarding_stage_not_allowed` (the stage cannot follow the current one).
 Finishing saves `complete` and then leaves for the Canvases home through
 `useOpenLanding`, replacing the journey's entry, unless the route under the
 journey opens one Canvas or one Sidekick by its id (a shared link, or a
@@ -204,7 +215,11 @@ still at the old pre-profile `connectors` stage to `profile`, replacing the
 rewrite `get` did on every read.
 
 **Why:** Product asked for new people to connect Gmail and Google Drive during
-onboarding. Those two carry most of the context Rally works from.
+onboarding. This partly reverses the 2026-10-07 entry below: it brings back
+these two connections only, after personal setup rather than before it. The
+store's refusals were split into two codes here because a disallowed move was
+reported as "Onboarding changed in another session", which the new transitions
+made easy to hit.
 
 **Considered and rejected:** A new stage name, which needs a rebuild of
 `onboarding_journeys` to change its `CHECK`, paid by every Organization object
@@ -212,9 +227,14 @@ on its next wake. A client-only screen, which would not resume after a restart.
 Bringing back the full connector picker, which product removed in October.
 
 **Consequences:** `profile` still accepts the stage after `connectors`, so
-older desktop builds keep working. Rows at `connectors` written after this
-ships are post-profile; a later change must not read them as the retired
-stage.
+older desktop builds keep working, and so does the fallback for a browser live
+ahead of its API; that fallback can go once every API serving the browser has
+this change. Rows at `connectors` written after this ships are post-profile; a
+later change must not read them as the retired stage. A desktop build from
+before #1129 still draws the old picker, whose Skip asks for `profile` and is
+refused; such a build is too old to matter here.
+
+PR: [#1702](https://github.com/juno-ai-labs/avalon/pull/1702).
 
 ### 2026-11-16 — Finishing setup keeps the Canvas a link opened
 

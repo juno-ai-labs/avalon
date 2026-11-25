@@ -9,6 +9,13 @@ export const ONBOARDING_JOURNEY_SQL = `CREATE TABLE onboarding_journeys (
   connector_ids TEXT NOT NULL DEFAULT '[]'
 ) STRICT`;
 
+/**
+ * Why `update` refused: the caller's revision is stale, or the stage cannot
+ * follow the current one. Kept apart so the API names which, rather than
+ * reporting a disallowed move as another session's edit.
+ */
+export type OnboardingJourneyRefusal = 'revision_conflict' | 'stage_not_allowed';
+
 /** All calls run synchronously inside the owning workspace object. */
 export class OnboardingJourneyStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -23,11 +30,11 @@ export class OnboardingJourneyStore {
       connectorIds: StoredOnboardingConnectorSelectionsSchema.parse(JSON.parse(row.connector_ids)) });
   }
 
-  update(userId: string, path: 'creator' | 'member', raw: UpdateOnboardingJourney): OnboardingJourney | null {
+  update(userId: string, path: 'creator' | 'member', raw: UpdateOnboardingJourney): OnboardingJourney | OnboardingJourneyRefusal {
     const input = UpdateOnboardingJourneySchema.parse(raw);
     const current = this.get(userId, path);
     if (current.stage === input.stage) return current;
-    if (current.revision !== input.expectedRevision) return null;
+    if (current.revision !== input.expectedRevision) return 'revision_conflict';
     // Personal setup leads to connecting Gmail and Google Drive, and that to
     // adding teammates (a creator) or to the end (a member). Personal setup may
     // also skip straight past it: desktop builds from before the step do.
@@ -36,7 +43,7 @@ export class OnboardingJourneyStore {
       profile: ['connectors', after], connectors: [after], people: path === 'creator' ? ['complete'] : [],
       complete: [],
     };
-    if (!next[current.stage].includes(input.stage)) return null;
+    if (!next[current.stage].includes(input.stage)) return 'stage_not_allowed';
     this.sql.exec('UPDATE onboarding_journeys SET stage = ?, revision = revision + 1 WHERE user_id = ?', input.stage, userId);
     return this.get(userId, path);
   }

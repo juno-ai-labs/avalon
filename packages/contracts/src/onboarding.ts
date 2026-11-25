@@ -64,7 +64,7 @@ export const UpdateAccountOnboardingSchema = deferredZodSchema(() => z.strictObj
   presentation: PersonalPresentationSchema.omit({ revision: true }).optional(),
 }));
 /**
- * Connectors the onboarding picker may offer, derived from the connection-card
+ * Connectors the retired onboarding connector picker offered, derived from the connection-card
  * catalog plus the two identities that have no card because they are not a
  * named provider: a Custom MCP server and Rally's own read-only X access.
  *
@@ -97,7 +97,7 @@ export const OnboardingJourneySchema = z.object({
 export const StoredOnboardingConnectorSelectionsSchema = deferredZodSchema(() => z.array(z.unknown()).transform((values) =>
   values.filter((value): value is z.infer<typeof OnboardingConnectorSelectionSchema> =>
     OnboardingConnectorSelectionSchema.safeParse(value).success)));
-/** Connector selections are read from old rows only; nothing writes them since the step was retired. */
+/** Connector selections are read from old rows only; nothing writes them since the connector picker was retired. The `connectors` stage is now the Gmail and Google Drive step. */
 export const UpdateOnboardingJourneySchema = deferredZodSchema(() => z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   stage: OnboardingJourneySchema.shape.stage,
