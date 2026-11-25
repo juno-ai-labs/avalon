@@ -16,10 +16,11 @@ export function useRollingCycle(length: number): { index: number; previous: numb
   const [state, setState] = useState({ index: 0, previous: null as number | null });
   useEffect(() => {
     if (length < 2 || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-    const timer = window.setInterval(() => setState((current) => ({
-      index: (current.index + 1) % length,
-      previous: current.index,
-    })), ROLLING_CYCLE_HOLD_MS + ROLL_MS);
+    // A hidden window does no work; the cycle resumes where it was.
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      setState((current) => ({ index: (current.index + 1) % length, previous: current.index }));
+    }, ROLLING_CYCLE_HOLD_MS + ROLL_MS);
     return () => window.clearInterval(timer);
   }, [length]);
   return { ...state, settle: () => setState((current) => ({ ...current, previous: null })) };
@@ -33,11 +34,11 @@ export function useRollingCycle(length: number): { index: number; previous: numb
 export function RollingSlot({ className, items, cycle }: {
   className?: string;
   items: readonly ReactNode[];
-  cycle: { index: number; previous: number | null; settle?: () => void };
+  cycle: ReturnType<typeof useRollingCycle>;
 }): React.JSX.Element {
   return <span className={`rolling-slot${className ? ` ${className}` : ''}`}>
     {cycle.previous != null && <span className="rolling-slot-item rolling-slot-out" key={`out-${cycle.previous}`} onAnimationEnd={(event) => {
-      if (event.animationName === 'background-agent-digit-out') cycle.settle?.();
+      if (event.animationName === 'background-agent-digit-out') cycle.settle();
     }}>{items[cycle.previous]}</span>}
     <span className={`rolling-slot-item${cycle.previous != null ? ' rolling-slot-in' : ''}`} key={`in-${cycle.index}`}>{items[cycle.index]}</span>
   </span>;

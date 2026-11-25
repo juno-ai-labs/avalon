@@ -86,6 +86,16 @@ describe('the rail Google quick action', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
+  it('holds its mark while the window is hidden', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    show([]);
+    const tile = await screen.findByRole('button', { name: 'Connect Gmail' });
+    await act(async () => { vi.advanceTimersByTime(3 * (ROLLING_CYCLE_HOLD_MS + 280)); });
+    expect(tile.querySelector('.navigation-rail-label .rolling-slot-item:last-child')?.textContent).toBe('Gmail');
+    hidden.mockRestore();
+  });
+
   it('rolls its mark and its name together, Gmail then Calendar', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     show([]);

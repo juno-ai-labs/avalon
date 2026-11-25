@@ -73,8 +73,7 @@ Settings. [`plugin-activity-rows.md`](plugin-activity-rows.md) owns the
 transcript's use of it.
 
 `gmail`, `google-calendar`, `google-sheets` and `google-docs` are in the table
-for the rail's Google quick action, which rolls between the products a Google
-connection covers; no connector wears them. `apple` is in the table without being a connector: the browser client's Mac
+for the rail's Google quick action; no connector wears them. `apple` is in the table without being a connector: the browser client's Mac
 download row wears it. The table holds company marks, whatever links to them.
 
 A custom MCP server has no connector type of its own, so it wears the mark of a

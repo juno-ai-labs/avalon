@@ -143,17 +143,9 @@ It holds two columns:
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
   Above the account tile, the rail offers Google to a member who has not
-  connected it: **Gmail** until they hold a personal Gmail + Calendar
-  connection, then **Drive** until they hold a Drive one (a connection counts
-  whatever its health; a disconnected one does not), then nothing. Its mark
-  and name take turns, Gmail and Calendar or Drive, Sheets and Docs, rolling
-  on the composer's running-count wheel every 2.4 s; reduced motion keeps the
-  first. A plus sits where the impersonator badge does. Clicking it starts the
-  same Google sign-in as a connection card's Connect. It waits for the
-  connections and the connector catalog, so it never flashes in for someone
-  already connected; it is not drawn for guests, where the host cannot
-  connect accounts, where the region has no Google client, or in the phone
-  bar.
+  connected it: Gmail, then Drive, then nothing once both exist. It starts the
+  same sign-in as a connection card; `google-connect-rail-item.tsx` holds when
+  it shows and how it animates.
   Sidekicks have no rail tile, list or sidebar creation action. The account
   menu still opens the Sidekicks library, and direct Sidekick routes remain
   available with Canvases beside them (or Activity if it was selected).
