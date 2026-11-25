@@ -340,12 +340,16 @@ export interface IdentityAuthContext {
    * The analytics surrogates this person and workspace are known by in PostHog
    * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.
    * They ride the session query that authenticates the request rather than
-   * being looked up, so they cost nothing, and they are optional because they
-   * are minted lazily: null means no PostHog identity exists yet, and there is
-   * therefore nothing for a trace to match against.
+   * being looked up, so they cost nothing. They are optional because they are
+   * minted lazily and because not every context reads them: null or absent
+   * means this context does not hold one, not that none exists.
    *
-   * They are correlation values only. Nothing authorizes on them; the
-   * authority for who this is remains `userId` and `workspaceId`.
+   * Nothing authorizes on them; the authority for who this is remains
+   * `userId` and `workspaceId`. Authenticated telemetry ingest uses a non-null
+   * value as the event's analytics subject instead of re-reading it, so a value
+   * here must come from `users`/`workspaces` (directly or as a carried copy),
+   * is never derived, and is never carried across a change of `userId` or
+   * `workspaceId`.
    */
   analyticsPersonId?: string | null;
   analyticsWorkspaceId?: string | null;
