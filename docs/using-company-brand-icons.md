@@ -74,7 +74,9 @@ transcript's use of it.
 
 `gmail`, `google-calendar`, `google-sheets` and `google-docs` are in the table
 for the rail's Google quick action. No connector wears them, and a custom
-server's name is not matched against them.
+server's name is not matched against them. The Expo app's sidebar row cannot
+mount these React DOM components, so `apps/mobile/src/google-marks.ts` inlines
+their `mono` art, as the landing does.
 
 `apple` is in the table without being a connector: the browser client's Mac
 download row wears it. The table holds company marks, whatever links to them.

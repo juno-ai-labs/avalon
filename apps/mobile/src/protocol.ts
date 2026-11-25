@@ -76,6 +76,10 @@ export const MOBILE_SETTINGS_TITLES: Record<MobileSettingsSection, string> = {
   workspace: 'Organization', members: 'Members', billing: 'Billing', 'internet-access': 'Security', connections: 'Connections',
 };
 
+/** The Google products the sidebar can offer, in the order it offers them. */
+export const GOOGLE_CONNECT_PRODUCTS = ['google-mail-calendar', 'google-drive'] as const;
+export type GoogleConnectProduct = (typeof GOOGLE_CONNECT_PRODUCTS)[number];
+
 export const MobileSnapshotSchema = z.object({
   userId: z.string(),
   userName: z.string(),
@@ -101,6 +105,14 @@ export const MobileSnapshotSchema = z.object({
    * host omits it and can open none, so the shell offers none. It stays open
    * to any string: a newer host's section would otherwise fail an older
    * shell's whole snapshot. The shell keeps the sections it knows. */
+  /** The Google product the sidebar offers to connect (`connect-google`), and
+   * whether a sign-in holds it. Absent from an older host, and null when there
+   * is nothing to offer; the shell then draws no row. A product this shell
+   * does not know reads as nothing to offer rather than failing the snapshot. */
+  googleConnect: z.object({ product: z.string(), busy: z.boolean() }).nullable()
+    .transform((offer) => offer && (GOOGLE_CONNECT_PRODUCTS as readonly string[]).includes(offer.product)
+      ? { product: offer.product as GoogleConnectProduct, busy: offer.busy } : null)
+    .optional(),
   settingsSections: z.array(z.string())
     .transform((sections) => sections.filter((section): section is MobileSettingsSection => MobileSettingsSectionSchema.safeParse(section).success))
     .optional(),
@@ -196,6 +208,8 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('reorder'), ids: z.array(z.string().min(1)) }),
   z.object({ type: z.literal('load-more') }),
   z.object({ type: z.literal('refresh') }),
+  /** Starts the Google sign-in the snapshot's `googleConnect` offers. */
+  z.object({ type: z.literal('connect-google') }),
   z.object({ type: z.literal('sign-out') }),
   z.object({ type: z.literal('switch-workspace') }),
   z.object({ type: z.literal('open-prepared-artifact'), requestId: z.string(), userId: z.string(), workspaceId: z.string(), canvas: PreparedCanvasSchema }),
