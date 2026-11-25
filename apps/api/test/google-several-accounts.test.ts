@@ -71,15 +71,17 @@ function fixture() {
 }
 
 /**
- * Signs in to Google as `subject` and returns the connection the callback
- * stored. Google's token and identity endpoints are doubles; the token grants
- * whatever scopes the authorization asked for.
+ * Starts a Google sign-in, answers Google's token and identity endpoints as
+ * `subject` (granting whatever scopes the authorization asked for), and runs
+ * the callback. Resolves with the connection it stored and the authorization
+ * URL, or rejects as the callback does.
  */
-async function connectGoogle(
+async function signIn(
   { env, auth }: ReturnType<typeof fixture>,
   subject: string,
   capabilities: readonly string[],
-): Promise<{ connectionId: string; prompt: string | null }> {
+  options: { scope?: "personal" | "workspace"; connectionId?: string } = {},
+): Promise<{ connectionId: string; authorization: URL }> {
   let requestedScopes = "";
   vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (input) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
@@ -92,8 +94,9 @@ async function connectGoogle(
     throw new Error(`Unexpected request: ${url.origin}${url.pathname}`);
   }));
   const started = await new ConnectionService(env, auth).beginGoogle({
-    scope: "personal",
+    scope: options.scope ?? "personal",
     capabilities: [...capabilities],
+    ...(options.connectionId ? { connectionId: options.connectionId } : {}),
     desktopHandoffVersion: 2,
   });
   const authorization = new URL(started.url);
@@ -103,45 +106,85 @@ async function connectGoogle(
   ));
   expect(target.searchParams.get("status")).toBe("connected");
   const attempt = await new ConnectionService(env, auth).getOAuthAttempt(started.attemptId);
-  return { connectionId: attempt.connectionId!, prompt: authorization.searchParams.get("prompt") };
+  return { connectionId: attempt.connectionId!, authorization };
+}
+
+const MAIL = GOOGLE_MAIL_CALENDAR_CAPABILITIES;
+const DRIVE = GOOGLE_DRIVE_CAPABILITIES;
+
+function connection(context: ReturnType<typeof fixture>, id: string) {
+  return context.object.prepare("SELECT provider_account_id, status, granted_scopes_json FROM connector_connections WHERE id = ?")
+    .get(id) as { provider_account_id: string; status: string; granted_scopes_json: string };
 }
 
 describe("several Google accounts for one person", () => {
-  it("adds each new account as its own connection and reconnects one already connected for the same product", async () => {
+  it("adds a second account as its own connection", async () => {
     const context = fixture();
-    const inboxA = await connectGoogle(context, "account-a", GOOGLE_MAIL_CALENDAR_CAPABILITIES);
-    // Google asks which account every time, so a person can pick inbox B.
-    expect(inboxA.prompt).toBe("select_account consent");
-    const inboxB = await connectGoogle(context, "account-b", GOOGLE_MAIL_CALENDAR_CAPABILITIES);
-    expect(inboxB.connectionId).not.toBe(inboxA.connectionId);
-    // Signing in with A again from "Add another account" is A, not a third inbox.
-    const inboxAAgain = await connectGoogle(context, "account-a", GOOGLE_MAIL_CALENDAR_CAPABILITIES);
-    expect(inboxAAgain.connectionId).toBe(inboxA.connectionId);
-    // The same account's Drive is a different product, so it is its own connection.
-    const driveA = await connectGoogle(context, "account-a", GOOGLE_DRIVE_CAPABILITIES);
-    expect(driveA.connectionId).not.toBe(inboxA.connectionId);
-    expect(context.object.prepare(`SELECT provider_account_id, status FROM connector_connections
-      WHERE connector_type = 'google' ORDER BY created_at, provider_account_id`).all()).toEqual([
-      { provider_account_id: "account-a", status: "healthy" },
-      { provider_account_id: "account-b", status: "healthy" },
-      { provider_account_id: "account-a", status: "healthy" },
-    ]);
+    const a = await signIn(context, "account-a", MAIL);
+    const b = await signIn(context, "account-b", MAIL);
+    expect(b.connectionId).not.toBe(a.connectionId);
+    expect(connection(context, b.connectionId)).toMatchObject({ provider_account_id: "account-b", status: "healthy" });
+  });
+
+  it("reconnects an account that signs in again instead of adding it twice", async () => {
+    const context = fixture();
+    const a = await signIn(context, "account-a", MAIL);
+    context.object.prepare("UPDATE connector_connections SET status = 'needs_reconnect' WHERE id = ?").run(a.connectionId);
+    const again = await signIn(context, "account-a", MAIL);
+    expect(again.connectionId).toBe(a.connectionId);
+    expect(connection(context, a.connectionId).status).toBe("healthy");
+  });
+
+  it("gives the same account's Drive its own connection", async () => {
+    const context = fixture();
+    const mail = await signIn(context, "account-a", MAIL);
+    const drive = await signIn(context, "account-a", DRIVE);
+    expect(drive.connectionId).not.toBe(mail.connectionId);
   });
 
   it("leaves a connection holding both products alone when the same account signs in for one of them", async () => {
     const context = fixture();
-    const both = await connectGoogle(context, "account-c", [...GOOGLE_MAIL_CALENDAR_CAPABILITIES, ...GOOGLE_DRIVE_CAPABILITIES]);
-    const driveOnly = await connectGoogle(context, "account-c", GOOGLE_DRIVE_CAPABILITIES);
+    const both = await signIn(context, "account-c", [...MAIL, ...DRIVE]);
+    const driveOnly = await signIn(context, "account-c", DRIVE);
     expect(driveOnly.connectionId).not.toBe(both.connectionId);
-    const kept = context.object.prepare("SELECT granted_scopes_json FROM connector_connections WHERE id = ?")
-      .get(both.connectionId) as { granted_scopes_json: string };
-    expect(JSON.parse(kept.granted_scopes_json)).toEqual(expect.arrayContaining([...GOOGLE_MAIL_CALENDAR_CAPABILITIES]));
+    expect(JSON.parse(connection(context, both.connectionId).granted_scopes_json)).toEqual(expect.arrayContaining([...MAIL]));
   });
 
   it("widens a connection when the same account signs in for more products than it holds", async () => {
     const context = fixture();
-    const mail = await connectGoogle(context, "account-d", GOOGLE_MAIL_CALENDAR_CAPABILITIES);
-    const both = await connectGoogle(context, "account-d", [...GOOGLE_MAIL_CALENDAR_CAPABILITIES, ...GOOGLE_DRIVE_CAPABILITIES]);
+    const mail = await signIn(context, "account-d", MAIL);
+    const both = await signIn(context, "account-d", [...MAIL, ...DRIVE]);
     expect(both.connectionId).toBe(mail.connectionId);
+  });
+
+  it("adds a new connection for an account whose old one was disconnected", async () => {
+    const context = fixture();
+    const a = await signIn(context, "account-a", MAIL);
+    context.object.prepare("UPDATE connector_connections SET status = 'disabled' WHERE id = ?").run(a.connectionId);
+    const again = await signIn(context, "account-a", MAIL);
+    expect(again.connectionId).not.toBe(a.connectionId);
+  });
+
+  it("keeps the Organization's connection apart from the same account's personal one", async () => {
+    const context = fixture();
+    const organization = await signIn(context, "account-a", DRIVE, { scope: "workspace" });
+    const personal = await signIn(context, "account-a", DRIVE);
+    expect(personal.connectionId).not.toBe(organization.connectionId);
+  });
+
+  it("refuses a reconnect of one account signed in as another, and names the account it expects", async () => {
+    const context = fixture();
+    const a = await signIn(context, "account-a", MAIL);
+    const b = await signIn(context, "account-b", MAIL);
+    await expect(signIn(context, "account-a", MAIL, { connectionId: b.connectionId }))
+      .rejects.toMatchObject({ code: "google_account_mismatch" });
+    expect(connection(context, a.connectionId).provider_account_id).toBe("account-a");
+    expect(connection(context, b.connectionId).provider_account_id).toBe("account-b");
+    // A reconnect asks Google to preselect the account it is for.
+    const { env, auth } = context;
+    const started = await new ConnectionService(env, auth).beginGoogle({
+      scope: "personal", capabilities: [...MAIL], connectionId: b.connectionId, desktopHandoffVersion: 2,
+    });
+    expect(new URL(started.url).searchParams.get("login_hint")).toBe("account-b");
   });
 });

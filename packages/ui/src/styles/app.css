@@ -3749,6 +3749,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .connector-connection-card-account-row .connector-connection-card-status { padding: 4px 10px; font-size: var(--av-sys-type-footnote); }
 .connector-connection-card-account-row .connector-connection-card-status:not([data-status="healthy"]) { background: var(--av-sys-color-surface-elevated); color: var(--av-sys-color-text-muted); }
 .connector-connection-card-account-action.button { border-radius: var(--av-sys-size-radius-pill); min-height: 28px; padding: 3px 12px; }
+.connector-connection-card-note { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-footnote); margin: 0; }
 .connector-connection-card-add.button { align-self: flex-start; border-radius: var(--av-sys-size-radius-pill); gap: 6px; min-height: 32px; padding: 5px 14px; }
 @container (max-width: 420px) {
   .connector-connection-card-header:has(.connector-connection-card-controls) { flex-wrap: wrap; }

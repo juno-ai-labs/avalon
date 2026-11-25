@@ -993,9 +993,13 @@ export class ConnectionService {
       desktopHandoffVersion: input.desktopHandoffVersion,
     });
     const adapter = this.registry().get("google");
+    const reconnecting = input.connectionId === undefined ? null : await this.env.DB.prepare(
+      `SELECT provider_account_id FROM connector_connections WHERE id = ? AND workspace_id = ? AND connector_type = 'google'`,
+    ).bind(input.connectionId, auth.workspaceId).first<{ provider_account_id: string | null }>();
     const authorization = await adapter.beginAuthorization?.({
       state,
       codeChallenge: challenge,
+      ...(reconnecting?.provider_account_id ? { loginHint: String(reconnecting.provider_account_id) } : {}),
       scopes: [
         ...new Set([
           ...GoogleCapabilityScopes.identity,
@@ -1219,7 +1223,7 @@ export class ConnectionService {
     let existing: StoredConnection | null = null;
     let existingCredentials: Record<string, unknown> = {};
     if (reconnectId) {
-      existing = await this.env.DB.prepare(
+      existing = sameAccount ?? await this.env.DB.prepare(
         `SELECT * FROM connector_connections
          WHERE id = ? AND workspace_id = ? AND connector_type = 'google'`,
       ).bind(connectionId, row.workspace_id).first<StoredConnection>();
@@ -3992,7 +3996,7 @@ export class ConnectionService {
     workspaceId: string,
     scope: Scope,
     ownerUserId: string | null,
-    providerAccountId: string | null | undefined,
+    providerAccountId: string | null,
     capabilities: readonly string[],
   ): Promise<StoredConnection | null> {
     if (!providerAccountId) return null;

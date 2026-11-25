@@ -533,6 +533,8 @@ export interface ConnectorAuthorizationInput extends Record<string, unknown> {
    * than inferring identity or ownership from requested provider scopes.
    */
   connectionScope?: Scope;
+  /** The provider account a reconnect is for, so the provider can preselect it. */
+  loginHint?: string;
 }
 
 export interface ConnectorAuthorizationCallbackInput extends Record<string, unknown> {

@@ -141,7 +141,12 @@ publishes the workspace socket's `connector_connections` topic to refresh it.
 A healthy existing grant does not itself complete a new reauthorization attempt:
 the callback or OAuth-attempt reconciliation clears the waiting state. The card
 checks the attempt on mount, focus, connection refresh, and workspace OAuth topic
-updates. Multiple matching connections require an explicit account selection.
+updates. For a product with one account per person, multiple matching
+connections require an explicit account selection. A product with
+`severalAccounts` (both Google products) lists each connected account instead,
+with its own status and Reconnect, and offers **Add another account**, which
+starts a new sign-in; when that sign-in turns out to be an account already
+listed, the card says it was refreshed.
 
 Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md).
 
@@ -580,6 +585,14 @@ Google identity and connector authorization are separate. Connector authorizatio
 | **Google Drive + Docs + Sheets** | `drive.read`, `docs.read`, `docs.write`, `sheets.read`, `sheets.write` |
 
 The capability check is enforced for every tool invocation.
+
+A person may connect several Google accounts in a scope. Every connector
+sign-in asks Google which account (`prompt=select_account consent`), and a
+reconnect sends the connection's account as `login_hint` so Google preselects
+it. A callback that names no connection is matched on workspace, scope, owner
+and Google `sub` against live (not disabled) connections, and reconnects the
+first whose products were all requested, since reconnecting replaces a
+connection's grants. Otherwise it inserts a connection with its own plugin.
 
 Sheets value reads set `truncated` when rows, cells or cell text are shortened.
 `cellTextTruncated` distinguishes shortened text: smaller ranges cannot recover
@@ -1435,6 +1448,8 @@ Every rule below was learned from a defect in production or in review, and each 
 
 **An event a connection cannot receive is never advertised to it.** A connector whose `normalize` refuses a connection scope declares that scope out of `activityConnectionScopes`, so no surface offers it a trigger on that connection. *A personal Granola connection advertised its four triggers, and the Sidekick drafted on one applied, activated, and never fired; nothing in the product distinguished that from a Sidekick that had nothing to do yet.*
 
+**A sign-in never takes a grant from the connection it reuses.** A Google callback that names no connection reconnects an existing one only when every product that connection serves was requested, because the reconnect replaces `granted_scopes_json` and the new token, with `include_granted_scopes=false`, covers nothing more. *Review found that matching on any shared product let a Drive-only sign-in strip Gmail and Calendar from a combined connection.* Guarded by `apps/api/test/google-several-accounts.test.ts`.
+
 **Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
 
 **Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
@@ -1636,6 +1651,7 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `packages/connectors/src/google-operation-identity.test.ts` | Code-authored file, mail and calendar reference projection from tool results and canonical normalized activities. |
 | `apps/api/test/sidekick-operation-accounts.test.ts`, `apps/api/test/connector-resource-access.test.ts` | Independent delegated operation selection, refusal-only fallback, read account-checkpoint bypass, exact uncertain-write recovery and actual assembled Google credential selection with provider HTTP doubles. |
 | `apps/desktop/src/renderer/lib/connector-connection-card.test.ts`, `apps/desktop/src/renderer/lib/transcript.test.ts`, `apps/desktop/src/renderer/components/connector-mentions.test.tsx`, `apps/desktop/src/renderer/components/workstream-blocks.test.tsx` | Display compatibility, adjacent card deduplication, hidden-work visibility, known-provider fallback, guest visibility, and update/reload actions with live progress. |
+| `apps/api/test/google-several-accounts.test.ts` | One person's several Google accounts against the checked-in migrations: a second account inserts, the same account reconnects, the same account's other product inserts, a combined connection keeps its grants, a narrower one widens, a disabled one is not reused, scopes stay apart, and a reconnect for B refuses A and hints B. |
 | `apps/api/test/connector-credential-freshness.test.ts` | Both halves of the freshness contract. Its conformance half **enumerates the registry rather than a hand-written list**, so a connector added later is enrolled by existing: for every adapter that can refresh a credential, a provider that rejects the token must be answered with a refresh and a retry. An adapter whose health check does not present the connection's expiring credential — Notion introspects a token in the request body under the integration's own client credentials — declares that in the fixture table, so the exemption is a reviewable fact rather than a silent pass. |
 | `apps/api/test/connector-credential-refresh.test.ts` | The lease, the serialized rotation, the adopt-don't-redeem path, and that a successful refresh heals the row. |
 | `apps/api/test/connector-oauth-error.test.ts` | `isRevokedGrantError` and the three-answer classification. |
@@ -1775,35 +1791,33 @@ surface that tells somebody about connector activity reads
 
 ### 2026-11-25 — A person may connect several Google accounts
 
-**What changed:** The catalog gains `severalAccounts`, set for Google Mail +
-Calendar and Google Drive + Docs + Sheets. For those, once one account is
-connected, the connection card lists each account with its own status and
-Reconnect, and offers **Add another account**, which starts a new sign-in
-rather than reconnecting. The pending sign-in records which account it is for
-(`connectionId`, `null` for a new one), so the right row shows Waiting after a
-remount. Google's connector consent now sends `prompt=select_account consent`,
-so Google asks which account every time. A Google callback that names no
-connection but returns an account already connected by the same owner and scope
-for the same product reconnects that connection instead of inserting a second.
+**What changed:** The catalog gains `severalAccounts`, set for both Google
+products, and the connection card lists their accounts with **Add another
+account**. Google connector sign-ins always show the account chooser, and a
+reconnect hints its account. A Google callback that names no connection reuses
+a live connection of the same account, owner and scope when every product it
+serves was requested; otherwise it inserts, as before. The rule is in the
+Google section and Invariants.
 
 **Why:** Product asked for one person to connect inboxes A, B and C during
-onboarding. The server already stored each sign-in as its own connection with
-its own plugin; the card and Settings were what allowed only one. Without the
-account chooser Google signs in whichever account the browser has current, so
-"Add another" would have returned the first account again.
+onboarding. The server already stored each sign-in as its own connection; the
+card offered only Reconnect once one existed, and without the chooser Google
+signed in whichever account the browser had current.
 
-**Considered and rejected:** Turning it on for every product. The card is
-shared by every connector, and not every connect path has been checked to
-insert a second connection rather than replace or refuse it. A database unique
-index for duplicates: one Google account legitimately holds one connection per
-product, which an index on owner and account cannot express.
+**Considered and rejected:** Turning it on for every product, whose connect
+paths have not all been checked to insert. A unique index for duplicates,
+which cannot express the product rule. Putting the account address into the
+model's plugin catalog so the agent can tell inboxes apart: the catalog keeps
+provider account labels out, and `google_gmail_read_profile` answers which
+account a plugin is.
 
-**Consequences:** A product opts in only after its connect path is checked.
-Settings still disables Connect once a personal connection exists; extending
-it is separate work. Several inboxes give the agent one Gmail plugin each, so
-it picks an inbox per call; merging them into one tool set is not done here.
-The duplicate check runs on every new Google sign-in and keys on Google's
-`sub`, so a changed account identity creates a new connection as before.
+**Consequences:** A product opts in only once its connect path inserts a
+second connection. The agent sees one Gmail plugin per inbox and picks one per
+call; merging them into one tool set is a follow-up. A concurrent second
+callback for the same account can still insert a duplicate, as before this
+change.
+
+PR: [#1703](https://github.com/juno-ai-labs/avalon/pull/1703).
 
 ### 2026-11-19 — An event names its item; the generic webhook connector and `webhook` trigger are removed
 
