@@ -137,4 +137,11 @@ describe("several Google accounts for one person", () => {
       .get(both.connectionId) as { granted_scopes_json: string };
     expect(JSON.parse(kept.granted_scopes_json)).toEqual(expect.arrayContaining([...GOOGLE_MAIL_CALENDAR_CAPABILITIES]));
   });
+
+  it("widens a connection when the same account signs in for more products than it holds", async () => {
+    const context = fixture();
+    const mail = await connectGoogle(context, "account-d", GOOGLE_MAIL_CALENDAR_CAPABILITIES);
+    const both = await connectGoogle(context, "account-d", [...GOOGLE_MAIL_CALENDAR_CAPABILITIES, ...GOOGLE_DRIVE_CAPABILITIES]);
+    expect(both.connectionId).toBe(mail.connectionId);
+  });
 });

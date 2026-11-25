@@ -671,7 +671,12 @@ export function ConnectorConnectionCardView({
   );
 }
 
-/** The account half of a connection's name (`Google Mail + Calendar · a@b.com`), or the whole name when it has none. */
+/**
+ * The account half of a connection's name (`Google Mail + Calendar · a@b.com`),
+ * or the whole name when it has none. The format is the server's
+ * (`connectorConnectionName`, used by `googleConnectionDisplayName`); a
+ * connection carries no separate account field.
+ */
 function connectionAccountLabel(displayName: string): string {
   const separator = displayName.indexOf(' · ');
   return separator === -1 ? displayName : displayName.slice(separator + 3);

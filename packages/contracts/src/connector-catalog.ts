@@ -78,13 +78,7 @@ type ConnectorProduct = {
    * which a person typed (a custom server).
    */
   instance: "account" | "name";
-  /**
-   * Whether one person may connect several accounts of this product in one
-   * scope (inbox A, B and C). The server stores each as its own connection;
-   * this only tells a card to offer "Add another account" instead of
-   * reconnecting the one it has. Set only after checking the product's
-   * connect path inserts a second connection rather than replacing the first.
-   */
+  /** One person may connect several accounts of it in a scope; set only once its connect path inserts rather than replaces. */
   severalAccounts?: true;
   /** A stable mark name for clients; null when the client draws its own. */
   iconName: string | null;

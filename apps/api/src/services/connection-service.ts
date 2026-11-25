@@ -1206,10 +1206,7 @@ export class ConnectionService {
     if (!incomingCredentials) throw new ApiError(502, "google_token_exchange_failed", "Google did not return connector credentials");
     assertGoogleCapabilitiesGranted(stateData.capabilities, incomingCredentials);
     const at = nowIso();
-    // A person may connect several Google accounts, so a sign-in that names no
-    // connection is another account. When it is an account already connected
-    // here for the same product, it reconnects that one instead of adding a
-    // duplicate the agent would see twice.
+    // A sign-in naming no connection reconnects one this account already holds, rather than duplicate it.
     const sameAccount = stateData.connectionId ? null : await this.sameGoogleAccountConnection(
       String(row.workspace_id),
       stateData.scope,
@@ -3986,16 +3983,10 @@ export class ConnectionService {
   }
 
   /**
-   * Allocate the stable, workspace-local name shown to the model. Opaque
-   * connection UUIDs remain the only authorization identity. Disabled rows do
-   * not reserve a name, so removing and later adding the same provider reuses
-   * the clean base (plugin_google, plugin_linear, and so on).
-   */
-  /**
    * The live Google connection of this owner and scope that already holds the
-   * account a sign-in returned, for exactly the same products (Mail and
-   * Calendar, Drive, or both). One account legitimately has one connection
-   * per product set.
+   * account a sign-in returned, and serves no product the sign-in did not ask
+   * for. Reconnecting replaces a connection's grants, so one serving a product
+   * outside the request would lose it; such a sign-in inserts a connection.
    */
   private async sameGoogleAccountConnection(
     workspaceId: string,
@@ -4005,22 +3996,28 @@ export class ConnectionService {
     capabilities: readonly string[],
   ): Promise<StoredConnection | null> {
     if (!providerAccountId) return null;
-    // The same product set, not an overlap: reconnecting replaces the grants,
-    // so matching a Mail-and-Drive connection on a Drive-only sign-in would
-    // take its Mail away.
-    const requested = [...connectorProductsForConnection({ connectorType: "google", capabilities })].sort().join(",");
+    const requested = new Set(connectorProductsForConnection({ connectorType: "google", capabilities }));
     const candidates = await this.env.DB.prepare(
       `SELECT * FROM connector_connections
        WHERE workspace_id = ? AND connector_type = 'google' AND scope = ? AND owner_user_id IS ?
          AND provider_account_id = ? AND status <> 'disabled'
        ORDER BY created_at`,
     ).bind(workspaceId, scope, ownerUserId, providerAccountId).all<StoredConnection>();
-    return (candidates.results ?? []).find((candidate) => [...connectorProductsForConnection({
-      connectorType: "google",
-      capabilities: parseJson<string[]>(candidate.granted_scopes_json, []),
-    })].sort().join(",") === requested) ?? null;
+    return (candidates.results ?? []).find((candidate) => {
+      const served = connectorProductsForConnection({
+        connectorType: "google",
+        capabilities: parseJson<string[]>(candidate.granted_scopes_json, []),
+      });
+      return served.length > 0 && served.every((product) => requested.has(product));
+    }) ?? null;
   }
 
+  /**
+   * Allocate the stable, workspace-local name shown to the model. Opaque
+   * connection UUIDs remain the only authorization identity. Disabled rows do
+   * not reserve a name, so removing and later adding the same provider reuses
+   * the clean base (plugin_google, plugin_linear, and so on).
+   */
   private async allocateModelPluginId(
     workspaceId: string,
     connectorType: string,

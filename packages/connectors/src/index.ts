@@ -2602,8 +2602,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       url.searchParams.set("code_challenge_method", "S256");
       url.searchParams.set("access_type", "offline");
       url.searchParams.set("include_granted_scopes", "false");
-      // A person may connect several Google accounts, so Google always asks
-      // which one; with only `consent` it signs in whichever is current.
+      // Always ask which account: a person may connect several.
       url.searchParams.set("prompt", "select_account consent");
       return { url: url.toString() };
     },
