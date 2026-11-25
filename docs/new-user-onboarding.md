@@ -50,7 +50,10 @@ connecting Google. The Google step (stage `connectors`) shows the same
 `ConnectorConnectionCard` a conversation shows, for the personal
 `google-mail-calendar` and `google-drive` connections, so connecting,
 reconnecting and the OAuth return behave as they do there; the workspace socket
-refreshes `['connections']` when an authorization lands. The journey reads
+refreshes `['connections']` when an authorization lands. Once one account is
+connected, each card lists its accounts and offers **Add another account**, so
+one person can connect several inboxes here
+([`connectors.md`](connectors.md#changelog), 2026-11-25). The journey reads
 `['connections']` and `['connector-catalog']` while personal setup is open, so
 the step opens on known state; it shows a loading line until the connections
 arrive and a notice with Retry if they cannot be read. Only one sign-in is

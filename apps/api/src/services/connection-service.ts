@@ -2,7 +2,7 @@ import { runtimeDeferral } from "../lib/defer";
 import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
-import { ConnectorProductCatalog, connectorConnectionName, connectorConnectionProductName, GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { ConnectorProductCatalog, connectorConnectionName, connectorProductsForConnection, connectorConnectionProductName, GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
 import { AshbyEventSelectionSchema, slackInstallationId } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
@@ -1206,10 +1206,22 @@ export class ConnectionService {
     if (!incomingCredentials) throw new ApiError(502, "google_token_exchange_failed", "Google did not return connector credentials");
     assertGoogleCapabilitiesGranted(stateData.capabilities, incomingCredentials);
     const at = nowIso();
-    const connectionId = stateData.connectionId ?? newId();
+    // A person may connect several Google accounts, so a sign-in that names no
+    // connection is another account. When it is an account already connected
+    // here for the same product, it reconnects that one instead of adding a
+    // duplicate the agent would see twice.
+    const sameAccount = stateData.connectionId ? null : await this.sameGoogleAccountConnection(
+      String(row.workspace_id),
+      stateData.scope,
+      stateData.scope === "personal" ? String(row.user_id) : null,
+      stringField(incomingCredentials, "providerAccountId"),
+      stateData.capabilities,
+    );
+    const reconnectId = stateData.connectionId ?? sameAccount?.id ?? null;
+    const connectionId = reconnectId ?? newId();
     let existing: StoredConnection | null = null;
     let existingCredentials: Record<string, unknown> = {};
-    if (stateData.connectionId) {
+    if (reconnectId) {
       existing = await this.env.DB.prepare(
         `SELECT * FROM connector_connections
          WHERE id = ? AND workspace_id = ? AND connector_type = 'google'`,
@@ -1233,14 +1245,14 @@ export class ConnectionService {
     const modelPluginId = await this.allocateModelPluginId(
       String(row.workspace_id),
       "google",
-      stateData.connectionId ? connectionId : null,
+      reconnectId ? connectionId : null,
     );
     const identityConfig = JSON.stringify(verifiedIdentityConfig(
       "google",
       account.credentials,
       account.providerAccountId,
     ));
-    if (stateData.connectionId) {
+    if (reconnectId) {
       const updated = await this.persistConnectionMutation(this.env.DB.prepare(
         `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
          credential_key_version = ?, granted_scopes_json = ?, provider_account_id = ?, display_name = ?,
@@ -1294,7 +1306,7 @@ export class ConnectionService {
     runtimeDeferral(this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
-      stateData.connectionId ? "connector.reauthorized" : "connector.authorized",
+      reconnectId ? "connector.reauthorized" : "connector.authorized",
       connectionId,
       { provider: "google", scope: stateData.scope, capabilities: stateData.capabilities, providerAccountId: account.providerAccountId },
     ));
@@ -3979,6 +3991,32 @@ export class ConnectionService {
    * not reserve a name, so removing and later adding the same provider reuses
    * the clean base (plugin_google, plugin_linear, and so on).
    */
+  /**
+   * The live Google connection of this owner and scope that already holds the
+   * account a sign-in returned, for the same product (Mail and Calendar, or
+   * Drive). One account legitimately has one connection per product.
+   */
+  private async sameGoogleAccountConnection(
+    workspaceId: string,
+    scope: Scope,
+    ownerUserId: string | null,
+    providerAccountId: string | null | undefined,
+    capabilities: readonly string[],
+  ): Promise<StoredConnection | null> {
+    if (!providerAccountId) return null;
+    const requested = new Set(connectorProductsForConnection({ connectorType: "google", capabilities }));
+    const candidates = await this.env.DB.prepare(
+      `SELECT * FROM connector_connections
+       WHERE workspace_id = ? AND connector_type = 'google' AND scope = ? AND owner_user_id IS ?
+         AND provider_account_id = ? AND status <> 'disabled'
+       ORDER BY created_at`,
+    ).bind(workspaceId, scope, ownerUserId, providerAccountId).all<StoredConnection>();
+    return (candidates.results ?? []).find((candidate) => connectorProductsForConnection({
+      connectorType: "google",
+      capabilities: parseJson<string[]>(candidate.granted_scopes_json, []),
+    }).some((product) => requested.has(product))) ?? null;
+  }
+
   private async allocateModelPluginId(
     workspaceId: string,
     connectorType: string,

@@ -185,7 +185,8 @@ Each product entry says, once: its name and one-sentence description, its
 **families**, its provider, the scopes it is offered in (`scopes`), the subset a
 card in a conversation can connect (`cardScopes`; the rest are made in
 Settings), whether its connections are told apart by account or by a name a
-person typed (`instance`), and its mark. Families
+person typed (`instance`), whether one person may connect several accounts of it
+in a scope (`severalAccounts`), and its mark. Families
 (`ConnectorFamilyCatalog`) name a job, not a provider: email and calendar, file
 storage, documents and wikis, team chat, issue tracking, code, meeting notes,
 sales, recruiting, social media, and custom tools and events. A product
@@ -1771,6 +1772,38 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-25 — A person may connect several Google accounts
+
+**What changed:** The catalog gains `severalAccounts`, set for Google Mail +
+Calendar and Google Drive + Docs + Sheets. For those, once one account is
+connected, the connection card lists each account with its own status and
+Reconnect, and offers **Add another account**, which starts a new sign-in
+rather than reconnecting. The pending sign-in records which account it is for
+(`connectionId`, `null` for a new one), so the right row shows Waiting after a
+remount. Google's connector consent now sends `prompt=select_account consent`,
+so Google asks which account every time. A Google callback that names no
+connection but returns an account already connected by the same owner and scope
+for the same product reconnects that connection instead of inserting a second.
+
+**Why:** Product asked for one person to connect inboxes A, B and C during
+onboarding. The server already stored each sign-in as its own connection with
+its own plugin; the card and Settings were what allowed only one. Without the
+account chooser Google signs in whichever account the browser has current, so
+"Add another" would have returned the first account again.
+
+**Considered and rejected:** Turning it on for every product. The card is
+shared by every connector, and not every connect path has been checked to
+insert a second connection rather than replace or refuse it. A database unique
+index for duplicates: one Google account legitimately holds one connection per
+product, which an index on owner and account cannot express.
+
+**Consequences:** A product opts in only after its connect path is checked.
+Settings still disables Connect once a personal connection exists; extending
+it is separate work. Several inboxes give the agent one Gmail plugin each, so
+it picks an inbox per call; merging them into one tool set is not done here.
+The duplicate check runs on every new Google sign-in and keys on Google's
+`sub`, so a changed account identity creates a new connection as before.
 
 ### 2026-11-19 — An event names its item; the generic webhook connector and `webhook` trigger are removed
 

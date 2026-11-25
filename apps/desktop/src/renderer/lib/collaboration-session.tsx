@@ -6,6 +6,8 @@ import type { RallyApi } from './api';
 
 export interface PendingConnectorOAuth {
   source?: 'conversation' | 'resource';
+  /** The connection being reconnected, `null` for another account being added; absent where nobody recorded which. */
+  connectionId?: string | null;
   connectorId?: string;
   scope?: 'personal' | 'workspace';
   attemptId: string;
