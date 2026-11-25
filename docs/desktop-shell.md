@@ -145,8 +145,8 @@ It holds two columns:
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
   Under the usage warning, the rail offers Google to a member who has not
   connected it: Gmail, then Drive, then nothing once both exist. It starts the
-  same sign-in as a connection card; `google-connect-rail-item.tsx` holds when
-  it shows and how it animates.
+  same sign-in as a connection card; `google-connect-offer.tsx` holds when it
+  shows, and `google-connect-rail-item.tsx` how it animates.
   Sidekicks have no rail tile, list or sidebar creation action. The account
   menu still opens the Sidekicks library, and direct Sidekick routes remain
   available with Canvases beside them (or Activity if it was selected).

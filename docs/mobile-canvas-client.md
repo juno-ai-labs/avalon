@@ -678,7 +678,11 @@ Native, which renders DOM; the marks are its mono art inlined, as the static
 landing does.
 
 **Consequences:** The row's products, order and wording are copied from the
-desktop tile's table; a change to one should change both.
+desktop tile's table; a change to one should change both. A step that
+outlives a product switch is read within the new product's marks
+(`rolling-step.ts`), and a tap while the offer is busy does nothing.
+
+Shipped in #1705.
 
 ### 2026-11-16 — Native Settings list, with the desktop's Settings pages
 

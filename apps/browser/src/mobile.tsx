@@ -305,9 +305,10 @@ function ReportGoogleConnect({ offer, report, start }: {
   report: (value: MobileSnapshot['googleConnect']) => void;
   start: React.RefObject<(() => void) | null>;
 }): null {
-  // In an effect, so a product switch's unmount cleanup always runs before this sets it.
-  useLayoutEffect(() => { start.current = offer.start; });
-  useEffect(() => { report({ product: offer.product, busy: offer.busy }); }, [offer.product, offer.busy, report]);
+  // In an effect, so a product switch's unmount cleanup always runs before this
+  // sets it. Nothing while busy, so a second tap cannot start a second sign-in.
+  useLayoutEffect(() => { start.current = offer.busy ? null : offer.start; });
+  useEffect(() => { report({ product: offer.product, busy: offer.busy, pending: offer.pending }); }, [offer.product, offer.busy, offer.pending, report]);
   useEffect(() => () => { report(null); start.current = null; }, [report, start]);
   useEffect(() => { if (offer.error) window.alert(offer.error); }, [offer.error]);
   return null;

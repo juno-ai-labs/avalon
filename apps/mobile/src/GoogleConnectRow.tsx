@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, AppState, Easing, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { GOOGLE_MARKS, type GoogleMark } from './google-marks';
 import type { GoogleConnectProduct, MobileSnapshot } from './protocol';
+import { FIRST_STEP, nextStep, stepItems } from './rolling-step';
 import { useTheme } from './theme';
 
 /**
@@ -17,7 +18,7 @@ const OFFERS: Record<GoogleConnectProduct, { marks: readonly { mark: GoogleMark;
   'google-drive': { marks: [{ mark: 'google-drive', name: 'Drive' }, { mark: 'google-sheets', name: 'Sheets' }, { mark: 'google-docs', name: 'Docs' }], action: 'Connect Drive, Sheets and Docs' },
 };
 
-/** The composer's count wheel: 280 ms to roll, every 2.4 s plus the roll. */
+/** The desktop's timing (`rolling-cycle.tsx`). */
 const ROLL_MS = 280;
 const PERIOD_MS = 2400 + ROLL_MS;
 const ICON = 21;
@@ -37,27 +38,26 @@ export function GoogleConnectRow({ offer, onPress, reduceMotion }: {
   // The name's line grows with Dynamic Type; a fixed wheel would clip it.
   const label = LABEL * useWindowDimensions().fontScale;
   const { marks, action } = OFFERS[offer.product];
-  const [step, setStep] = useState({ index: 0, previous: null as number | null });
+  const [step, setStep] = useState(FIRST_STEP);
   const roll = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    setStep({ index: 0, previous: null });
     if (reduceMotion || marks.length < 2) return;
     const timer = setInterval(() => {
-      if (AppState.currentState === 'active') setStep((current) => ({ index: (current.index + 1) % marks.length, previous: current.index }));
+      if (AppState.currentState === 'active') setStep((current) => nextStep(current, marks.length));
     }, PERIOD_MS);
-    return () => clearInterval(timer);
-  }, [offer.product, reduceMotion, marks.length]);
-  useEffect(() => {
+    return () => { clearInterval(timer); setStep(FIRST_STEP); };
+  }, [reduceMotion, marks.length]);
+  // Before paint, so the new mark never shows in place for a frame before it rolls in.
+  useLayoutEffect(() => {
     if (step.previous === null) return;
     roll.setValue(0);
     Animated.timing(roll, { toValue: 1, duration: ROLL_MS, easing: Easing.out(Easing.ease), useNativeDriver: true }).start();
   }, [step, roll]);
-  // Sidebar keys the row by product; this only guards the render before a reset.
-  const shown = marks[step.index % marks.length]!;
-  const before = step.previous === null ? null : marks[step.previous % marks.length]!;
+  // Sidebar keys the row by product; reading within the list guards a step from a longer one.
+  const { shown, before } = stepItems(marks, step);
   const mark = (name: GoogleMark) => <SvgXml xml={GOOGLE_MARKS[name]} width={ICON} height={ICON} color={colors.text} />;
   const name = (text: string) => <Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>{text}</Text>;
-  return <Pressable accessibilityRole="button" accessibilityLabel={action} accessibilityState={{ disabled: offer.busy, busy: offer.busy }}
+  return <Pressable accessibilityRole="button" accessibilityLabel={action} accessibilityState={{ disabled: offer.busy, busy: offer.pending }}
     disabled={offer.busy} onPress={onPress} style={({ pressed }) => [styles.row, { opacity: offer.busy ? 0.5 : pressed ? 0.6 : 1 }]}>
     <View style={styles.icon}>
       <Wheel height={ICON} roll={roll} before={before && mark(before.mark)}>{mark(shown.mark)}</Wheel>

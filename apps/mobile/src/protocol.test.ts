@@ -172,8 +172,11 @@ describe('the sidebar Google offer', () => {
     view: 'home', title: 'Your canvases', artifactId: null, artifactPicker: false,
   };
   it('reads the offered product and whether a sign-in holds it', () => {
+    expect(MobileSnapshotSchema.parse({ ...snapshot, googleConnect: { product: 'google-drive', busy: true, pending: true } }).googleConnect)
+      .toEqual({ product: 'google-drive', busy: true, pending: true });
+    // An older page sends no `pending`: busy for another reason, so nothing is loading.
     expect(MobileSnapshotSchema.parse({ ...snapshot, googleConnect: { product: 'google-drive', busy: true } }).googleConnect)
-      .toEqual({ product: 'google-drive', busy: true });
+      .toEqual({ product: 'google-drive', busy: true, pending: false });
     expect(MobileSnapshotSchema.parse({ ...snapshot, googleConnect: null }).googleConnect).toBeNull();
   });
   it('draws nothing for an older page that sends no offer', () => {
