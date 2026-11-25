@@ -1,6 +1,6 @@
 {
   "name": "@rally/desktop",
-  "version": "1.782.0",
+  "version": "1.783.0",
   "private": true,
   "description": "Rally secure Electron desktop client",
   "license": "AGPL-3.0-only OR LicenseRef-Rally-Commercial",
