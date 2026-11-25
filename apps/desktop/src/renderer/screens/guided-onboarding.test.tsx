@@ -7,6 +7,9 @@ import { act } from '@testing-library/react';
 import type { Workspace } from '../lib/types';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
+import { CollaborationSessionProvider, type ConnectorSetupCapability } from '../lib/collaboration-session';
+import { ApiError, RallyApi } from '../lib/api';
+import type { CookieClientSession } from '@rally/contracts/client-session';
 
 const state = vi.hoisted(() => ({
   signedIn: true,
@@ -42,13 +45,22 @@ function WorkspaceView(): React.JSX.Element {
   const allowed = useConversationAdmission();
   return <><div>Ordinary organization</div><output data-testid="admission">{allowed ? 'allowed' : 'blocked'}</output></>;
 }
-function show(onRecoveryReady?: () => void, route = '/onboarding', seed?: (client: QueryClient) => void) {
+function show(onRecoveryReady?: () => void, route = '/onboarding', seed?: (client: QueryClient) => void, setup: ConnectorSetupCapability = connectorSetup()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seed?.(client);
   // The journey renders inside the app's HashRouter and leaves through it, so
   // the harness gives it a router and reports where it went.
-  render(<ErrorNoticeProvider><MemoryRouter initialEntries={[route]}><QueryClientProvider client={client}><AccountOnboardingGate {...(onRecoveryReady ? { onRecoveryReady } : {})}><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
+  const session: CookieClientSession = { authentication: 'cookie', expiresAt: '2099-01-01T00:00:00.000Z', apiBaseUrl: 'https://api.example.com', user: { id: 'user-1', email: 'person@example.com', name: 'Person' },
+    workspace: { id: 'workspace-1', name: 'Team', region: 'global', role: 'member' } };
+  // The connection cards read this API; the journey's own calls go through the mocked app session.
+  const api = Object.assign(new RallyApi(session.apiBaseUrl, session),
+    { getConnections: state.connections, getAvailableConnectorTypes: state.connectors, startProviderConnection: state.startProviderConnection });
+  render(<ErrorNoticeProvider><MemoryRouter initialEntries={[route]}><QueryClientProvider client={client}><CollaborationSessionProvider api={api} session={session} connectorSetup={setup}><AccountOnboardingGate {...(onRecoveryReady ? { onRecoveryReady } : {})}><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></CollaborationSessionProvider></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
   return client;
+}
+function connectorSetup(): ConnectorSetupCapability {
+  return { pendingConnectorOAuth: null, setPendingConnectorOAuth: vi.fn(), resourceAuthorizationAttempts: {},
+    setResourceAuthorizationAttempt: vi.fn(), openExternal: state.openExternal };
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -73,16 +85,20 @@ describe('new-account learning paths', () => {
     expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
     expect(state.journey).not.toHaveBeenCalled();
   });
-  it('sends members directly to personal setup and saves their chosen appearance before opening the Canvases home', async () => {
+  it('sends members through personal setup and the Google step, saving their chosen appearance, before opening the Canvases home', async () => {
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
-    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
+    state.updateJourney.mockResolvedValueOnce({ path: 'member', stage: 'connectors', revision: 1, connectorIds: [] })
+      .mockResolvedValueOnce({ path: 'member', stage: 'complete', revision: 2, connectorIds: [] });
     show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
     expect(screen.queryByText('Bring context for your first task')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'rose' }));
     fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
-    await screen.findByText('Ordinary organization');
+    await screen.findByRole('heading', { name: 'Connect Gmail and Google Drive' });
     expect(state.saveAccount).toHaveBeenCalledWith({ expectedRevision: 0, presentation: { color: 'rose', avatar: 'circle', displayName: 'Person', initials: 'P' } });
-    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
+    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'connectors' });
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
+    await screen.findByText('Ordinary organization');
+    expect(state.updateJourney).toHaveBeenLastCalledWith({ expectedRevision: 1, stage: 'complete' });
     // The finished journey is replaced by the landing, not left behind for Back.
     // Awaited rather than read straight away: `finishOnboarding` completes the
     // journey and *then* navigates, so the stage flipping to `complete` is what
@@ -96,35 +112,38 @@ describe('new-account learning paths', () => {
   });
   it('leaves a person on the Canvas they were opening when the journey covered it', async () => {
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
-    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
+    state.journey.mockResolvedValue({ path: 'member', stage: 'connectors', revision: 1, connectorIds: [] });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 2, connectorIds: [] });
     show(undefined, '/canvases/00000000-0000-7000-8000-000000000c61');
-    await screen.findByRole('heading', { name: 'This is you in Rally' });
-    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
+    await screen.findByRole('heading', { name: 'Connect Gmail and Google Drive' });
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await screen.findByText('Ordinary organization');
-    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
+    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 1, stage: 'complete' });
     expect(screen.getByTestId('route')).toHaveTextContent(/^POP \/canvases\/00000000-0000-7000-8000-000000000c61$/u);
   });
   it('keeps a template route the journey covered before it could start, so the template still starts', async () => {
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
-    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 2, connectorIds: [] });
+    state.journey.mockResolvedValue({ path: 'member', stage: 'connectors', revision: 1, connectorIds: [] });
     // The journey is already known, so it covers the route from the first render.
     show(undefined, '/marketplace/pr-dashboard', (client) => client.setQueryData(
       ['onboarding-journey', workspace.region, workspace.id, workspace.currentUser.id],
-      { path: 'member', stage: 'profile', revision: 0, connectorIds: [] },
+      { path: 'member', stage: 'connectors', revision: 1, connectorIds: [] },
     ));
-    await screen.findByRole('heading', { name: 'This is you in Rally' });
+    await screen.findByRole('heading', { name: 'Connect Gmail and Google Drive' });
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await screen.findByText('Ordinary organization');
-    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
+    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 1, stage: 'complete' });
     expect(screen.getByTestId('route')).toHaveTextContent(/^POP \/marketplace\/pr-dashboard$/u);
   });
   it('leaves /sidekicks/new for the Canvases home, since mounting it creates a Sidekick', async () => {
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
-    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
+    state.journey.mockResolvedValue({ path: 'member', stage: 'connectors', revision: 1, connectorIds: [] });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 2, connectorIds: [] });
     show(undefined, '/sidekicks/new');
-    await screen.findByRole('heading', { name: 'This is you in Rally' });
-    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
+    await screen.findByRole('heading', { name: 'Connect Gmail and Google Drive' });
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent(/^REPLACE \/canvases$/u));
   });
   it('starts personal setup on a random color when the account has no saved look', async () => {
@@ -144,15 +163,72 @@ describe('new-account learning paths', () => {
     fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(state.updateJourney).not.toHaveBeenCalled();
   });
-  it('starts creators at personal setup, then invitations, with no connector step', async () => {
+  it('asks creators to connect Gmail and Google Drive after personal setup, then for teammates', async () => {
+    state.journey.mockResolvedValue({ path: 'creator', stage: 'profile', revision: 0, connectorIds: [] });
+    state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'blue', avatar: 'circle', revision: 1 } });
+    state.updateJourney.mockResolvedValueOnce({ path: 'creator', stage: 'connectors', revision: 1, connectorIds: [] })
+      .mockResolvedValueOnce({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
+    show();
+    await screen.findByRole('heading', { name: 'This is you in Rally' });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
+    await screen.findByRole('heading', { name: 'Connect Gmail and Google Drive' });
+    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'connectors' });
+    expect(await screen.findByRole('button', { name: 'Connect Google Mail + Calendar' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Connect Google Drive + Docs + Sheets' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
+    await screen.findByRole('heading', { name: 'Add your teammates' });
+    expect(state.updateJourney).toHaveBeenLastCalledWith({ expectedRevision: 1, stage: 'people' });
+  });
+  it('skips the Google step where the deployment has no Google client', async () => {
+    state.connectors.mockResolvedValue([]);
     state.journey.mockResolvedValue({ path: 'creator', stage: 'profile', revision: 0, connectorIds: [] });
     state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'blue', avatar: 'circle', revision: 1 } });
     state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'people', revision: 1, connectorIds: [] });
+    const client = show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
+    await waitFor(() => expect(client.getQueryData(['connector-catalog'])).toEqual([]));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
+    await screen.findByRole('heading', { name: 'Add your teammates' });
+    expect(state.updateJourney.mock.calls).toEqual([[{ expectedRevision: 0, stage: 'people' }]]);
+  });
+  it('moves past personal setup on an API that predates the Google step', async () => {
+    state.journey.mockResolvedValue({ path: 'creator', stage: 'profile', revision: 0, connectorIds: [] });
+    state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'blue', avatar: 'circle', revision: 1 } });
+    state.updateJourney.mockRejectedValueOnce(new ApiError('Onboarding changed in another session.', 409, 'onboarding_revision_conflict'))
+      .mockResolvedValueOnce({ path: 'creator', stage: 'people', revision: 1, connectorIds: [] });
     show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
     fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
     await screen.findByRole('heading', { name: 'Add your teammates' });
-    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'people' });
-    expect(state.connectors).not.toHaveBeenCalled();
+    expect(state.updateJourney.mock.calls).toEqual([[{ expectedRevision: 0, stage: 'connectors' }], [{ expectedRevision: 0, stage: 'people' }]]);
+  });
+  it('offers a retry when the connections cannot be read, rather than drawing the cards as unavailable', async () => {
+    state.journey.mockResolvedValue({ path: 'member', stage: 'connectors', revision: 1, connectorIds: [] });
+    state.connections.mockRejectedValueOnce(new Error('offline'));
+    show();
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent("Rally couldn't load your connections.");
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: 'Connect Google Mail + Calendar' })).toBeEnabled();
+  });
+  it('holds the other card back while one Google sign-in is pending', async () => {
+    state.journey.mockResolvedValue({ path: 'member', stage: 'connectors', revision: 1, connectorIds: [] });
+    show(undefined, '/onboarding', undefined, { ...connectorSetup(), pendingConnectorOAuth: { attemptId: 'attempt-1', provider: 'google',
+      connectorId: 'google-mail-calendar', scope: 'personal', source: 'conversation', region: 'global', workspaceId: 'workspace-1' } });
+    expect(await screen.findByRole('button', { name: 'Connect Google Drive + Docs + Sheets' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Waiting…' })).toBeDisabled();
+  });
+  it('starts the Google sign-in from the connectors step and offers Continue once an account is connected', async () => {
+    state.journey.mockResolvedValue({ path: 'member', stage: 'connectors', revision: 1, connectorIds: [] });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 2, connectorIds: [] });
+    const client = show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect Google Mail + Calendar' }));
+    await waitFor(() => expect(state.startProviderConnection).toHaveBeenCalledWith('google', 'you', expect.arrayContaining([expect.stringMatching(/^gmail\./u)])));
+    expect(screen.getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
+    state.connections.mockResolvedValue([{ id: 'connection-1', modelPluginId: 'google', connectorType: 'google', scope: 'you', status: 'healthy', displayName: 'Google · person@example.com',
+      capabilities: ['gmail.read', 'calendar.read'] }]);
+    await act(async () => { await client.invalidateQueries({ queryKey: ['connections'] }); });
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await screen.findByText('Ordinary organization');
+    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 1, stage: 'complete' });
   });
   it('opens a restored organization before account lookup and keeps it mounted when details arrive', async () => {
     let resolveLookup!: (account: typeof state.account) => void;

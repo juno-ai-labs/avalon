@@ -8,12 +8,15 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, us
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
-import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
+import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type ConnectorConnectionCardInput, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
 import { Button, ErrorNotice, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
 import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
-import { useShellCapabilities } from '../lib/collaboration-session';
+import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
+import { ApiError } from '../lib/api';
+import { connectorScopeStates } from '../lib/connector-presentation';
+import { ConnectorConnectionCard, ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { useWorkspaceMembers } from '../lib/workspace-members';
 import type { Workspace } from '../lib/types';
 import { InviteEmailField, failuresNotice, inviteEmailsProblem, inviteMembers, unemailedNotice, useInviteEmails } from '../components/invite-emails';
@@ -208,6 +211,12 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const location = useLocation();
   const key = ['onboarding-journey', workspace?.region, workspace?.id, workspace?.currentUser.id];
   const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && workspace && eligible) });
+  // Read while personal setup is open, so the Google step opens on known
+  // connection state rather than drawing its cards as Unavailable first. These
+  // are the keys the cards and Settings read, so the entries are shared.
+  const nearGoogleStep = Boolean(api && workspace && eligible) && (journey.data?.stage === 'profile' || journey.data?.stage === 'connectors');
+  useQuery({ queryKey: ['connections'], queryFn: ({ signal }) => api!.getConnections(signal), enabled: nearGoogleStep });
+  const catalog = useQuery({ queryKey: ['connector-catalog'], queryFn: ({ signal }) => api!.getAvailableConnectorTypes(signal), enabled: nearGoogleStep, staleTime: 30_000 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const invite = useInviteEmails();
@@ -244,7 +253,19 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     // behind for Back.
     if (!KEPT_ROUTE.test(location.pathname)) openLanding();
   };
-  if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
+  const afterConnectors = (): Promise<void> => state.path === 'creator' ? advance('people') : finishOnboarding();
+  const toGoogleStep = async (): Promise<void> => {
+    // A deployment with no Google client has nothing for the step to connect.
+    if (catalog.data && !catalog.data.includes('google')) return afterConnectors();
+    try { await advance('connectors'); } catch (caught) {
+      // An API from before the Google step refuses it with this code, and the
+      // browser can deploy ahead of the API; the stage after it still works.
+      if (!(caught instanceof ApiError && caught.code === 'onboarding_revision_conflict')) throw caught;
+      await afterConnectors();
+    }
+  };
+  if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={toGoogleStep} /></OnboardingPage>;
+  if (state.stage === 'connectors') return <ConnectGoogleStep busy={busy} error={error} onContinue={() => void perform(afterConnectors)} />;
   const inviteAddresses = invite.addresses;
   if (state.stage === 'people') return <OnboardingPage title="Add your teammates" subtitle={["Rally is designed to be multi-human. Rally lets teammates work with AI in shared (cooperative) chat, so without your teammates it won't be as fun.", "They're members right away, so you can start working with them before they first sign in."]} footer={<>
     <Button className="button-primary" disabled={busy} onClick={() => {
@@ -271,4 +292,38 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     {unemailed && <p className="invite-unemailed-notice" role="status">{unemailed}</p>}{error && <ErrorNotice occurrence={error}>{error.message}</ErrorNotice>}
   </OnboardingPage>;
   return <>{children}</>;
+}
+
+/** The personal Google connections the connectors step offers, in the order shown. */
+const GOOGLE_CONNECTIONS: readonly ConnectorConnectionCardInput[] = [
+  { connectorId: 'google-mail-calendar', scope: 'personal' },
+  { connectorId: 'google-drive', scope: 'personal' },
+];
+
+/**
+ * Connecting Gmail and Google Drive, after personal setup. The cards are the
+ * ones a conversation shows, so connecting, reconnecting and the OAuth return
+ * behave the same here; the workspace socket refreshes `['connections']` when
+ * an authorization lands. The step can always be skipped.
+ */
+function ConnectGoogleStep({ busy, error, onContinue }: { busy: boolean; error: Error | null; onContinue: () => void }): React.JSX.Element {
+  const { api } = useAppSession();
+  const connections = useQuery({ queryKey: ['connections'], queryFn: ({ signal }) => api!.getConnections(signal), enabled: Boolean(api) });
+  // One sign-in is tracked at a time, so the other card waits, as in Settings.
+  const pending = useOptionalCollaborationSession()?.connectorSetup?.pendingConnectorOAuth ?? null;
+  const connected = GOOGLE_CONNECTIONS.some((request) =>
+    connectorScopeStates('google', connections.data ?? [], request.connectorId)[0].status === 'healthy');
+  return <OnboardingPage title="Connect Gmail and Google Drive" subtitle="Let Rally work with your mail, calendar and files. You can change this later in Settings → Connections." footer={
+    <Button className={connected ? 'button-primary' : undefined} disabled={busy} onClick={onContinue}>{busy ? 'Continuing…' : connected ? 'Continue' : 'Skip for now'}</Button>
+  }>
+    {connections.data
+      ? <ConnectorConnectionsProvider connections={connections.data}>
+        <div className="guided-connections">{GOOGLE_CONNECTIONS.map((request) => <ConnectorConnectionCard key={request.connectorId} request={request}
+          disabled={Boolean(pending) && pending?.connectorId !== request.connectorId} />)}</div>
+      </ConnectorConnectionsProvider>
+      : connections.isError
+        ? <><ErrorNotice occurrence={connections.error}>Rally couldn't load your connections.</ErrorNotice><Button onClick={() => void connections.refetch()}>Retry</Button></>
+        : <p role="status">Checking your connections…</p>}
+    {error && <ErrorNotice occurrence={error}>{error.message}</ErrorNotice>}
+  </OnboardingPage>;
 }

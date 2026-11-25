@@ -26,11 +26,12 @@ export class OnboardingJourneyService {
   async get(update?: UpdateOnboardingJourney) {
     const { stub, input, hasPresentation } = await this.authority();
     if (!update) return OnboardingJourneySchema.parse(await stub.onboardingJourney(input));
-    if ((update.stage === 'people' || update.stage === 'complete') && !hasPresentation) {
+    if (update.stage !== 'profile' && !hasPresentation) {
       throw new ApiError(409, 'profile_required', 'Save your name, color, and initials before continuing.');
     }
-    const result = await stub.onboardingJourney({ ...input, ...(update ? { update } : {}) });
-    if (!result) throw new ApiError(409, 'onboarding_revision_conflict', 'Onboarding changed in another session. Resume from the current step.');
+    const result = await stub.onboardingJourney({ ...input, update });
+    if (result === 'revision_conflict') throw new ApiError(409, 'onboarding_revision_conflict', 'Onboarding changed in another session. Resume from the current step.');
+    if (result === 'stage_not_allowed') throw new ApiError(409, 'onboarding_stage_not_allowed', `Onboarding cannot move to ${update.stage} from its current step.`);
     return OnboardingJourneySchema.parse(result);
   }
 

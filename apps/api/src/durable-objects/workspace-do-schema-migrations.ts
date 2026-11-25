@@ -3499,4 +3499,14 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
         AND json_valid(subject_json) AND json_type(subject_json, '$.messageId') = 'text'
         AND length(json_extract(subject_json, '$.messageId')) BETWEEN 1 AND 2000`,
   ],
-}, GENERIC_WEBHOOK_RETIREMENT_MIGRATION];
+}, GENERIC_WEBHOOK_RETIREMENT_MIGRATION, {
+  version: 155,
+  description: "give the connectors onboarding stage its new place after personal setup",
+  // The stage once came before personal setup and was retired in October; a
+  // row still parked there has not set up a profile, so it resumes at personal
+  // setup as reading it did until now. From here on `connectors` is the Gmail
+  // and Google Drive step that follows personal setup (onboarding-journey.ts).
+  statements: [
+    `UPDATE onboarding_journeys SET stage = 'profile', revision = revision + 1 WHERE stage = 'connectors'`,
+  ],
+}];

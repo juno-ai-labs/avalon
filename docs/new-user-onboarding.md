@@ -1,7 +1,7 @@
 # New-user onboarding
 
-Rally helps organization creators connect their tools and
-add teammates, then guides each person through personal appearance. Adding teammates finishes creator
+Rally guides each person through personal appearance and connecting Gmail and
+Google Drive, then helps organization creators add teammates. Adding teammates finishes creator
 setup and open the main app at New. Existing accounts are exempted when the migration runs. This
 ships directly for newly created accounts, with no feature flag.
 
@@ -22,7 +22,7 @@ ships directly for newly created accounts, with no feature flag.
 | `packages/db/migrations/0123_organization_name_suggestions.sql` | The per-domain suggestion cache. |
 | `apps/api/src/lib/html-metadata.ts` | Reading `<title>` and `<meta>` out of page source; shared with site social previews. |
 | `apps/desktop/src/renderer/screens/create-organization.tsx` | The create-organization card, shared by the Mac app and the browser. |
-| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup and adding teammates. |
+| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup, connecting Gmail and Google Drive, and adding teammates. |
 | `apps/desktop/src/renderer/components/invite-emails.tsx` | The email-chip field, its validation, and adding a list as members; shared with the account menu's **Add new member** dialog (`add-members-dialog.tsx`). |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
@@ -35,16 +35,33 @@ completion waits on it, so an eligible account that has not recorded it shows
 account gate optionally notifies its host when account-read or introduction-save
 recovery is actionable, so a native loading cover cannot hide Retry.
 Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
-choose the regional workspace. Everyone starts at personal setup. Connecting
-tools is not a journey step; it lives in Settings → Connections. The step
-that adds teammates can be skipped.
+choose the regional workspace. Everyone starts at personal setup, then
+connects Gmail and Google Drive. Every other connector lives in Settings →
+Connections. The Google step and the step that adds teammates can both be
+skipped.
 
 WorkspaceDO migration 34 adds `onboarding_journeys`, keyed by regional user ID.
 This migration includes the persisted scoped connector selection. Deploy the identity migration
-and API before releasing the desktop client; existing accounts are exempted by
+and API before releasing the desktop client or the browser; existing accounts are exempted by
 the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through personal
-appearance, then adding teammates; members finish after personal appearance.
+appearance, connecting Google, then adding teammates; members finish after
+connecting Google. The Google step (stage `connectors`) shows the same
+`ConnectorConnectionCard` a conversation shows, for the personal
+`google-mail-calendar` and `google-drive` connections, so connecting,
+reconnecting and the OAuth return behave as they do there; the workspace socket
+refreshes `['connections']` when an authorization lands. The journey reads
+`['connections']` and `['connector-catalog']` while personal setup is open, so
+the step opens on known state; it shows a loading line until the connections
+arrive and a notice with Retry if they cannot be read. Only one sign-in is
+tracked at a time, so while one card waits the other's Connect is held, as in
+Settings. A deployment whose catalog has no Google client skips the step.
+The browser deploys on its own and can be live before the API: when the API
+refuses `connectors` with `onboarding_revision_conflict`, the code an API from
+before this step gives, personal setup moves to the stage after it instead.
+The store names its two refusals apart, and the API reports them as
+`onboarding_revision_conflict` (another session moved first) and
+`onboarding_stage_not_allowed` (the stage cannot follow the current one).
 Finishing saves `complete` and then leaves for the Canvases home through
 `useOpenLanding`, replacing the journey's entry, unless the route under the
 journey opens one Canvas or one Sidekick by its id (a shared link, or a
@@ -118,11 +135,18 @@ the same notice for anyone whose email could not be sent.
   onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt. The guide Canvas is asked for by creating the Organization, not by the journey, and no model runs to make it.
 - The visible email list and Add action authorize adding through the existing workspace service.
-- `connectors` stays in the stage enum, the table's check and the contract, and
-  `connectorIds` stays on the journey, because rows written before the step was
-  retired hold them. Reading a journey stored at `connectors` moves it to
-  `profile`, and no transition leads back. Reads of a stored selection drop ids
-  the catalog no longer has, so an old row stays readable.
+- `connectors` means the Google step after personal setup. Before WorkspaceDO
+  migration 155 it meant the retired picker before personal setup; that
+  migration moved rows still parked there to `profile`. `connectorIds` stays on
+  the journey only because old rows hold it, and nothing writes it. Reads of a
+  stored selection drop ids the catalog no longer has, so an old row stays
+  readable.
+- Personal setup may go to `connectors` or straight to the stage after it,
+  because desktop builds from before the Google step ask for the latter.
+- A build from before the Google step has no screen for `connectors` and
+  admits the app. Someone who reaches the step on the web and then opens an
+  older desktop build gets the full app there, and lands back on the step after
+  that build updates. Nothing is lost.
 
 ## Boundary
 
@@ -176,9 +200,41 @@ cover existing authentication and activation behavior.
 
 Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
-Onboarding no longer starts an agent run or a connector authorization.
+Onboarding starts no agent run; the Google step starts a connector
+authorization only when the person presses Connect. A local stack without a
+Google OAuth client shows both cards as Unavailable.
 
 ## Changelog
+
+### 2026-11-24 — Connect Gmail and Google Drive after personal setup
+
+**What changed:** A new step after personal setup offers the personal Google
+Mail + Calendar and Google Drive connections, on both paths, with Skip for now.
+It reuses the stage value `connectors`; WorkspaceDO migration 155 moves rows
+still at the old pre-profile `connectors` stage to `profile`, replacing the
+rewrite `get` did on every read.
+
+**Why:** Product asked for new people to connect Gmail and Google Drive during
+onboarding. This partly reverses the 2026-10-07 entry below: it brings back
+these two connections only, after personal setup rather than before it. The
+store's refusals were split into two codes here because a disallowed move was
+reported as "Onboarding changed in another session", which the new transitions
+made easy to hit.
+
+**Considered and rejected:** A new stage name, which needs a rebuild of
+`onboarding_journeys` to change its `CHECK`, paid by every Organization object
+on its next wake. A client-only screen, which would not resume after a restart.
+Bringing back the full connector picker, which product removed in October.
+
+**Consequences:** `profile` still accepts the stage after `connectors`, so
+older desktop builds keep working, and so does the fallback for a browser live
+ahead of its API; that fallback can go once every API serving the browser has
+this change. Rows at `connectors` written after this ships are post-profile; a
+later change must not read them as the retired stage. A desktop build from
+before #1129 still draws the old picker, whose Skip asks for `profile` and is
+refused; such a build is too old to matter here.
+
+PR: [#1702](https://github.com/juno-ai-labs/avalon/pull/1702).
 
 ### 2026-11-16 — Finishing setup keeps the Canvas a link opened
 

@@ -241,7 +241,9 @@ export function connectorConnectionCardProvider(
  * connector-card primitive while keeping Rally's own tokens and trusted
  * connector catalog.
  */
-export function ConnectorConnectionCard({ latchedConnected = false, onConnected, onNewlyConnected, request }: {
+export function ConnectorConnectionCard({ disabled = false, latchedConnected = false, onConnected, onNewlyConnected, request }: {
+  /** Holds the action back, as while another card's sign-in is pending: only one attempt is tracked at a time. */
+  disabled?: boolean;
   latchedConnected?: boolean;
   onConnected?: (selectionKey: string) => void;
   /**
@@ -259,6 +261,7 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
   if (!provider || !collaboration?.connectorSetup) return null;
   return (
     <ResolvedConnectorConnectionCard
+      disabled={disabled}
       latchedConnected={latchedConnected}
       onConnected={onConnected}
       onNewlyConnected={onNewlyConnected}
@@ -447,7 +450,8 @@ export function useConnectorConnectionAction(
   };
 }
 
-function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewlyConnected, provider, request }: {
+function ResolvedConnectorConnectionCard({ disabled, latchedConnected, onConnected, onNewlyConnected, provider, request }: {
+  disabled: boolean;
   latchedConnected: boolean;
   onConnected?: ((selectionKey: string) => void) | undefined;
   onNewlyConnected?: (() => void) | undefined;
@@ -460,6 +464,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewl
       adminRequired={action.adminRequired}
       checkingAvailability={action.checkingAvailability}
       connected={action.connected}
+      disabled={disabled}
       status={action.status}
       accountOptions={action.accountOptions}
       selectedAccountId={action.selectedAccountId}
@@ -485,6 +490,7 @@ export function ConnectorConnectionCardView({
   accountRequired,
   checkingAvailability,
   connected,
+  disabled = false,
   error,
   onConnect,
   pending,
@@ -501,6 +507,7 @@ export function ConnectorConnectionCardView({
   accountRequired?: boolean;
   checkingAvailability?: boolean;
   connected: boolean;
+  disabled?: boolean;
   status?: ConnectorScopeStatus;
   error?: string;
   onConnect: () => void;
@@ -510,7 +517,9 @@ export function ConnectorConnectionCardView({
   request: ConnectorConnectionCardInput;
   unavailable?: boolean;
 }): React.JSX.Element {
-  const actionLabel = reconnect || connected ? 'Reconnect' : `Connect ${provider.name}`;
+  // The card already names the provider, so the button says only what it does;
+  // its accessible name keeps the provider so two cards' buttons stay distinct.
+  const actionLabel = reconnect || connected ? 'Reconnect' : 'Connect';
   const displayStatus = status ?? (connected ? 'healthy' : undefined);
   const statusLabel = displayStatus === 'reconnect_required' ? 'Reconnect required'
     : displayStatus ? connectorStatusLabel(displayStatus) : checkingAvailability ? 'Checking…' : 'Unavailable';
@@ -551,8 +560,9 @@ export function ConnectorConnectionCardView({
           </span>
           <Button
             className="connector-connection-card-action button-primary"
-            disabled={adminRequired || accountRequired || unavailable || pending}
+            disabled={disabled || adminRequired || accountRequired || unavailable || pending}
             onClick={onConnect}
+            aria-label={buttonLabel === 'Connect' ? `Connect ${provider.name}` : undefined}
             title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
           >
             {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}

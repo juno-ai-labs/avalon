@@ -321,7 +321,8 @@ replaces the address with `/app/workspaces/<region>/<id>` (replaced, not
 pushed, since nothing in the entry answers Back), makes that the destination
 a later restore reopens, and opens it through `/workspace/select` like any
 other organization. The shell runs the creator's setup journey there: "This
-is you in Rally", then "Add your teammates".
+is you in Rally", then "Connect Gmail and Google Drive", then "Add your
+teammates".
 Any account can create one, whatever it signed in with; see
 [multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
 deployment links the account.
