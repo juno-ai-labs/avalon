@@ -50,9 +50,7 @@ connecting Google. The Google step (stage `connectors`) shows the same
 `ConnectorConnectionCard` a conversation shows, for the personal
 `google-mail-calendar` and `google-drive` connections, so connecting,
 reconnecting and the OAuth return behave as they do there; the workspace socket
-refreshes `['connections']` when an authorization lands. A host with no
-`connectorSetup` (it cannot start a connection) skips the step: personal setup
-then asks for the stage after it, which the store also accepts.
+refreshes `['connections']` when an authorization lands.
 Finishing saves `complete` and then leaves for the Canvases home through
 `useOpenLanding`, replacing the journey's entry, unless the route under the
 journey opens one Canvas or one Sidekick by its id (a shared link, or a
@@ -132,9 +130,12 @@ the same notice for anyone whose email could not be sent.
   the journey only because old rows hold it, and nothing writes it. Reads of a
   stored selection drop ids the catalog no longer has, so an old row stays
   readable.
-- Personal setup may go to `connectors` or straight to the stage after it.
-  Clients built before the Google step ask for the latter, and so does a host
-  that cannot connect accounts.
+- Personal setup may go to `connectors` or straight to the stage after it,
+  because desktop builds from before the Google step ask for the latter.
+- A build from before the Google step has no screen for `connectors` and
+  admits the app. Someone who reaches the step on the web and then opens an
+  older desktop build gets the full app there, and lands back on the step after
+  that build updates. Nothing is lost.
 
 ## Boundary
 
@@ -176,8 +177,7 @@ equal projections do not emit repeated invalidations.
 Run API Node tests `account-onboarding.test.ts`,
 `platform-onboarding.test.ts`, and `workspace-do-schema.test.ts`, plus workerd
 `test-workers/onboarding-journey.test.ts`, whose retired-connector and
-retired-stage cases cover reading old rows; the retired-stage case commits a
-row at schema v154 and upgrades it, as production does. The desktop journey itself is
+retired-stage cases cover reading old rows. The desktop journey itself is
 covered by `src/renderer/screens/guided-onboarding.test.tsx`. Account tests apply the actual regional
 migrations; journey tests apply the actual WorkspaceDO migrations in workerd.
 The desktop tests use the real error-notice provider to cover editing without a
@@ -212,9 +212,9 @@ on its next wake. A client-only screen, which would not resume after a restart.
 Bringing back the full connector picker, which product removed in October.
 
 **Consequences:** `profile` still accepts the stage after `connectors`, so
-older clients and hosts that cannot connect keep working. Rows at `connectors`
-written after this ships are post-profile; a later change must not read them
-as the retired stage.
+older desktop builds keep working. Rows at `connectors` written after this
+ships are post-profile; a later change must not read them as the retired
+stage.
 
 ### 2026-11-16 — Finishing setup keeps the Canvas a link opened
 

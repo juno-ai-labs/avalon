@@ -13,7 +13,8 @@ import { Button, ErrorNotice, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
 import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
-import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
+import { connectorScopeStates } from '../lib/connector-presentation';
 import { ConnectorConnectionCard, ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { useWorkspaceMembers } from '../lib/workspace-members';
 import type { Workspace } from '../lib/types';
@@ -202,7 +203,6 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const account = useOnboardingAccount();
   const { api } = useAppSession();
   const { guest } = useShellCapabilities();
-  const canConnect = Boolean(useOptionalCollaborationSession()?.connectorSetup);
   // The journey sets up an Organization; a guest has none of theirs to set up.
   const eligible = Boolean(account?.eligible) && !guest;
   const queryClient = useQueryClient();
@@ -247,9 +247,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     if (!KEPT_ROUTE.test(location.pathname)) openLanding();
   };
   const afterConnectors = (): Promise<void> => state.path === 'creator' ? advance('people') : finishOnboarding();
-  // A host that cannot start a connection skips the step rather than show
-  // cards it cannot draw; the server accepts either next stage.
-  if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => canConnect ? advance('connectors') : afterConnectors()} /></OnboardingPage>;
+  if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => advance('connectors')} /></OnboardingPage>;
   if (state.stage === 'connectors') return <ConnectGoogleStep busy={busy} error={error} onContinue={() => void perform(afterConnectors)} />;
   const inviteAddresses = invite.addresses;
   if (state.stage === 'people') return <OnboardingPage title="Add your teammates" subtitle={["Rally is designed to be multi-human. Rally lets teammates work with AI in shared (cooperative) chat, so without your teammates it won't be as fun.", "They're members right away, so you can start working with them before they first sign in."]} footer={<>
@@ -294,13 +292,13 @@ const GOOGLE_CONNECTIONS: readonly ConnectorConnectionCardInput[] = [
 function ConnectGoogleStep({ busy, error, onContinue }: { busy: boolean; error: Error | null; onContinue: () => void }): React.JSX.Element {
   const { api } = useAppSession();
   const connections = useQuery({ queryKey: ['connections'], queryFn: ({ signal }) => api!.getConnections(signal), enabled: Boolean(api) });
-  const [connected, setConnected] = useState<ReadonlySet<string>>(new Set());
-  const onConnected = useCallback((key: string) => setConnected((keys) => keys.has(key) ? keys : new Set([...keys, key])), []);
+  const connected = GOOGLE_CONNECTIONS.some((request) =>
+    connectorScopeStates('google', connections.data ?? [], request.connectorId)[0].status === 'healthy');
   return <OnboardingPage title="Connect Gmail and Google Drive" subtitle="Let Rally work with your mail, calendar and files. You can change this later in Settings → Connections." footer={
-    <Button className={connected.size ? 'button-primary' : undefined} disabled={busy} onClick={onContinue}>{connected.size ? 'Continue' : 'Skip for now'}</Button>
+    <Button className={connected ? 'button-primary' : undefined} disabled={busy} onClick={onContinue}>{connected ? 'Continue' : 'Skip for now'}</Button>
   }>
     <ConnectorConnectionsProvider connections={connections.data}>
-      <div className="guided-connections">{GOOGLE_CONNECTIONS.map((request) => <ConnectorConnectionCard key={request.connectorId} request={request} onConnected={onConnected} />)}</div>
+      <div className="guided-connections">{GOOGLE_CONNECTIONS.map((request) => <ConnectorConnectionCard key={request.connectorId} request={request} />)}</div>
     </ConnectorConnectionsProvider>
     {error && <ErrorNotice occurrence={error}>{error.message}</ErrorNotice>}
   </OnboardingPage>;

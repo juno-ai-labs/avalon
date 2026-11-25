@@ -30,8 +30,7 @@ export class OnboardingJourneyStore {
     if (current.revision !== input.expectedRevision) return null;
     // Personal setup leads to connecting Gmail and Google Drive, and that to
     // adding teammates (a creator) or to the end (a member). Personal setup may
-    // still skip the connectors step: a host that cannot connect accounts asks
-    // for the next stage directly, as clients built before the step do.
+    // also skip straight past it: desktop builds from before the step do.
     const after = path === 'creator' ? 'people' : 'complete';
     const next: Record<OnboardingJourney['stage'], OnboardingJourney['stage'][]> = {
       profile: ['connectors', after], connectors: [after], people: path === 'creator' ? ['complete'] : [],
