@@ -24,13 +24,13 @@ function google(id: string, capabilities: string[], status: WorkstreamConnection
 const MAIL = ['gmail.read', 'calendar.read'];
 const DRIVE = ['drive.read', 'docs.read', 'sheets.read'];
 
-function show(connections: WorkstreamConnection[], options: { catalog?: string[]; guest?: boolean } = {}) {
+function show(connections: WorkstreamConnection[], options: { catalog?: string[]; guest?: boolean; pending?: ConnectorSetupCapability['pendingConnectorOAuth'] } = {}) {
   const api = Object.assign(new RallyApi(session.apiBaseUrl, session), {
     getConnections: vi.fn(async () => connections),
     getAvailableConnectorTypes: vi.fn(async () => options.catalog ?? ['google']),
     startProviderConnection: calls.startProviderConnection,
   });
-  const setup: ConnectorSetupCapability = { pendingConnectorOAuth: null, setPendingConnectorOAuth: vi.fn(), resourceAuthorizationAttempts: {},
+  const setup: ConnectorSetupCapability = { pendingConnectorOAuth: options.pending ?? null, setPendingConnectorOAuth: vi.fn(), resourceAuthorizationAttempts: {},
     setResourceAuthorizationAttempt: vi.fn(), openExternal: calls.openExternal };
   const shown = options.guest ? { ...session, workspace: { ...session.workspace!, accessClass: 'guest' as const } } : session;
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -84,6 +84,41 @@ describe('the rail Google quick action', () => {
     show([], { catalog: ['slack'] });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('is held while another sign-in is pending, since one is tracked at a time', async () => {
+    show([], { pending: { attemptId: 'attempt-slack', connectionId: null, connectorId: 'slack', provider: 'slack', region: 'global',
+      scope: 'personal', source: 'conversation', workspaceId: 'workspace-1' } });
+    const tile = await screen.findByRole('button', { name: 'Connect Gmail' });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(tile).toBeDisabled();
+  });
+
+  it('keeps the Gmail tile while its sign-in is pending, even once Gmail is listed, so the attempt can be settled', async () => {
+    show([google('mail-a', MAIL)], { pending: { attemptId: 'attempt-1', connectionId: null, connectorId: 'google-mail-calendar', provider: 'google',
+      region: 'global', scope: 'personal', source: 'conversation', workspaceId: 'workspace-1' } });
+    expect(await screen.findByRole('button', { name: 'Connect Gmail' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Connect Google Drive' })).not.toBeInTheDocument();
+  });
+
+  it('stops on its first mark when reduced motion is turned on while it is rolling', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const listeners = new Set<() => void>();
+    const query = { matches: false, media: '(prefers-reduced-motion: reduce)',
+      addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) => listeners.delete(listener) };
+    vi.stubGlobal('matchMedia', () => query);
+    show([]);
+    const tile = await screen.findByRole('button', { name: 'Connect Gmail' });
+    const name = () => tile.querySelector('.navigation-rail-label .rolling-slot-item:last-child')?.textContent;
+    await act(async () => { vi.advanceTimersByTime(ROLLING_CYCLE_HOLD_MS + 280); });
+    expect(name()).toBe('Calendar');
+    query.matches = true;
+    await act(async () => { for (const listener of listeners) listener(); });
+    expect(name()).toBe('Gmail');
+    await act(async () => { vi.advanceTimersByTime(3 * (ROLLING_CYCLE_HOLD_MS + 280)); });
+    expect(name()).toBe('Gmail');
+    vi.unstubAllGlobals();
   });
 
   it('holds its mark while the window is hidden', async () => {

@@ -14,15 +14,17 @@ const ROLL_MS = 280;
  */
 export function useRollingCycle(length: number): { index: number; previous: number | null; settle: () => void } {
   const [state, setState] = useState({ index: 0, previous: null as number | null });
+  const reduced = useReducedMotion();
   useEffect(() => {
-    if (length < 2 || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    if (reduced) setState({ index: 0, previous: null });
+    if (length < 2 || reduced) return;
     // A hidden window does no work; the cycle resumes where it was.
     const timer = window.setInterval(() => {
       if (document.hidden) return;
       setState((current) => ({ index: (current.index + 1) % length, previous: current.index }));
     }, ROLLING_CYCLE_HOLD_MS + ROLL_MS);
     return () => window.clearInterval(timer);
-  }, [length]);
+  }, [length, reduced]);
   return { ...state, settle: () => setState((current) => ({ ...current, previous: null })) };
 }
 
@@ -42,4 +44,17 @@ export function RollingSlot({ className, items, cycle }: {
     }}>{items[cycle.previous]}</span>}
     <span className={`rolling-slot-item${cycle.previous != null ? ' rolling-slot-in' : ''}`} key={`in-${cycle.index}`}>{items[cycle.index]}</span>
   </span>;
+}
+
+/** Whether reduced motion is asked for, following the setting while the app is open. */
+function useReducedMotion(): boolean {
+  const query = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  const [reduced, setReduced] = useState(() => query?.matches ?? false);
+  useEffect(() => {
+    if (!query) return;
+    const update = (): void => setReduced(query.matches);
+    query.addEventListener?.('change', update);
+    return () => query.removeEventListener?.('change', update);
+  }, [query?.media]);
+  return reduced;
 }

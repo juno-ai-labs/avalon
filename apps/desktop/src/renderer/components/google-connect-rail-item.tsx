@@ -45,8 +45,13 @@ export function GoogleConnectRailItem(): React.JSX.Element | null {
   if (!enabled || !connections.data || !catalog.data?.includes('google')) return null;
   const connected = (product: GoogleProduct): boolean => connectorScopeStates('google', connections.data, product)[0]
     .connections.some((connection) => connection.status !== 'disabled');
-  const product: GoogleProduct | null = !connected('google-mail-calendar') ? 'google-mail-calendar'
-    : !connected('google-drive') ? 'google-drive' : null;
+  // A tile whose sign-in is still pending stays until that attempt settles, so
+  // a connection landing does not unmount the hook that clears the shared slot.
+  const pending = collaboration?.connectorSetup?.pendingConnectorOAuth;
+  const pendingProduct = pending?.source === 'conversation' && pending.connectionId === null
+    && (pending.connectorId === 'google-mail-calendar' || pending.connectorId === 'google-drive') ? pending.connectorId : null;
+  const product: GoogleProduct | null = pendingProduct ?? (!connected('google-mail-calendar') ? 'google-mail-calendar'
+    : !connected('google-drive') ? 'google-drive' : null);
   if (!product) return null;
   const request: ConnectorConnectionCardInput = { connectorId: product, scope: 'personal' };
   const provider = connectorConnectionCardProvider(request);
@@ -63,13 +68,15 @@ function GoogleConnectTile({ product, provider, request }: {
 }): React.JSX.Element {
   const tile = TILES[product];
   const action = useConnectorConnectionAction(request, provider);
+  // One sign-in is tracked at a time, so any pending one holds the tile, as it does Settings and the cards.
+  const otherPending = Boolean(useOptionalCollaborationSession()?.connectorSetup?.pendingConnectorOAuth) && !action.pending;
   const cycle = useRollingCycle(tile.marks.length);
   return <>{action.error && <ErrorNotice title="Google could not be connected">{action.error}</ErrorNotice>}<RailItem
     aria-busy={action.pending || undefined}
     aria-label={tile.action}
     badge={<span aria-hidden="true" className="navigation-rail-connect-plus"><IconPlus size={9} stroke={3} /></span>}
     className="navigation-rail-google"
-    disabled={action.pending || action.unavailable}
+    disabled={action.pending || otherPending || action.unavailable}
     icon={<RollingSlot className="navigation-rail-google-mark" cycle={cycle} items={tile.marks.map(({ mark }) => <ConnectorMark key={mark} mark={mark} />)} />}
     label={<RollingSlot cycle={cycle} items={tile.marks.map(({ name }) => name)} />}
     onClick={() => { void action.startAccount(null).catch(() => undefined); }}
