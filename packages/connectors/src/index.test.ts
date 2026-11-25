@@ -4034,6 +4034,25 @@ function expectNormalized(activities: Array<Record<string, unknown>>): void {
   }
 }
 
+describe("Google connector authorization", () => {
+  const begin = (loginHint?: string) => googleAdapter(vi.fn<typeof fetch>()).beginAuthorization!({
+    state: "state-for-google-connector-authorization",
+    codeChallenge: "challenge-for-google-connector-authorization",
+    scopes: ["openid"],
+    ...(loginHint ? { loginHint } : {}),
+  }).then(({ url }) => new URL(url).searchParams);
+
+  it("asks which account on every sign-in, so a person can add a second one", async () => {
+    const params = await begin();
+    expect(params.get("prompt")).toBe("select_account consent");
+    expect(params.has("login_hint")).toBe(false);
+  });
+
+  it("preselects the account a reconnect is for", async () => {
+    expect((await begin("google-subject-b")).get("login_hint")).toBe("google-subject-b");
+  });
+});
+
 describe("Google watch relationships", () => {
   /**
    * Registry construction is where a missing relationship value fails, and it

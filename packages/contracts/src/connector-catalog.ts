@@ -78,6 +78,8 @@ type ConnectorProduct = {
    * which a person typed (a custom server).
    */
   instance: "account" | "name";
+  /** One person may connect several accounts of it in a scope; set only once its connect path inserts rather than replaces. */
+  severalAccounts?: true;
   /** A stable mark name for clients; null when the client draws its own. */
   iconName: string | null;
 };
@@ -92,6 +94,7 @@ export const ConnectorProductCatalog = {
     scopes: ["personal"],
     cardScopes: ["personal"],
     instance: "account",
+    severalAccounts: true,
     iconName: "google",
   },
   "google-drive": {
@@ -103,6 +106,7 @@ export const ConnectorProductCatalog = {
     scopes: ["personal", "workspace"],
     cardScopes: ["personal", "workspace"],
     instance: "account",
+    severalAccounts: true,
     iconName: "google-drive",
   },
   github: {
@@ -226,6 +230,11 @@ export const ConnectorProductCatalog = {
     iconName: "model-context-protocol",
   },
 } as const satisfies Record<string, ConnectorProduct>;
+
+/** Whether a person may connect more than one account of this product in a scope. */
+export function connectorProductAllowsSeveralAccounts(id: ConnectorProductId): boolean {
+  return (ConnectorProductCatalog[id] as ConnectorProduct).severalAccounts === true;
+}
 
 export type ConnectorProductId = keyof typeof ConnectorProductCatalog;
 export const ConnectorProductIds = Object.keys(ConnectorProductCatalog) as [ConnectorProductId, ...ConnectorProductId[]];

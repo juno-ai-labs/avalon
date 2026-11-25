@@ -3,13 +3,15 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorProductCatalog,
   ConnectorOAuthProviderSchema,
+  connectorConnectionAccount,
+  connectorProductAllowsSeveralAccounts,
   connectorProductsForConnection,
   connectorConnectionCardInputFromToolEvent,
   connectorResourceAuthorizationRequestFromToolEvent,
   type ConnectorConnectionCardInput,
   type ConnectorResourceAuthorizationRequest,
 } from '@rally/contracts';
-import { Check, AlertTriangle, LoaderCircle, Minus, Plug } from 'lucide-react';
+import { Check, AlertTriangle, LoaderCircle, Minus, Plug, Plus } from 'lucide-react';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useUpdateRally } from './update-rally-action';
 import { useOptionalCollaborationSession, type ConnectorSetupCapability } from '../lib/collaboration-session';
@@ -291,6 +293,18 @@ export interface ConnectorConnectionAction {
   error: string | undefined;
   /** Starts the sign-in; resolves with its attempt id once the browser is opened, rejects if it could not start. */
   start: () => Promise<string>;
+  /**
+   * The connected accounts, when the product lets a person hold several: the
+   * card lists them, each with its own Reconnect, and offers another.
+   * Undefined for a product with one account per person.
+   */
+  accounts: readonly WorkstreamConnection[] | undefined;
+  /** Reconnects that account, or signs in a new one when `null`. Resolves and rejects as `start` does. */
+  startAccount: (account: string | null) => Promise<string>;
+  /** Which account the pending sign-in is for: its id, `null` for a new one, `undefined` when nothing waits or it is not known. */
+  pendingAccount: string | null | undefined;
+  /** The account an "Add another account" sign-in turned out to be, when it was one already connected. */
+  alreadyConnected: string | null;
   pending: boolean;
   /** The OAuth attempt this card is waiting on, while it waits: its outcome can be read back by id. */
   attemptId: string | null;
@@ -354,6 +368,8 @@ export function useConnectorConnectionAction(
   }, [liveConnected, onConnected, selectionKey]);
   // Seen not connected (with the list loaded) while this card is open.
   const sawMissing = useRef(false);
+  const accountsBeforeAdd = useRef<readonly WorkstreamConnection[]>([]);
+  const [alreadyConnected, setAlreadyConnected] = useState<string | null>(null);
   useEffect(() => {
     if (connections === undefined) return;
     if (!liveConnected) {
@@ -376,7 +392,13 @@ export function useConnectorConnectionAction(
     const reconcile = async (): Promise<void> => {
       try {
         const attempt = await api.getConnectorOAuthAttempt(pendingConnectorOAuth.attemptId);
-        if (!cancelled && attempt.status !== 'pending') setPendingConnectorOAuth(null);
+        if (cancelled || attempt.status === 'pending') return;
+        // "Add another account" that came back as an account already listed
+        // was a reconnect on the server; say so rather than look like nothing happened.
+        const already = pendingConnectorOAuth.connectionId === null && attempt.status === 'succeeded'
+          ? accountsBeforeAdd.current.find((connection) => connection.id === attempt.connectionId) : undefined;
+        setAlreadyConnected(already ? connectorConnectionAccount('account', already.displayName) ?? already.displayName : null);
+        setPendingConnectorOAuth(null);
       } catch {
         // The callback or the next focus can still reconcile the same attempt.
       }
@@ -392,28 +414,34 @@ export function useConnectorConnectionAction(
   const capabilities = scope === 'you' && 'personalCapabilities' in provider
     ? [...provider.personalCapabilities]
     : [...provider.capabilities];
+  const severalAccounts = connectorProductAllowsSeveralAccounts(request.connectorId);
+  // `account` is the connection to reconnect, or `null` to sign in a new one.
   const connect = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (account: string | null) => {
       if (!api || !session?.workspace) throw new Error('Rally is not ready to connect this account.');
-      if (accountRequired) throw new Error('Choose an account to reconnect.');
-      if (reconnect) {
+      const chosen = account === null ? undefined : matchingConnections.find((connection) => connection.id === account);
+      if (account === null) accountsBeforeAdd.current = matchingConnections;
+      setAlreadyConnected(null);
+      if (account !== null) {
+        // An id no longer listed still goes to the server, which answers for it.
         const authorization = await api.reconnectConnection(
-          reconnect.id,
+          account,
           provider.provider === 'granola' ? undefined : provider.provider,
           scope,
-          reconnect.capabilities?.length ?? capabilities.length,
+          chosen?.capabilities?.length ?? capabilities.length,
         );
         const attempt = await api.getConnectorOAuthAttempt(authorization.attemptId);
         await openExternal(authorization.url);
-        return { authorization, provider: attempt.provider };
+        return { authorization, provider: attempt.provider, account };
       }
       const authorization = await startConnectorAuthorization(api, provider.provider, scope, capabilities);
-      return { authorization, provider: provider.provider };
+      return { authorization, provider: provider.provider, account: null };
     },
-    onSuccess: ({ authorization, provider: oauthProvider }) => {
+    onSuccess: ({ authorization, provider: oauthProvider, account }) => {
       if (!session?.workspace) return;
       setPendingConnectorOAuth({
         attemptId: authorization.attemptId,
+        connectionId: account,
         connectorId: request.connectorId,
         provider: oauthProvider,
         region: session.workspace.region,
@@ -424,6 +452,7 @@ export function useConnectorConnectionAction(
     },
   });
   const pending = connect.isPending || awaiting;
+  const pendingAccount = connect.isPending ? connect.variables : awaiting ? pendingConnectorOAuth?.connectionId : undefined;
   // Read from the workspace query rather than the desktop session: a role can
   // change while somebody is signed in now, and the session's copy only moves
   // when its access token rotates. Somebody promoted so that they could connect
@@ -442,7 +471,14 @@ export function useConnectorConnectionAction(
     selectAccount: setSelectedConnectionId,
     accountRequired,
     error: connect.error?.message,
-    start: async () => (await connect.mutateAsync()).authorization.attemptId,
+    start: async () => {
+      if (accountRequired) throw new Error('Choose an account to reconnect.');
+      return (await connect.mutateAsync(reconnect?.id ?? null)).authorization.attemptId;
+    },
+    accounts: severalAccounts ? matchingConnections : undefined,
+    startAccount: async (account) => (await connect.mutateAsync(account)).authorization.attemptId,
+    pendingAccount,
+    alreadyConnected,
     pending,
     attemptId: awaiting && pendingConnectorOAuth ? pendingConnectorOAuth.attemptId : null,
     reconnect: matchingConnections.length > 0,
@@ -470,6 +506,10 @@ function ResolvedConnectorConnectionCard({ disabled, latchedConnected, onConnect
       selectedAccountId={action.selectedAccountId}
       onSelectAccount={action.selectAccount}
       accountRequired={action.accountRequired}
+      accounts={action.accounts}
+      onConnectAccount={(account) => { void action.startAccount(account).catch(() => undefined); }}
+      pendingAccount={action.pendingAccount}
+      alreadyConnected={action.alreadyConnected}
       error={action.error}
       onConnect={() => { void action.start().catch(() => undefined); }}
       pending={action.pending}
@@ -488,6 +528,10 @@ export function ConnectorConnectionCardView({
   selectedAccountId,
   onSelectAccount,
   accountRequired,
+  accounts,
+  onConnectAccount,
+  pendingAccount,
+  alreadyConnected = null,
   checkingAvailability,
   connected,
   disabled = false,
@@ -505,6 +549,13 @@ export function ConnectorConnectionCardView({
   selectedAccountId?: string;
   onSelectAccount?: (id: string) => void;
   accountRequired?: boolean;
+  /** Connected accounts of a product a person may hold several of; with any, the card lists them. */
+  accounts?: readonly Pick<WorkstreamConnection, 'id' | 'displayName' | 'status'>[];
+  onConnectAccount?: (account: string | null) => void;
+  /** Which row waits on a sign-in: an account id, or `null` for the new one. */
+  pendingAccount?: string | null | undefined;
+  /** An account "Add another" found already connected, to say so. */
+  alreadyConnected?: string | null;
   checkingAvailability?: boolean;
   connected: boolean;
   disabled?: boolean;
@@ -531,6 +582,15 @@ export function ConnectorConnectionCardView({
         ? checkingAvailability ? 'Checking…' : 'Unavailable'
         : actionLabel;
 
+  const adminTitle = adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined;
+  const listed = accounts && accounts.length > 0 ? accounts : null;
+  // Why a listed account's buttons are held, when it is not a sign-in in progress.
+  const heldReason = adminRequired ? adminTitle
+    : unavailable ? (checkingAvailability ? 'Checking whether this connector is available.' : `${provider.name} is not available in this Rally region.`)
+      : undefined;
+  const held = disabled || pending;
+  const adding = pending && pendingAccount === null;
+
   return (
     <article
       aria-label={`${provider.name} ${request.scope} connection`}
@@ -543,7 +603,7 @@ export function ConnectorConnectionCardView({
           <strong>{provider.name}</strong>
           <p>{provider.description}</p>
           <small>{request.scope === 'personal' ? 'Personal connection' : 'Organization connection'}</small>
-          {accountOptions ? (
+          {!listed && accountOptions ? (
             <label className="form-field connector-connection-card-account">
               <span>Account to reconnect</span>
               <select value={selectedAccountId} disabled={pending || adminRequired} onChange={(event) => onSelectAccount?.(event.currentTarget.value)}>
@@ -553,23 +613,71 @@ export function ConnectorConnectionCardView({
             </label>
           ) : null}
         </div>
-        <div className="connector-connection-card-controls">
-          <span aria-live="polite" className="connector-connection-card-status" data-status={displayStatus ?? 'checking'} role="status">
-            {displayStatus ? <StatusGlyph status={displayStatus} /> : checkingAvailability ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Minus aria-hidden="true" size={14} />}
-            {statusLabel}
-          </span>
-          <Button
-            className="connector-connection-card-action button-primary"
-            disabled={disabled || adminRequired || accountRequired || unavailable || pending}
-            onClick={onConnect}
-            aria-label={buttonLabel === 'Connect' ? `Connect ${provider.name}` : undefined}
-            title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
-          >
-            {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
-            {buttonLabel}
-          </Button>
-        </div>
+        {listed ? null : (
+          <div className="connector-connection-card-controls">
+            <span aria-live="polite" className="connector-connection-card-status" data-status={displayStatus ?? 'checking'} role="status">
+              {displayStatus ? <StatusGlyph status={displayStatus} /> : checkingAvailability ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Minus aria-hidden="true" size={14} />}
+              {statusLabel}
+            </span>
+            <Button
+              className="connector-connection-card-action button-primary"
+              disabled={disabled || adminRequired || accountRequired || unavailable || pending}
+              onClick={onConnect}
+              aria-label={buttonLabel === 'Connect' ? `Connect ${provider.name}` : undefined}
+              title={adminTitle}
+            >
+              {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
+              {buttonLabel}
+            </Button>
+          </div>
+        )}
       </div>
+      {listed ? (
+        <>
+          <ul className="connector-connection-card-accounts" aria-label={`${provider.name} accounts`}>
+            {listed.map((account) => {
+              const label = connectorConnectionAccount('account', account.displayName) ?? account.displayName;
+              const waiting = pending && pendingAccount === account.id;
+              return (
+                <li key={account.id} className="connector-connection-card-account-row">
+                  <span className="connector-connection-card-account-name">{label}</span>
+                  <span className="connector-connection-card-account-controls">
+                    <span className="connector-connection-card-status" data-status={account.status} role="status">
+                      <StatusGlyph status={account.status} />
+                      {account.status === 'reconnect_required' ? 'Reconnect required' : connectorStatusLabel(account.status)}
+                    </span>
+                    <Button
+                      className={`connector-connection-card-account-action${account.status === 'healthy' ? '' : ' button-primary'}`}
+                      disabled={held || Boolean(heldReason)}
+                      title={heldReason}
+                      onClick={() => onConnectAccount?.(account.id)}
+                      aria-label={`${waiting ? 'Waiting to reconnect' : 'Reconnect'} ${provider.name} ${label}`}
+                    >
+                      {waiting ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
+                      {waiting ? 'Waiting…' : 'Reconnect'}
+                    </Button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <Button
+            className="connector-connection-card-add"
+            disabled={held || Boolean(heldReason)}
+            title={heldReason}
+            onClick={() => onConnectAccount?.(null)}
+            aria-label={adding ? `Waiting to add another ${provider.name} account` : `Add another ${provider.name} account`}
+          >
+            {adding ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Plus aria-hidden="true" size={14} />}
+            {adding ? 'Waiting…' : 'Add another account'}
+          </Button>
+          {alreadyConnected ? (
+            <p className="connector-connection-card-note" role="status">
+              {alreadyConnected} was already connected, so Rally refreshed it. To add a different account, choose that one when you sign in.
+            </p>
+          ) : null}
+        </>
+      ) : null}
       {error ? <ErrorNotice>{error}</ErrorNotice> : null}
     </article>
   );

@@ -2,7 +2,7 @@ import { runtimeDeferral } from "../lib/defer";
 import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
-import { ConnectorProductCatalog, connectorConnectionName, connectorConnectionProductName, GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { ConnectorProductCatalog, connectorConnectionName, connectorProductsForConnection, connectorConnectionProductName, GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
 import { AshbyEventSelectionSchema, slackInstallationId } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
@@ -993,9 +993,13 @@ export class ConnectionService {
       desktopHandoffVersion: input.desktopHandoffVersion,
     });
     const adapter = this.registry().get("google");
+    const reconnecting = input.connectionId === undefined ? null : await this.env.DB.prepare(
+      `SELECT provider_account_id FROM connector_connections WHERE id = ? AND workspace_id = ? AND connector_type = 'google'`,
+    ).bind(input.connectionId, auth.workspaceId).first<{ provider_account_id: string | null }>();
     const authorization = await adapter.beginAuthorization?.({
       state,
       codeChallenge: challenge,
+      ...(reconnecting?.provider_account_id ? { loginHint: String(reconnecting.provider_account_id) } : {}),
       scopes: [
         ...new Set([
           ...GoogleCapabilityScopes.identity,
@@ -1206,11 +1210,20 @@ export class ConnectionService {
     if (!incomingCredentials) throw new ApiError(502, "google_token_exchange_failed", "Google did not return connector credentials");
     assertGoogleCapabilitiesGranted(stateData.capabilities, incomingCredentials);
     const at = nowIso();
-    const connectionId = stateData.connectionId ?? newId();
+    // A sign-in naming no connection reconnects one this account already holds, rather than duplicate it.
+    const sameAccount = stateData.connectionId ? null : await this.sameGoogleAccountConnection(
+      String(row.workspace_id),
+      stateData.scope,
+      stateData.scope === "personal" ? String(row.user_id) : null,
+      stringField(incomingCredentials, "providerAccountId"),
+      stateData.capabilities,
+    );
+    const reconnectId = stateData.connectionId ?? sameAccount?.id ?? null;
+    const connectionId = reconnectId ?? newId();
     let existing: StoredConnection | null = null;
     let existingCredentials: Record<string, unknown> = {};
-    if (stateData.connectionId) {
-      existing = await this.env.DB.prepare(
+    if (reconnectId) {
+      existing = sameAccount ?? await this.env.DB.prepare(
         `SELECT * FROM connector_connections
          WHERE id = ? AND workspace_id = ? AND connector_type = 'google'`,
       ).bind(connectionId, row.workspace_id).first<StoredConnection>();
@@ -1233,14 +1246,14 @@ export class ConnectionService {
     const modelPluginId = await this.allocateModelPluginId(
       String(row.workspace_id),
       "google",
-      stateData.connectionId ? connectionId : null,
+      reconnectId ? connectionId : null,
     );
     const identityConfig = JSON.stringify(verifiedIdentityConfig(
       "google",
       account.credentials,
       account.providerAccountId,
     ));
-    if (stateData.connectionId) {
+    if (reconnectId) {
       const updated = await this.persistConnectionMutation(this.env.DB.prepare(
         `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
          credential_key_version = ?, granted_scopes_json = ?, provider_account_id = ?, display_name = ?,
@@ -1294,7 +1307,7 @@ export class ConnectionService {
     runtimeDeferral(this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
-      stateData.connectionId ? "connector.reauthorized" : "connector.authorized",
+      reconnectId ? "connector.reauthorized" : "connector.authorized",
       connectionId,
       { provider: "google", scope: stateData.scope, capabilities: stateData.capabilities, providerAccountId: account.providerAccountId },
     ));
@@ -3971,6 +3984,36 @@ export class ConnectionService {
     if (scope === "workspace" && auth.role !== "owner" && auth.role !== "admin") {
       throw new ApiError(403, "workspace_admin_required", "Workspace connections require an administrator");
     }
+  }
+
+  /**
+   * The live Google connection of this owner and scope that already holds the
+   * account a sign-in returned, and serves no product the sign-in did not ask
+   * for. Reconnecting replaces a connection's grants, so one serving a product
+   * outside the request would lose it; such a sign-in inserts a connection.
+   */
+  private async sameGoogleAccountConnection(
+    workspaceId: string,
+    scope: Scope,
+    ownerUserId: string | null,
+    providerAccountId: string | null,
+    capabilities: readonly string[],
+  ): Promise<StoredConnection | null> {
+    if (!providerAccountId) return null;
+    const requested = new Set(connectorProductsForConnection({ connectorType: "google", capabilities }));
+    const candidates = await this.env.DB.prepare(
+      `SELECT * FROM connector_connections
+       WHERE workspace_id = ? AND connector_type = 'google' AND scope = ? AND owner_user_id IS ?
+         AND provider_account_id = ? AND status <> 'disabled'
+       ORDER BY created_at`,
+    ).bind(workspaceId, scope, ownerUserId, providerAccountId).all<StoredConnection>();
+    return (candidates.results ?? []).find((candidate) => {
+      const served = connectorProductsForConnection({
+        connectorType: "google",
+        capabilities: parseJson<string[]>(candidate.granted_scopes_json, []),
+      });
+      return served.length > 0 && served.every((product) => requested.has(product));
+    }) ?? null;
   }
 
   /**

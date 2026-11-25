@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { CONNECTOR_CONNECTION_CARD_WIRE_NAME, ConnectorResourceAuthorizationRequestSchema } from '@rally/contracts';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import type { DesktopUpdateStatus } from '../../common/desktop';
@@ -341,6 +341,7 @@ describe('connector connection resolution', () => {
     expect(mocks.openExternal).toHaveBeenCalledWith('https://slack.com/oauth/test');
     expect(mocks.setPendingConnectorOAuth).toHaveBeenCalledWith({
       attemptId: 'attempt-one',
+      connectionId: null,
       connectorId: 'slack',
       provider: 'slack',
       region: 'global',
@@ -477,6 +478,7 @@ describe('connector connection resolution', () => {
     expect(mocks.openExternal).toHaveBeenCalledWith('https://slack.com/oauth/reconnect');
     expect(mocks.setPendingConnectorOAuth).toHaveBeenCalledWith({
       attemptId: 'attempt-reconnect',
+      connectionId: 'connection-one',
       connectorId: 'slack',
       provider: 'slack',
       region: 'global',
@@ -562,6 +564,92 @@ describe('connector connection resolution', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
     await waitFor(() => expect(mocks.reconnectConnection).toHaveBeenCalledWith('connection-1', 'slack', 'you', 1));
     expect(mocks.openExternal).toHaveBeenCalledWith('https://slack.com/oauth/reconnect');
+  });
+
+  describe('a product a person may hold several accounts of', () => {
+    const inbox = (id: string, address: string, status: 'healthy' | 'reconnect_required' = 'healthy') => ({
+      id, modelPluginId: `plugin_${id}`, connectorType: 'google', displayName: `Google Mail + Calendar · ${address}`,
+      scope: 'you' as const, status, capabilities: ['gmail.read', 'calendar.read'],
+    });
+    const renderInboxes = (connections: ReturnType<typeof inbox>[]) => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      return render(
+        <QueryClientProvider client={queryClient}>
+          <ConnectorConnectionsProvider connections={connections}>
+            <ConnectorConnectionCard request={{ connectorId: 'google-mail-calendar', scope: 'personal' }} />
+          </ConnectorConnectionsProvider>
+        </QueryClientProvider>,
+      );
+    };
+
+    it('lists each connected inbox and signs in another one beside them', async () => {
+      mocks.startProviderConnection.mockResolvedValue({ attemptId: 'attempt-new', url: 'https://accounts.google.com/o/oauth2/v2/auth' });
+      renderInboxes([inbox('inbox-a', 'alex@acme.com'), inbox('inbox-b', 'alex@side.io', 'reconnect_required')]);
+      const list = screen.getByRole('list', { name: 'Google Mail + Calendar accounts' });
+      expect(within(list).getAllByRole('listitem').map((row) => row.textContent)).toEqual([
+        'alex@acme.comConnectedReconnect',
+        'alex@side.ioReconnect requiredReconnect',
+      ]);
+      expect(screen.queryByRole('combobox', { name: 'Account to reconnect' })).not.toBeInTheDocument();
+      const add = await screen.findByRole('button', { name: 'Add another Google Mail + Calendar account' });
+      await waitFor(() => expect(add).toBeEnabled());
+      fireEvent.click(add);
+      await waitFor(() => expect(mocks.startProviderConnection).toHaveBeenCalledWith('google', 'you', expect.arrayContaining(['gmail.read'])));
+      expect(mocks.reconnectConnection).not.toHaveBeenCalled();
+      expect(mocks.setPendingConnectorOAuth).toHaveBeenCalledWith(expect.objectContaining({ attemptId: 'attempt-new', connectionId: null }));
+    });
+
+    it('reconnects the inbox whose row was pressed', async () => {
+      mocks.reconnectConnection.mockResolvedValue({ attemptId: 'attempt-b', url: 'https://accounts.google.com/o/oauth2/v2/auth' });
+      mocks.getConnectorOAuthAttempt.mockResolvedValue({ provider: 'google', status: 'pending' });
+      renderInboxes([inbox('inbox-a', 'alex@acme.com'), inbox('inbox-b', 'alex@side.io', 'reconnect_required')]);
+      const reconnectB = await screen.findByRole('button', { name: 'Reconnect Google Mail + Calendar alex@side.io' });
+      await waitFor(() => expect(reconnectB).toBeEnabled());
+      fireEvent.click(reconnectB);
+      await waitFor(() => expect(mocks.reconnectConnection).toHaveBeenCalledWith('inbox-b', 'google', 'you', 2));
+      expect(mocks.setPendingConnectorOAuth).toHaveBeenCalledWith(expect.objectContaining({ attemptId: 'attempt-b', connectionId: 'inbox-b' }));
+    });
+
+    it('shows which row a pending sign-in is for and holds the others', async () => {
+      mocks.pendingConnectorOAuth = {
+        attemptId: 'attempt-new', connectionId: null, connectorId: 'google-mail-calendar', provider: 'google',
+        region: 'global', scope: 'personal', source: 'conversation', workspaceId: 'workspace-one',
+      };
+      renderInboxes([inbox('inbox-a', 'alex@acme.com')]);
+      expect(await screen.findByRole('button', { name: 'Waiting to add another Google Mail + Calendar account' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Reconnect Google Mail + Calendar alex@acme.com' })).toBeDisabled();
+    });
+
+    it('says so when "Add another account" came back as an inbox already listed', async () => {
+      mocks.startProviderConnection.mockResolvedValue({ attemptId: 'attempt-again', url: 'https://accounts.google.com/o/oauth2/v2/auth' });
+      mocks.getConnectorOAuthAttempt.mockResolvedValue({ provider: 'google', status: 'pending', connectionId: null });
+      const connections = [inbox('inbox-a', 'alex@acme.com')];
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const Harness = () => (
+        <QueryClientProvider client={queryClient}>
+          <ConnectorConnectionsProvider connections={connections}>
+            <ConnectorConnectionCard request={{ connectorId: 'google-mail-calendar', scope: 'personal' }} />
+          </ConnectorConnectionsProvider>
+        </QueryClientProvider>
+      );
+      const view = render(<Harness />);
+      const add = await screen.findByRole('button', { name: 'Add another Google Mail + Calendar account' });
+      await waitFor(() => expect(add).toBeEnabled());
+      fireEvent.click(add);
+      await waitFor(() => expect(mocks.setPendingConnectorOAuth).toHaveBeenCalledWith(expect.objectContaining({ attemptId: 'attempt-again', connectionId: null })));
+      // The shell now holds the pending attempt; the server finished it as a reconnect of inbox A.
+      mocks.pendingConnectorOAuth = mocks.setPendingConnectorOAuth.mock.calls.at(-1)![0];
+      mocks.getConnectorOAuthAttempt.mockResolvedValue({ provider: 'google', status: 'succeeded', connectionId: 'inbox-a' });
+      view.rerender(<Harness />);
+      expect(await screen.findByText(/alex@acme\.com was already connected, so Rally refreshed it/u)).toBeInTheDocument();
+      expect(mocks.setPendingConnectorOAuth).toHaveBeenLastCalledWith(null);
+    });
+
+    it('keeps the single Connect button until the first inbox is connected', async () => {
+      renderInboxes([]);
+      expect(await screen.findByRole('button', { name: 'Connect Google Mail + Calendar' })).toBeEnabled();
+      expect(screen.queryByRole('button', { name: /Add another/u })).not.toBeInTheDocument();
+    });
   });
 
   it('shows unavailable rather than checking indefinitely when connection data is absent', async () => {
