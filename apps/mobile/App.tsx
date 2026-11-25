@@ -785,7 +785,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
       </View>}
       {!showDashboard && !optimistic && (opening !== null || !contentReady || failed) && <Loading failed={failed && opening === null} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
-    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} openSettings={() => rootNavigation.navigate('Settings')} ref={edgePull.ref} pull={edgePull.pull} />}
+    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError, googleConnect: directory.googleConnect }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} openSettings={() => rootNavigation.navigate('Settings')} ref={edgePull.ref} pull={edgePull.pull} />}
   </SafeAreaView>;
 }
 

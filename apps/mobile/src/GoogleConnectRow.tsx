@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Animated, AppState, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, AppState, Easing, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { GOOGLE_MARKS, type GoogleMark } from './google-marks';
 import type { GoogleConnectProduct, MobileSnapshot } from './protocol';
@@ -34,6 +34,8 @@ export function GoogleConnectRow({ offer, onPress, reduceMotion }: {
   reduceMotion: boolean;
 }): React.JSX.Element {
   const { colors } = useTheme();
+  // The name's line grows with Dynamic Type; a fixed wheel would clip it.
+  const label = LABEL * useWindowDimensions().fontScale;
   const { marks, action } = OFFERS[offer.product];
   const [step, setStep] = useState({ index: 0, previous: null as number | null });
   const roll = useRef(new Animated.Value(1)).current;
@@ -50,8 +52,9 @@ export function GoogleConnectRow({ offer, onPress, reduceMotion }: {
     roll.setValue(0);
     Animated.timing(roll, { toValue: 1, duration: ROLL_MS, easing: Easing.out(Easing.ease), useNativeDriver: true }).start();
   }, [step, roll]);
-  const shown = marks[step.index]!;
-  const before = step.previous === null ? null : marks[step.previous]!;
+  // Sidebar keys the row by product; this only guards the render before a reset.
+  const shown = marks[step.index % marks.length]!;
+  const before = step.previous === null ? null : marks[step.previous % marks.length]!;
   const mark = (name: GoogleMark) => <SvgXml xml={GOOGLE_MARKS[name]} width={ICON} height={ICON} color={colors.text} />;
   const name = (text: string) => <Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>{text}</Text>;
   return <Pressable accessibilityRole="button" accessibilityLabel={action} accessibilityState={{ disabled: offer.busy, busy: offer.busy }}
@@ -60,7 +63,7 @@ export function GoogleConnectRow({ offer, onPress, reduceMotion }: {
       <Wheel height={ICON} roll={roll} before={before && mark(before.mark)}>{mark(shown.mark)}</Wheel>
       <View style={[styles.plus, { backgroundColor: colors.text, borderColor: colors.sidebar }]}><Ionicons name="add" size={10} color={colors.sidebar} /></View>
     </View>
-    <View style={{ flex: 1 }}><Wheel height={LABEL} roll={roll} before={before && name(before.name)} align="flex-start">{name(shown.name)}</Wheel></View>
+    <View style={{ flex: 1 }}><Wheel height={label} roll={roll} before={before && name(before.name)} align="flex-start">{name(shown.name)}</Wheel></View>
   </Pressable>;
 }
 

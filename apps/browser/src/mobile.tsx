@@ -284,7 +284,8 @@ function MobileContent(): React.JSX.Element {
     } });
   }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, marketplace, conversation, descriptors, settingsSection, settingsSections, googleConnect]);
   return <main className="mobile-canvas-app">
-    <GoogleConnectOffer>{(offer) => <ReportGoogleConnect offer={offer} report={setGoogleConnect} start={startGoogleConnect} />}</GoogleConnectOffer>
+    {/* Commands reach Home, so only Home makes the offer; a pinned tab shows Home's. */}
+    {!params.has('tab') && <GoogleConnectOffer>{(offer) => <ReportGoogleConnect offer={offer} report={setGoogleConnect} start={startGoogleConnect} />}</GoogleConnectOffer>}
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
     <section hidden={Boolean(canvasId || creating || settingsSection)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={session?.workspace?.accessClass === 'guest' ? undefined : () => create(true)} userId={session?.user.id} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
