@@ -34,7 +34,7 @@ routes the shell serves, who owns the slot, or how a panel takes a side.
 | `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives both lists draw: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
 | `apps/desktop/src/renderer/components/google-connect-rail-item.tsx` | `GoogleConnectRailItem`: the rail's Google quick action above the account tile. |
-| `apps/desktop/src/renderer/components/rolling-cycle.tsx` | `useRollingCycle` and `RollingSlot`: items that take turns on the background-agent count wheel. |
+| `apps/desktop/src/renderer/components/rolling-cycle.tsx` | `RollingSlot`, the one rolling wheel (the composer's running count and the Google tile), and `useRollingCycle`, which steps through items on it. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id` ([`automation-lifecycle.md`](automation-lifecycle.md)). |
 | `apps/desktop/src/renderer/screens/activity-home.tsx` | `/activity`, with an empty state or a prompt to choose a row ([`activity.md`](activity.md)). |
@@ -142,7 +142,7 @@ It holds two columns:
   Canvases (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
-  Above the account tile, the rail offers Google to a member who has not
+  Under the usage warning, the rail offers Google to a member who has not
   connected it: Gmail, then Drive, then nothing once both exist. It starts the
   same sign-in as a connection card; `google-connect-rail-item.tsx` holds when
   it shows and how it animates.
@@ -598,25 +598,30 @@ it. It does not own:
 
 ### 2026-11-25 — The rail offers Gmail, then Drive
 
-**What changed:** A rail tile above the account tile offers Gmail to a member
+**What changed:** A rail tile under the usage warning offers Gmail to a member
 without a Gmail connection, then Drive to one without a Drive connection, and
-disappears once both exist. Its mark and name roll between that product's
-marks on the running-count wheel, through a new `RollingSlot` that reuses the
-count's keyframes without its shimmer.
+is gone once both exist. Its mark and name roll on the composer's count
+wheel. That wheel is now one primitive, `RollingSlot`, which the composer's
+running count uses too.
 
 **Why:** Product asked for a standing way to connect Google from anywhere in
-the app, beyond the onboarding step and the cards a conversation shows.
+the app, beyond onboarding and the cards a conversation shows. The wheel was
+made one primitive because a second copy of the same out/in spans and CSS
+would drift from the first.
 
-**Considered and rejected:** Brand colour for the marks, which the brand-icon
-rule rejects for every mark (`using-company-brand-icons.md`). A tile in the
-phone bar, which has one cell for the account. Moving the composer's count
-onto `RollingSlot`, which would change a tested component for no gain here.
+**Considered and rejected:** A tile in the phone bar, which has one cell for
+the account. Placing it above the usage warning, where a setup nudge would
+outrank "Rally is paused".
 
-**Consequences:** The rail now reads `['connections']` and
-`['connector-catalog']` on every launch for members; both are the keys the
-cards and Settings already use, and the workspace socket keeps them fresh.
+**Consequences:** Any connection of a product counts as having it, a
+disconnected one included: Disconnect is a person's decision
+([`connectors.md`](connectors.md), stored status), and a tile asking them to
+undo it on every screen would argue with it. A change to which statuses count
+has to keep that. The rail now reads `['connections']` and
+`['connector-catalog']` on every member launch; both are the keys the cards
+and Settings already use, and the workspace socket keeps them fresh.
 
-PR: [#1704](https://github.com/juno-ai-labs/avalon/pull/1704).
+Shipped in [#1704](https://github.com/juno-ai-labs/avalon/pull/1704).
 
 ### 2026-11-20 — A panel takes a side, and the stack follows it
 

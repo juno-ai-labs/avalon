@@ -40,7 +40,7 @@ import Fireflies from './brand-marks/fireflies';
 /**
  * One brand's component, and whether it has single-colour art to ask for.
  *
- * Ten of the twelve ship a `mono` variant, which paints in `currentColor`.
+ * Every brand here but two ships a `mono` variant, which paints in `currentColor`.
  * Slack and Granola ship none — their variant unions are `default | wordmark`
  * and `default | light | dark` — so asking for `mono` there is a type error
  * rather than a silent fallback, and `.connector-mark` recolours their palette
@@ -139,10 +139,13 @@ export function connectorBrandMark(
  * API", "Linear (staging)". Whole words, longest first, so "Google Drive" is
  * Drive and "Ex" or "Next" never reads as X. `x`, `apple` and `apollo` are left out:
  * those words alone cannot identify a company (Apollo may mean Apollo GraphQL).
- * The protocol's own mark is the fallback, not a name to match.
+ * The protocol's own mark is the fallback, not a name to match. Google's
+ * product marks are the rail's (`google-connect-rail-item.tsx`) and are left
+ * out too, so a server named "Gmail tools" keeps the mark it had.
  */
+const NEVER_NAMED: ReadonlySet<PluginBrandMark> = new Set(['x', 'apple', 'apollo', 'model-context-protocol', 'gmail', 'google-calendar', 'google-docs', 'google-sheets']);
 const namedMarks = (Object.keys(PLUGIN_BRAND_MARKS) as PluginBrandMark[])
-  .filter((mark) => mark !== 'x' && mark !== 'apple' && mark !== 'apollo' && mark !== 'model-context-protocol')
+  .filter((mark) => !NEVER_NAMED.has(mark))
   .sort((a, b) => b.length - a.length);
 function markNamedIn(displayName: string): PluginBrandMark | null {
   const words = ` ${displayName.toLowerCase().split(/[^a-z0-9]+/u).join(' ')} `;

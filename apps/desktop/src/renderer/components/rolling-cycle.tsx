@@ -1,60 +1,69 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import clsx from 'clsx';
+import { useEffect, useState, type Key, type ReactNode } from 'react';
+
+/** The roll itself: the `background-agent-digit-in/out` keyframes' duration. */
+export const ROLL_MS = 280;
+/** One step of `useRollingCycle`: the item holds, then rolls. */
+export const ROLLING_CYCLE_PERIOD_MS = 2400 + ROLL_MS;
 
 /**
- * How long each item shows before the next rolls in. The roll itself is the
- * background-agent count wheel's 280 ms (`background-agent-digit-in/out`).
+ * One place a value rolls in: when `valueKey` changes, the old content leaves
+ * and the new arrives on the composer's count wheel, upward unless
+ * `direction` says otherwise. It tracks the outgoing item itself, so callers
+ * only say what shows now.
  */
-export const ROLLING_CYCLE_HOLD_MS = 2400;
-const ROLL_MS = 280;
-
-/**
- * Steps through `length` items on a timer, for one or more `RollingSlot`s that
- * roll together. With reduced motion it stays on the first item. `previous`
- * is the item rolling out, until `settle` clears it at the end of the roll.
- */
-export function useRollingCycle(length: number): { index: number; previous: number | null; settle: () => void } {
-  const [state, setState] = useState({ index: 0, previous: null as number | null });
-  const reduced = useReducedMotion();
-  useEffect(() => {
-    if (reduced) setState({ index: 0, previous: null });
-    if (length < 2 || reduced) return;
-    // A hidden window does no work; the cycle resumes where it was.
-    const timer = window.setInterval(() => {
-      if (document.hidden) return;
-      setState((current) => ({ index: (current.index + 1) % length, previous: current.index }));
-    }, ROLLING_CYCLE_HOLD_MS + ROLL_MS);
-    return () => window.clearInterval(timer);
-  }, [length, reduced]);
-  return { ...state, settle: () => setState((current) => ({ ...current, previous: null })) };
-}
-
-/**
- * One place an item rolls in: the outgoing item leaves upward and the incoming
- * one arrives from below, on the same wheel as the composer's running count.
- * Keyed by index so each step starts its animation afresh.
- */
-export function RollingSlot({ className, items, cycle }: {
+export function RollingSlot({ children, className, direction = 'up', itemClassName, valueKey }: {
+  children: ReactNode;
   className?: string;
-  items: readonly ReactNode[];
-  cycle: ReturnType<typeof useRollingCycle>;
+  direction?: 'up' | 'down';
+  itemClassName?: string;
+  valueKey: Key;
 }): React.JSX.Element {
-  return <span className={`rolling-slot${className ? ` ${className}` : ''}`}>
-    {cycle.previous != null && <span className="rolling-slot-item rolling-slot-out" key={`out-${cycle.previous}`} onAnimationEnd={(event) => {
-      if (event.animationName === 'background-agent-digit-out') cycle.settle();
-    }}>{items[cycle.previous]}</span>}
-    <span className={`rolling-slot-item${cycle.previous != null ? ' rolling-slot-in' : ''}`} key={`in-${cycle.index}`}>{items[cycle.index]}</span>
+  const [display, setDisplay] = useState({ key: valueKey, node: children, previous: null as { key: Key; node: ReactNode } | null });
+  if (valueKey !== display.key) setDisplay({ key: valueKey, node: children, previous: { key: display.key, node: display.node } });
+  return <span className={clsx('rolling-slot', className)} data-direction={direction}>
+    {display.previous && <span
+      className={clsx('rolling-slot-item rolling-slot-out', itemClassName)}
+      key={`out-${String(display.previous.key)}`}
+      onAnimationEnd={(event) => {
+        if (event.animationName === 'background-agent-digit-out') setDisplay((current) => ({ ...current, previous: null }));
+      }}
+    >{display.previous.node}</span>}
+    <span className={clsx('rolling-slot-item', display.previous && 'rolling-slot-in', itemClassName)} key={`in-${String(valueKey)}`}>{children}</span>
   </span>;
 }
 
-/** Whether reduced motion is asked for, following the setting while the app is open. */
-function useReducedMotion(): boolean {
-  const query = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-  const [reduced, setReduced] = useState(() => query?.matches ?? false);
+/**
+ * Which of `length` items shows, stepping every `ROLLING_CYCLE_PERIOD_MS`.
+ * Holds the first item under reduced motion, following the setting while the
+ * app is open, and does no work while the window is hidden.
+ */
+export function useRollingCycle(length: number): number {
+  const [index, setIndex] = useState(0);
+  const reduced = useReducedMotion();
   useEffect(() => {
+    if (reduced) setIndex(0);
+    if (length < 2 || reduced) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setIndex((current) => (current + 1) % length);
+    }, ROLLING_CYCLE_PERIOD_MS);
+    return () => window.clearInterval(timer);
+  }, [length, reduced]);
+  return index;
+}
+
+function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() => reducedMotionQuery()?.matches ?? false);
+  useEffect(() => {
+    const query = reducedMotionQuery();
     if (!query) return;
     const update = (): void => setReduced(query.matches);
     query.addEventListener?.('change', update);
     return () => query.removeEventListener?.('change', update);
-  }, [query?.media]);
+  }, []);
   return reduced;
+}
+
+function reducedMotionQuery(): MediaQueryList | null {
+  return typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
 }

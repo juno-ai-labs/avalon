@@ -1,16 +1,12 @@
 import type { CanvasRunningActivity } from '@rally/contracts/canvases';
 import { useState } from 'react';
+import { RollingSlot } from './rolling-cycle';
 
-/** Preserve the previous value for the existing directional count wheel. */
+/** The running count, rolling the way it moved: up for more, down for fewer. */
 function RunningCount({ count }: { count: number }): React.JSX.Element {
-  const [display, setDisplay] = useState({ count, previous: null as number | null });
-  if (count !== display.count) setDisplay({ count, previous: display.count });
-  return <span className="background-agent-wheel" data-direction={display.previous != null && count < display.previous ? 'down' : 'up'} key={count}>
-    {display.previous != null && <span className="background-agent-digit background-agent-digit-out background-agent-shimmer" onAnimationEnd={(event) => {
-      if (event.animationName === 'background-agent-digit-out') setDisplay(current => ({ ...current, previous: null }));
-    }}>{display.previous}</span>}
-    <span className={`background-agent-digit background-agent-shimmer${display.previous != null ? ' background-agent-digit-in' : ''}`}>{count}</span>
-  </span>;
+  const [shown, setShown] = useState({ count, direction: 'up' as 'up' | 'down' });
+  if (count !== shown.count) setShown({ count, direction: count < shown.count ? 'down' : 'up' });
+  return <RollingSlot className="background-agent-count" direction={shown.direction} itemClassName="background-agent-shimmer" valueKey={count}>{count}</RollingSlot>;
 }
 
 /** Live execution only. Unknown, disconnected and zero counts occupy no space. */

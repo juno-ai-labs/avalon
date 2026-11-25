@@ -1,4 +1,3 @@
-import { GoogleConnectRailItem } from './google-connect-rail-item';
 import { ShapeOutline } from '@rally/ui/components/identity-tile';
 import { IconChecks, IconDeviceDesktopDown, IconHome, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -292,7 +291,7 @@ export function NavigationSidebar({
           />)}
         </div>
         <CanvasPinRail />
-        <div className="navigation-rail-account"><GoogleConnectRailItem />{accountMenu}</div>
+        <div className="navigation-rail-account">{accountMenu}</div>
       </nav>
       <div className="navigation-panel">
         <header className="navigation-panel-header window-drag">

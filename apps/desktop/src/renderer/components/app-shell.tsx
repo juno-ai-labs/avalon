@@ -43,6 +43,7 @@ import { IconSearch } from '@tabler/icons-react';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { OrganizationUsageMenuItem, UsageLimitRailWarning } from './organization-usage';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
+import { GoogleConnectRailItem } from './google-connect-rail-item';
 import { KonamiEgg } from './easter-eggs/konami';
 import { useDeviceTimezoneSync } from '../lib/device-timezone';
 
@@ -358,6 +359,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           {guestSession ? null : (
             <UsageLimitRailWarning api={api ?? null} onOpen={() => { void desktopBridge().openSettings('billing'); }} />
           )}
+          {/* Below the usage warning, so a setup nudge never outranks "Rally is paused". */}
+          <GoogleConnectRailItem />
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
             // The meter reads `/workspace/usage`, which refuses a guest.
