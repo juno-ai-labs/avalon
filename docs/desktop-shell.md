@@ -33,6 +33,8 @@ routes the shell serves, who owns the slot, or how a panel takes a side.
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `activity-sidebar-section.tsx` | `CanvasesSection` and `ActivitySection` (with `useActivityList`), the two visible lists; `lib/sidekicks.ts` supplies live Sidekick data through `useSidekickList` to menus and screens. |
 | `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives both lists draw: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
+| `apps/desktop/src/renderer/components/google-connect-rail-item.tsx` | `GoogleConnectRailItem`: the rail's Google quick action above the account tile. |
+| `apps/desktop/src/renderer/components/rolling-cycle.tsx` | `useRollingCycle` and `RollingSlot`: items that take turns on the background-agent count wheel. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id` ([`automation-lifecycle.md`](automation-lifecycle.md)). |
 | `apps/desktop/src/renderer/screens/activity-home.tsx` | `/activity`, with an empty state or a prompt to choose a row ([`activity.md`](activity.md)). |
@@ -140,6 +142,18 @@ It holds two columns:
   Canvases (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
+  Above the account tile, the rail offers Google to a member who has not
+  connected it: **Gmail** until they hold a personal Gmail + Calendar
+  connection, then **Drive** until they hold a Drive one (a connection counts
+  whatever its health; a disconnected one does not), then nothing. Its mark
+  and name take turns, Gmail and Calendar or Drive, Sheets and Docs, rolling
+  on the composer's running-count wheel every 2.4 s; reduced motion keeps the
+  first. A plus sits where the impersonator badge does. Clicking it starts the
+  same Google sign-in as a connection card's Connect. It waits for the
+  connections and the connector catalog, so it never flashes in for someone
+  already connected; it is not drawn for guests, where the host cannot
+  connect accounts, where the region has no Google client, or in the phone
+  bar.
   Sidekicks have no rail tile, list or sidebar creation action. The account
   menu still opens the Sidekicks library, and direct Sidekick routes remain
   available with Canvases beside them (or Activity if it was selected).
@@ -589,6 +603,28 @@ it. It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-25 — The rail offers Gmail, then Drive
+
+**What changed:** A rail tile above the account tile offers Gmail to a member
+without a Gmail connection, then Drive to one without a Drive connection, and
+disappears once both exist. Its mark and name roll between that product's
+marks on the running-count wheel, through a new `RollingSlot` that reuses the
+count's keyframes without its shimmer.
+
+**Why:** Product asked for a standing way to connect Google from anywhere in
+the app, beyond the onboarding step and the cards a conversation shows.
+
+**Considered and rejected:** Brand colour for the marks, which the brand-icon
+rule rejects for every mark (`using-company-brand-icons.md`). A tile in the
+phone bar, which has one cell for the account. Moving the composer's count
+onto `RollingSlot`, which would change a tested component for no gain here.
+
+**Consequences:** The rail now reads `['connections']` and
+`['connector-catalog']` on every launch for members; both are the keys the
+cards and Settings already use, and the workspace socket keeps them fresh.
+
+PR: [#1704](https://github.com/juno-ai-labs/avalon/pull/1704).
 
 ### 2026-11-20 — A panel takes a side, and the stack follows it
 

@@ -1,8 +1,12 @@
 import Apple from '@thesvg/react/apple';
 import Cloudflare from '@thesvg/react/cloudflare';
 import Github from '@thesvg/react/github';
+import Gmail from '@thesvg/react/gmail';
 import Google from '@thesvg/react/google';
+import GoogleCalendar from '@thesvg/react/google-calendar';
+import GoogleDocs from '@thesvg/react/google-docs';
 import GoogleDrive from '@thesvg/react/google-drive';
+import GoogleSheets from '@thesvg/react/google-sheets';
 import Granola from '@thesvg/react/granola';
 import Linear from '@thesvg/react/linear';
 import ModelContextProtocol from '@thesvg/react/model-context-protocol';
@@ -55,7 +59,7 @@ export type PluginBrandMarkComponent =
  * is what a custom MCP server wears when its name spells out no company here.
  */
 export const PLUGIN_BRAND_MARKS: Record<
-  'apollo' | 'apple' | 'ashby' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
+  'apollo' | 'apple' | 'ashby' | 'cloudflare' | 'fireflies' | 'github' | 'gmail' | 'google' | 'google-calendar' | 'google-docs' | 'google-drive' | 'google-sheets' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
   apollo: { Mark: Apollo, mono: true },
@@ -64,8 +68,12 @@ export const PLUGIN_BRAND_MARKS: Record<
   ashby: { Mark: Ashby, mono: true },
   fireflies: { Mark: Fireflies, mono: true },
   github: { Mark: Github, mono: true },
+  gmail: { Mark: Gmail, mono: true },
   google: { Mark: Google, mono: true },
+  'google-calendar': { Mark: GoogleCalendar, mono: true },
+  'google-docs': { Mark: GoogleDocs, mono: true },
   'google-drive': { Mark: GoogleDrive, mono: true },
+  'google-sheets': { Mark: GoogleSheets, mono: true },
   granola: { Mark: Granola, mono: false },
   linear: { Mark: Linear, mono: true },
   'model-context-protocol': { Mark: ModelContextProtocol, mono: true },
