@@ -1,8 +1,12 @@
 import Apple from '@thesvg/react/apple';
 import Cloudflare from '@thesvg/react/cloudflare';
 import Github from '@thesvg/react/github';
+import Gmail from '@thesvg/react/gmail';
 import Google from '@thesvg/react/google';
+import GoogleCalendar from '@thesvg/react/google-calendar';
+import GoogleDocs from '@thesvg/react/google-docs';
 import GoogleDrive from '@thesvg/react/google-drive';
+import GoogleSheets from '@thesvg/react/google-sheets';
 import Granola from '@thesvg/react/granola';
 import Linear from '@thesvg/react/linear';
 import ModelContextProtocol from '@thesvg/react/model-context-protocol';
@@ -36,7 +40,7 @@ import Fireflies from './brand-marks/fireflies';
 /**
  * One brand's component, and whether it has single-colour art to ask for.
  *
- * Ten of the twelve ship a `mono` variant, which paints in `currentColor`.
+ * Every brand here but two ships a `mono` variant, which paints in `currentColor`.
  * Slack and Granola ship none — their variant unions are `default | wordmark`
  * and `default | light | dark` — so asking for `mono` there is a type error
  * rather than a silent fallback, and `.connector-mark` recolours their palette
@@ -55,7 +59,7 @@ export type PluginBrandMarkComponent =
  * is what a custom MCP server wears when its name spells out no company here.
  */
 export const PLUGIN_BRAND_MARKS: Record<
-  'apollo' | 'apple' | 'ashby' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
+  'apollo' | 'apple' | 'ashby' | 'cloudflare' | 'fireflies' | 'github' | 'gmail' | 'google' | 'google-calendar' | 'google-docs' | 'google-drive' | 'google-sheets' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
   apollo: { Mark: Apollo, mono: true },
@@ -64,8 +68,12 @@ export const PLUGIN_BRAND_MARKS: Record<
   ashby: { Mark: Ashby, mono: true },
   fireflies: { Mark: Fireflies, mono: true },
   github: { Mark: Github, mono: true },
+  gmail: { Mark: Gmail, mono: true },
   google: { Mark: Google, mono: true },
+  'google-calendar': { Mark: GoogleCalendar, mono: true },
+  'google-docs': { Mark: GoogleDocs, mono: true },
   'google-drive': { Mark: GoogleDrive, mono: true },
+  'google-sheets': { Mark: GoogleSheets, mono: true },
   granola: { Mark: Granola, mono: false },
   linear: { Mark: Linear, mono: true },
   'model-context-protocol': { Mark: ModelContextProtocol, mono: true },
@@ -131,10 +139,13 @@ export function connectorBrandMark(
  * API", "Linear (staging)". Whole words, longest first, so "Google Drive" is
  * Drive and "Ex" or "Next" never reads as X. `x`, `apple` and `apollo` are left out:
  * those words alone cannot identify a company (Apollo may mean Apollo GraphQL).
- * The protocol's own mark is the fallback, not a name to match.
+ * The protocol's own mark is the fallback, not a name to match. Google's
+ * product marks are the rail's (`google-connect-rail-item.tsx`) and are left
+ * out too, so a server named "Gmail tools" keeps the mark it had.
  */
+const NEVER_NAMED: ReadonlySet<PluginBrandMark> = new Set(['x', 'apple', 'apollo', 'model-context-protocol', 'gmail', 'google-calendar', 'google-docs', 'google-sheets']);
 const namedMarks = (Object.keys(PLUGIN_BRAND_MARKS) as PluginBrandMark[])
-  .filter((mark) => mark !== 'x' && mark !== 'apple' && mark !== 'apollo' && mark !== 'model-context-protocol')
+  .filter((mark) => !NEVER_NAMED.has(mark))
   .sort((a, b) => b.length - a.length);
 function markNamedIn(displayName: string): PluginBrandMark | null {
   const words = ` ${displayName.toLowerCase().split(/[^a-z0-9]+/u).join(' ')} `;

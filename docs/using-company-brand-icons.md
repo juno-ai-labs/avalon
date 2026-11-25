@@ -72,6 +72,10 @@ connector's own type, so a connector looks the same in the transcript and in
 Settings. [`plugin-activity-rows.md`](plugin-activity-rows.md) owns the
 transcript's use of it.
 
+`gmail`, `google-calendar`, `google-sheets` and `google-docs` are in the table
+for the rail's Google quick action. No connector wears them, and a custom
+server's name is not matched against them.
+
 `apple` is in the table without being a connector: the browser client's Mac
 download row wears it. The table holds company marks, whatever links to them.
 
@@ -108,8 +112,8 @@ in the chip's colour too.
 ### Marks are monochrome
 
 `ConnectorMark` asks for `variant="mono"`, the package's own single-colour art,
-which paints in `currentColor`. Ten of the twelve brands ship one. **Slack and
-Granola do not** — their variant unions are `default | wordmark` and
+which paints in `currentColor`. Every brand in the table ships one but two:
+**Slack and Granola do not** — their variant unions are `default | wordmark` and
 `default | light | dark` — so `PLUGIN_BRAND_MARKS` records that per brand and
 asking for `mono` there is a *type error* rather than a silent fallback. Those
 two render their colour art, and `.connector-mark` recolours any painted shape

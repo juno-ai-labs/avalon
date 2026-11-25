@@ -45,6 +45,10 @@ describe('connectorBrandMark', () => {
     expect(connectorBrandMark('custom_mcp', 'Internal search')).toBe('model-context-protocol');
     expect(connectorBrandMark('custom_mcp')).toBe('model-context-protocol');
     expect(connectorBrandMark('custom_mcp', 'Model Context Protocol')).toBe('model-context-protocol');
+    // Google's product marks are the rail's, not a name a server is matched on.
+    expect(connectorBrandMark('custom_mcp', 'Gmail tools')).toBe('model-context-protocol');
+    expect(connectorBrandMark('custom_mcp', 'Google Calendar sync')).toBe('google');
+    expect(connectorBrandMark('custom_mcp', 'Google Docs MCP')).toBe('google');
   });
 
   it('leaves an unknown connector without one', () => {

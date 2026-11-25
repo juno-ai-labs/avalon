@@ -7223,19 +7223,20 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
   background-clip: text;
   color: transparent;
 }
-.background-agent-wheel {
-  --wheel-travel: 100%;
-  display: inline-grid;
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  perspective: 80px;
-  vertical-align: bottom;
-}
-.background-agent-wheel[data-direction="down"] { --wheel-travel: -100%; }
-.background-agent-digit { grid-area: 1 / 1; text-align: center; }
-.background-agent-digit-in { animation: background-agent-digit-in 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
-.background-agent-digit-out { animation: background-agent-digit-out 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
 @keyframes background-agent-shimmer { to { background-position: -100% 0; } }
+/* The one rolling wheel (rolling-cycle.tsx): the composer's running count and the rail's Google tile. */
+.rolling-slot { --wheel-travel: 100%; display: inline-grid; justify-items: center; overflow: hidden; perspective: 80px; }
+.rolling-slot[data-direction="down"] { --wheel-travel: -100%; }
+.rolling-slot-item { grid-area: 1 / 1; display: inline-flex; white-space: nowrap; }
+.rolling-slot-in { animation: background-agent-digit-in 280ms ease-out both; }
+.rolling-slot-out { animation: background-agent-digit-out 280ms ease-out both; }
+.rolling-slot-in.background-agent-shimmer { animation: background-agent-digit-in 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+.rolling-slot-out.background-agent-shimmer { animation: background-agent-digit-out 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+.background-agent-count { font-variant-numeric: tabular-nums; vertical-align: bottom; }
+@media (prefers-reduced-motion: reduce) {
+  .rolling-slot-in, .rolling-slot-out { animation: none; }
+  .rolling-slot-out { display: none; }
+}
 @keyframes background-agent-digit-in {
   from { opacity: 0; transform: translateY(var(--wheel-travel)) rotateX(-55deg); }
   to { opacity: 1; transform: translateY(0) rotateX(0); }
@@ -7245,8 +7246,7 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
   to { opacity: 0; transform: translateY(calc(-1 * var(--wheel-travel))) rotateX(55deg); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .background-agent-shimmer, .background-agent-digit { animation: none; }
-  .background-agent-digit-out { display: none; }
+  .background-agent-shimmer { animation: none; }
 }
 @media (forced-colors: active) {
   .background-agent-shimmer { background: none; color: CanvasText; }
@@ -8379,6 +8379,16 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-rail-icon > .avatar { font-size: 12px; /* type-scale: glyph sized to its tile */ height: 28px; width: 28px; }
 /* A support session: the staff member acting, over the corner of the person acted as. */
 .navigation-rail-impersonator { bottom: -4px; display: flex; position: absolute; right: -4px; }
+/* The Google quick action (google-connect-rail-item.tsx): a rolling mark with a plus where the impersonator sits. */
+.navigation-rail-google .navigation-rail-google-mark .connector-mark { height: 20px; width: 20px; }
+.navigation-rail-google { margin-bottom: 8px; }
+.navigation-rail-google:disabled { cursor: default; opacity: 0.6; }
+.navigation-rail-google:disabled:hover .navigation-rail-icon { background: transparent; }
+.navigation-rail-connect-plus {
+  align-items: center; background: var(--av-sys-color-text-default); border: 2px solid var(--av-cmp-sidebar-background-solid);
+  border-radius: 50%; bottom: -4px; color: var(--av-cmp-sidebar-background-solid); display: flex; height: 16px;
+  justify-content: center; position: absolute; right: -4px; width: 16px;
+}
 .navigation-rail-impersonator .avatar { border: 2px solid var(--av-cmp-sidebar-background-solid); height: 16px; width: 16px; }
 .navigation-rail-impersonator .avatar-fallback { font-size: 6px /* type-scale: glyph */; }
 .navigation-panel { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -8713,6 +8723,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   .app-shell .navigation-sidebar .navigation-rail-account { padding: 0; width: 100%; }
   /* The phone sheet already exposes the full pinned list below the section tabs. */
   .app-shell .navigation-sidebar .navigation-rail-pins { display: none; }
+  /* The phone bar has one cell for the account; connecting lives in Settings and the cards there. */
+  .app-shell .navigation-sidebar .navigation-rail-google { display: none; }
 }
 
 /* What Rally remembers (docs/agent-memory.md): one scope's facts, drawn by

@@ -9,7 +9,7 @@ import type { ComponentProps, ReactNode } from 'react';
  * takes the active tint.
  */
 export function RailItem({ active = false, badge, className, icon, label, ...props }:
-  ComponentProps<'button'> & { active?: boolean; badge?: ReactNode; icon: ReactNode; label: string }): React.JSX.Element {
+  ComponentProps<'button'> & { active?: boolean; badge?: ReactNode; icon: ReactNode; label: ReactNode }): React.JSX.Element {
   return <button className={clsx('navigation-rail-button window-no-drag', active && 'is-active', className)} type="button" {...props}>
     <span className="navigation-rail-icon">
       {icon}
