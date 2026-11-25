@@ -517,7 +517,9 @@ export function ConnectorConnectionCardView({
   request: ConnectorConnectionCardInput;
   unavailable?: boolean;
 }): React.JSX.Element {
-  const actionLabel = reconnect || connected ? 'Reconnect' : `Connect ${provider.name}`;
+  // The card already names the provider, so the button says only what it does;
+  // its accessible name keeps the provider so two cards' buttons stay distinct.
+  const actionLabel = reconnect || connected ? 'Reconnect' : 'Connect';
   const displayStatus = status ?? (connected ? 'healthy' : undefined);
   const statusLabel = displayStatus === 'reconnect_required' ? 'Reconnect required'
     : displayStatus ? connectorStatusLabel(displayStatus) : checkingAvailability ? 'Checking…' : 'Unavailable';
@@ -560,6 +562,7 @@ export function ConnectorConnectionCardView({
             className="connector-connection-card-action button-primary"
             disabled={disabled || adminRequired || accountRequired || unavailable || pending}
             onClick={onConnect}
+            aria-label={buttonLabel === 'Connect' ? `Connect ${provider.name}` : undefined}
             title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
           >
             {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
