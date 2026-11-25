@@ -55,6 +55,15 @@ describe('the rail Google quick action', () => {
     expect(calls.startProviderConnection.mock.calls[0]![2]).not.toContain('drive.read');
   });
 
+  it('says why when the sign-in could not start, instead of only re-enabling', async () => {
+    calls.startProviderConnection.mockRejectedValue(new Error('Rally could not reach Google. Check your connection and try again.'));
+    show([]);
+    const tile = await screen.findByRole('button', { name: 'Connect Gmail' });
+    await waitFor(() => expect(tile).toBeEnabled());
+    fireEvent.click(tile);
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Rally could not reach Google. Check your connection and try again.');
+  });
+
   it('offers Drive once Gmail is connected, counting a connection that needs reconnecting', async () => {
     show([google('mail-a', MAIL, 'reconnect_required')]);
     expect(await screen.findByRole('button', { name: 'Connect Google Drive' })).toHaveTextContent('Drive');

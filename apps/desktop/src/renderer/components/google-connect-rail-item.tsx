@@ -6,7 +6,7 @@ import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/co
 import type { OAuthConnectorProviderCatalogEntry } from '../lib/connector-catalog';
 import type { PluginBrandMark } from '../lib/plugin-marks';
 import { ConnectorConnectionsProvider, connectorConnectionCardProvider, useConnectorConnectionAction } from './connector-mentions';
-import { ConnectorMark } from './primitives';
+import { ConnectorMark, ErrorNotice } from './primitives';
 import { RailItem } from './rail-item';
 import { RollingSlot, useRollingCycle } from './rolling-cycle';
 
@@ -64,7 +64,7 @@ function GoogleConnectTile({ product, provider, request }: {
   const tile = TILES[product];
   const action = useConnectorConnectionAction(request, provider);
   const cycle = useRollingCycle(tile.marks.length);
-  return <RailItem
+  return <>{action.error && <ErrorNotice title="Google could not be connected">{action.error}</ErrorNotice>}<RailItem
     aria-busy={action.pending || undefined}
     aria-label={tile.action}
     badge={<span aria-hidden="true" className="navigation-rail-connect-plus"><IconPlus size={9} stroke={3} /></span>}
@@ -74,5 +74,5 @@ function GoogleConnectTile({ product, provider, request }: {
     label={<RollingSlot cycle={cycle} items={tile.marks.map(({ name }) => name)} />}
     onClick={() => { void action.startAccount(null).catch(() => undefined); }}
     title={tile.tooltip}
-  />;
+  /></>;
 }
