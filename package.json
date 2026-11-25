@@ -1,6 +1,6 @@
 {
   "name": "rally",
-  "version": "1.783.0",
+  "version": "1.784.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.13.1",
