@@ -489,6 +489,12 @@ export function createTerminalWorkspaceBackup(
     generation: number;
     signal: AbortSignal;
     gitHistory?: "all" | "unpublished";
+    /**
+     * The Rally selection the backed-up workspace held, if any. The title
+     * names the repository being checked out, and an unpublished-only bundle
+     * can be restored only on top of this one's history.
+     */
+    sourceRepository?: { fullName: string; repositoryId: number } | null;
   },
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<TerminalWorkspaceBackup | null> {
@@ -640,9 +646,10 @@ export function createTerminalWorkspaceBackup(
           size: bytes.byteLength,
           excluded: [".rally", ".avalon", ".git", "node_modules", ".venv", "vendor/bundle"],
           gitHistory: ".avalon-recovery/repository.bundle",
-          // "unpublished" bundles need the repository's published history to
-          // unbundle; see the function's comment.
+          // An "unpublished" bundle needs `sourceRepository`'s published
+          // history to unbundle; see the function's comment.
           gitHistoryScope: gitHistory,
+          sourceRepository: input.sourceRepository ?? null,
           // Nobody asked for this archive; checkout made it so the workspace it
           // is about to delete stays recoverable. It is still attached, so the
           // checkout receipt's `backup.resourceId` opens and imports it, but the

@@ -269,6 +269,9 @@ export function createTerminalRepositorySelector(
             generation: sandbox.generation,
             signal: context.signal,
             gitHistory: checkedOutHere ? "all" : "unpublished",
+            sourceRepository: replacing
+              ? { fullName: replacing.repositoryFullName, repositoryId: replacing.repositoryId }
+              : null,
           }, inObjectResourceAttacher);
           try {
             await provider.clearGitHubReadAccess(sandbox.providerSandboxId);

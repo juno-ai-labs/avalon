@@ -1535,7 +1535,8 @@ sandbox's current generation, `checkout_repository` asks
 `createTerminalWorkspaceBackup` for `gitHistory: "unpublished"`. The Git bundle
 then holds only commits that no remote-tracking ref reaches
 (`--all --not --remotes`), and is left out when there are none. Working files
-are archived as before. The resource metadata records `gitHistoryScope`.
+are archived as before. The resource metadata records `gitHistoryScope` and
+`sourceRepository`, the selection the backed-up workspace held.
 
 **Why:** Bootstrap clones with `--no-checkout`, fetches, and then requires
 `origin/<base>` to equal the selected base SHA. On a busy repository the default
@@ -1557,7 +1558,8 @@ Thin bundles for every backup, which would make an ordinary backup depend on
 the remote to restore.
 
 **Consequences:** An `"unpublished"` bundle needs the repository's published
-history to unbundle; `gitHistoryScope` says so. The selection is read again
+history to unbundle; `gitHistoryScope` says so, and `sourceRepository` names
+the repository, which after a switch is not the one the backup's title names. The selection is read again
 under the mutation claim, so a bootstrap that finishes between the first read
 and the claim gets the full bundle. The clone race that leaves the stalled
 generation behind is unchanged; checkout now repairs it.
