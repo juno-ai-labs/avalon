@@ -648,6 +648,74 @@ describe("Terminal model repository selection", () => {
     )).toEqual({ count: 0 });
   });
 
+  // A clone that stopped before its checkout (the default branch advanced
+  // while it ran) leaves the repository's published history in `.git` and
+  // nothing else. Every Terminal tool then refuses with
+  // `repository_base_changed` and checkout is the only repair, so its backup
+  // must not bundle that history, or a large repository can never recover.
+  it.each([
+    { bootstrapped: null, scope: "unpublished" },
+    { bootstrapped: 1, scope: "all" },
+  ] as const)(
+    "bundles $scope Git history when the selection's bootstrapped generation is $bootstrapped",
+    async ({ bootstrapped, scope }) => {
+      const nextBase = "b".repeat(40);
+      const { database, objectStore, provider, context, selector } = await fixture({ baseSha: nextBase });
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO terminal_repository
+         (id, connection_id, repository_id, repository_full_name, base_ref, base_sha,
+          head_ref, state, bootstrapped_sandbox_generation, selected_by_user_id,
+          created_at, updated_at)
+         VALUES (1, ?, 41, 'acme/widget', 'main', ?, ?, 'selected', ?, ?, ?, ?)`,
+        PERSONAL,
+        "a".repeat(40),
+        "avalon/sequential-aquatic-polished-gibbon",
+        bootstrapped,
+        U,
+        Date.parse("2026-08-13T00:00:00.000Z"),
+        Date.parse("2026-08-13T00:00:00.000Z"),
+      );
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO terminal_workspace
+         (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+          authority_fingerprint, applied_network_revision, version, last_command_at,
+          created_at, updated_at)
+         VALUES (1, 'daytona', 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+        Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"),
+      );
+
+      await expect(selector.checkout(context, {
+        repositoryFullName: "acme/widget",
+        requiredRemoteAccess: "read_only",
+      })).resolves.toMatchObject({ outcome: "selected", baseSha: nextBase });
+
+      const archiveCommand = vi.mocked(provider.runUtilityCommand).mock.calls.find(([, command]) => (
+        command.operation === "lifecycle.backup"
+      ))?.[1].command ?? "";
+      if (scope === "unpublished") {
+        expect(archiveCommand).toContain("unpublished=$(git rev-list -n 1 --all --not --remotes)");
+        expect(archiveCommand).toContain("repository.bundle\" --all --not --remotes;");
+        expect(archiveCommand).not.toContain("repository.bundle\" --all;");
+      } else {
+        expect(archiveCommand).toContain("repository.bundle\" --all;");
+        expect(archiveCommand).not.toContain("--not --remotes");
+      }
+      // Working files go into the archive either way.
+      expect(archiveCommand).toContain("--exclude='*/.git'");
+      const stored = database.prepare(
+        "SELECT metadata_json FROM resources WHERE provider_resource_id = ?",
+      ).get("terminal-workspace-backup:checkout-call") as { metadata_json: string } | undefined;
+      expect(JSON.parse(stored?.metadata_json ?? "{}")).toMatchObject({ gitHistoryScope: scope });
+      expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+      expect(workstreamObjectGet(
+        objectStore,
+        "SELECT base_sha FROM terminal_repository WHERE id = 1",
+      )).toEqual({ base_sha: nextBase });
+    },
+  );
+
   it("revalidates a personal GitHub user's current repository visibility before App checkout", async () => {
     const { database } = await fixture();
     const credentialKey = "terminal-personal-github-test-key";

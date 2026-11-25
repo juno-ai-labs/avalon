@@ -248,6 +248,18 @@ export function createTerminalRepositorySelector(
               { reason: "Retry after the Terminal workspace is running, stopped, or archived." },
             );
           }
+          // Read under the claim: a bootstrap that finished after `current`
+          // was read has checked the repository out in this generation.
+          // Every Terminal tool bootstraps first, so a selection that never
+          // checked out here has no checkout to protect; its `.git` is a clone
+          // that stopped short, often because the default branch advanced
+          // while it ran. Bundling that whole clone is what pushed a large
+          // repository's backup past its limit and refused this checkout, the
+          // only repair for that stop. Working files and any commit no remote
+          // reaches are still kept.
+          const replacing = await terminal.repository();
+          const checkedOutHere = !replacing
+            || replacing.bootstrappedSandboxGeneration === sandbox.generation;
           backup = await createTerminalWorkspaceBackup(env, provider, {
             workspaceId: context.workspaceId,
             workstreamId: context.workstreamId,
@@ -256,6 +268,7 @@ export function createTerminalRepositorySelector(
             providerSandboxId: sandbox.providerSandboxId,
             generation: sandbox.generation,
             signal: context.signal,
+            gitHistory: checkedOutHere ? "all" : "unpublished",
           }, inObjectResourceAttacher);
           try {
             await provider.clearGitHubReadAccess(sandbox.providerSandboxId);
