@@ -24,6 +24,7 @@ import {
   asWorkspaceId,
   type ConnectorPollWorkflowInput,
 } from "@rally/contracts";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { newId } from "@rally/db";
 import { z } from "zod";
 
@@ -185,6 +186,30 @@ export function calculateNextOccurrence(schedule: ScheduleTiming, now: Date): st
 
 function changes(result: D1Result<unknown>): number {
   return result.meta.changes ?? 0;
+}
+
+/**
+ * Start one connector poll Workflow instance, naming a refusal by its call.
+ *
+ * The instance id is deterministic per due time, so an instance that already
+ * exists is the earlier attempt's and is tolerated. Anything else is rethrown
+ * as `connector_poll_workflow_create_failed:<platform message>`: Workflows
+ * answers a failed create with a bare `internal error`, and that string alone,
+ * logged as the alarm target's code, was read as an RPC to another object in
+ * three successive log reviews before a trace showed which call it was.
+ */
+export async function createConnectorPollWorkflow(
+  workflow: Pick<Workflow, "create">,
+  id: string,
+  params: ConnectorPollWorkflowInput,
+): Promise<void> {
+  try {
+    await workflow.create({ id, params });
+  } catch (error) {
+    if (workflowAlreadyExists(error)) return;
+    const detail = error instanceof Error ? error.message : typeof error;
+    throw new Error(codeShaped(`connector_poll_workflow_create_failed:${detail}`), { cause: error });
+  }
 }
 
 function workflowAlreadyExists(error: unknown): boolean {
@@ -680,11 +705,7 @@ async function startConnectorPoll(
   });
   const workflowId = `poll-${schedule.id}-${Date.parse(schedule.next_run_at)}`;
 
-  try {
-    await ctx.env.CONNECTOR_POLL_WORKFLOW.create({ id: workflowId, params: input });
-  } catch (error) {
-    if (!workflowAlreadyExists(error)) throw error;
-  }
+  await createConnectorPollWorkflow(ctx.env.CONNECTOR_POLL_WORKFLOW, workflowId, input);
 }
 
 async function runResourceWatch(
@@ -710,11 +731,7 @@ async function runResourceWatch(
     pollScheduleId: watch.id
   });
   const workflowId = `watch-${watch.id}-${Date.parse(watch.next_poll_at)}`;
-  try {
-    await ctx.env.CONNECTOR_POLL_WORKFLOW.create({ id: workflowId, params: input });
-  } catch (error) {
-    if (!workflowAlreadyExists(error)) throw error;
-  }
+  await createConnectorPollWorkflow(ctx.env.CONNECTOR_POLL_WORKFLOW, workflowId, input);
 
   let intervalSeconds = 900;
   try {

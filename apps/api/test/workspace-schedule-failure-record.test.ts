@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { recordWorkspaceScheduleFailure } from "../src/services/workspace-schedule-execution";
+import { createConnectorPollWorkflow, recordWorkspaceScheduleFailure } from "../src/services/workspace-schedule-execution";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 /**
@@ -68,5 +68,31 @@ describe("the operator-visible record of a schedule target that failed", () => {
       new Error("connector_poll_timeout"),
     );
     expect(metadataOf(binds)).toEqual({ code: "schedule_execution_failed", message: "connector_poll_timeout" });
+  });
+});
+
+describe("starting a connector poll Workflow instance", () => {
+  const params = {
+    region: "global",
+    workspaceId: "workspace",
+    connectionId: "connection",
+    pollScheduleId: "schedule-1",
+  } as const;
+  // Workflows cannot run in this suite; the double stands in for the binding.
+  const refusing = (message: string) => ({
+    async create(): Promise<never> {
+      throw new Error(message);
+    },
+  });
+
+  it("names the create call when the platform answers with a bare internal error", async () => {
+    await expect(createConnectorPollWorkflow(refusing("internal error"), "poll-schedule-1-0", params))
+      .rejects.toThrow(/^connector_poll_workflow_create_failed:internal_error$/u);
+  });
+
+  it("tolerates the instance an earlier attempt already created", async () => {
+    await expect(
+      createConnectorPollWorkflow(refusing("instance.already_exists: Instance already exists"), "poll-schedule-1-0", params),
+    ).resolves.toBeUndefined();
   });
 });
