@@ -24,6 +24,7 @@ import {
   asWorkspaceId,
   type ConnectorPollWorkflowInput,
 } from "@rally/contracts";
+import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { newId } from "@rally/db";
 import { z } from "zod";
 
@@ -185,6 +186,32 @@ export function calculateNextOccurrence(schedule: ScheduleTiming, now: Date): st
 
 function changes(result: D1Result<unknown>): number {
   return result.meta.changes ?? 0;
+}
+
+/**
+ * Start one connector poll Workflow instance. The id is deterministic per due
+ * time, so an instance that already exists is the earlier attempt's and is
+ * tolerated; any other refusal is thrown as
+ * `connector_poll_workflow_create_failed`, behind which only a word of
+ * `platformErrorCode`'s vocabulary may follow, with the platform error as
+ * `cause`. The platform's own text is never appended: the code reaches the ops
+ * notice, and a provider message may not.
+ */
+export async function createConnectorPollWorkflow(
+  workflow: Pick<Workflow, "create">,
+  id: string,
+  params: ConnectorPollWorkflowInput,
+): Promise<void> {
+  try {
+    await workflow.create({ id, params });
+  } catch (error) {
+    if (workflowAlreadyExists(error)) return;
+    const platform = platformErrorCode(error);
+    throw new Error(
+      platform ? `connector_poll_workflow_create_failed:${platform}` : "connector_poll_workflow_create_failed",
+      { cause: error },
+    );
+  }
 }
 
 function workflowAlreadyExists(error: unknown): boolean {
@@ -680,11 +707,7 @@ async function startConnectorPoll(
   });
   const workflowId = `poll-${schedule.id}-${Date.parse(schedule.next_run_at)}`;
 
-  try {
-    await ctx.env.CONNECTOR_POLL_WORKFLOW.create({ id: workflowId, params: input });
-  } catch (error) {
-    if (!workflowAlreadyExists(error)) throw error;
-  }
+  await createConnectorPollWorkflow(ctx.env.CONNECTOR_POLL_WORKFLOW, workflowId, input);
 }
 
 async function runResourceWatch(
@@ -710,11 +733,7 @@ async function runResourceWatch(
     pollScheduleId: watch.id
   });
   const workflowId = `watch-${watch.id}-${Date.parse(watch.next_poll_at)}`;
-  try {
-    await ctx.env.CONNECTOR_POLL_WORKFLOW.create({ id: workflowId, params: input });
-  } catch (error) {
-    if (!workflowAlreadyExists(error)) throw error;
-  }
+  await createConnectorPollWorkflow(ctx.env.CONNECTOR_POLL_WORKFLOW, workflowId, input);
 
   let intervalSeconds = 900;
   try {
