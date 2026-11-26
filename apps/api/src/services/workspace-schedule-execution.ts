@@ -24,7 +24,6 @@ import {
   asWorkspaceId,
   type ConnectorPollWorkflowInput,
 } from "@rally/contracts";
-import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { newId } from "@rally/db";
 import { z } from "zod";
 
@@ -189,14 +188,12 @@ function changes(result: D1Result<unknown>): number {
 }
 
 /**
- * Start one connector poll Workflow instance, naming a refusal by its call.
- *
- * The instance id is deterministic per due time, so an instance that already
- * exists is the earlier attempt's and is tolerated. Anything else is rethrown
- * as `connector_poll_workflow_create_failed:<platform message>`: Workflows
- * answers a failed create with a bare `internal error`, and that string alone,
- * logged as the alarm target's code, was read as an RPC to another object in
- * three successive log reviews before a trace showed which call it was.
+ * Start one connector poll Workflow instance. The id is deterministic per due
+ * time, so an instance that already exists is the earlier attempt's and is
+ * tolerated; any other refusal is thrown as the constant
+ * `connector_poll_workflow_create_failed` with the platform error as `cause`.
+ * The platform's text is not appended: a code reaches the ops notice, and a
+ * provider message may not.
  */
 export async function createConnectorPollWorkflow(
   workflow: Pick<Workflow, "create">,
@@ -207,8 +204,7 @@ export async function createConnectorPollWorkflow(
     await workflow.create({ id, params });
   } catch (error) {
     if (workflowAlreadyExists(error)) return;
-    const detail = error instanceof Error ? error.message : typeof error;
-    throw new Error(codeShaped(`connector_poll_workflow_create_failed:${detail}`), { cause: error });
+    throw new Error("connector_poll_workflow_create_failed", { cause: error });
   }
 }
 

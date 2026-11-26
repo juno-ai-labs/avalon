@@ -87,7 +87,13 @@ describe("starting a connector poll Workflow instance", () => {
 
   it("names the create call when the platform answers with a bare internal error", async () => {
     await expect(createConnectorPollWorkflow(refusing("internal error"), "poll-schedule-1-0", params))
-      .rejects.toThrow(/^connector_poll_workflow_create_failed:internal_error$/u);
+      .rejects.toThrow(/^connector_poll_workflow_create_failed$/u);
+  });
+
+  it("never carries the platform's own text into the code", async () => {
+    await expect(
+      createConnectorPollWorkflow(refusing('params too large: {"id":"x"}'), "poll-schedule-1-0", params),
+    ).rejects.toThrow(/^connector_poll_workflow_create_failed$/u);
   });
 
   it("tolerates the instance an earlier attempt already created", async () => {
