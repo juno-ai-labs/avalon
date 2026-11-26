@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { scheduledAlarmErrorCode } from "../src/durable-objects/scheduled-alarm-report";
 import { createConnectorPollWorkflow, recordWorkspaceScheduleFailure } from "../src/services/workspace-schedule-execution";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 /**
- * The audit rows a schedule or a watch writes when its target fails. Both
+ * The audit rows a schedule or a watch writes when its target fails, and the
+ * name a target's failed connector poll Workflow create is thrown under. Both
  * targets build their Workflow input from a stored row, so a row that no
  * longer parses is the failure an operator most needs the field for — and
  * both used to write the generic constant with the issue list as JSON in
@@ -85,9 +87,18 @@ describe("starting a connector poll Workflow instance", () => {
     },
   });
 
-  it("names the create call when the platform answers with a bare internal error", async () => {
-    await expect(createConnectorPollWorkflow(refusing("internal error"), "poll-schedule-1-0", params))
-      .rejects.toThrow(/^connector_poll_workflow_create_failed$/u);
+  it("names the create call when the platform answers with a bare internal error, on the ops notice too", async () => {
+    const thrown = await createConnectorPollWorkflow(refusing("internal error"), "poll-schedule-1-0", params)
+      .then(() => null, (error: unknown) => error);
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("connector_poll_workflow_create_failed");
+    expect(scheduledAlarmErrorCode(thrown)).toBe("connector_poll_workflow_create_failed");
+  });
+
+  it("names a runtime failure it recognizes by Rally's word for it", async () => {
+    await expect(
+      createConnectorPollWorkflow(refusing("Network connection lost."), "poll-schedule-1-0", params),
+    ).rejects.toThrow(/^connector_poll_workflow_create_failed:network_connection_lost$/u);
   });
 
   it("never carries the platform's own text into the code", async () => {

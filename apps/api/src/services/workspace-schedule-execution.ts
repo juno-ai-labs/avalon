@@ -24,6 +24,7 @@ import {
   asWorkspaceId,
   type ConnectorPollWorkflowInput,
 } from "@rally/contracts";
+import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { newId } from "@rally/db";
 import { z } from "zod";
 
@@ -190,10 +191,11 @@ function changes(result: D1Result<unknown>): number {
 /**
  * Start one connector poll Workflow instance. The id is deterministic per due
  * time, so an instance that already exists is the earlier attempt's and is
- * tolerated; any other refusal is thrown as the constant
- * `connector_poll_workflow_create_failed` with the platform error as `cause`.
- * The platform's text is not appended: a code reaches the ops notice, and a
- * provider message may not.
+ * tolerated; any other refusal is thrown as
+ * `connector_poll_workflow_create_failed`, behind which only a word of
+ * `platformErrorCode`'s vocabulary may follow, with the platform error as
+ * `cause`. The platform's own text is never appended: the code reaches the ops
+ * notice, and a provider message may not.
  */
 export async function createConnectorPollWorkflow(
   workflow: Pick<Workflow, "create">,
@@ -204,7 +206,11 @@ export async function createConnectorPollWorkflow(
     await workflow.create({ id, params });
   } catch (error) {
     if (workflowAlreadyExists(error)) return;
-    throw new Error("connector_poll_workflow_create_failed", { cause: error });
+    const platform = platformErrorCode(error);
+    throw new Error(
+      platform ? `connector_poll_workflow_create_failed:${platform}` : "connector_poll_workflow_create_failed",
+      { cause: error },
+    );
   }
 }
 
