@@ -406,7 +406,11 @@ stored valid branch remains stable. Before a different selection
 destroys an existing sandbox, the harness creates and verifies a compressed
 recovery resource containing source, untracked files, databases, and artifacts,
 plus a portable Git bundle of local refs. It excludes credentials, the live
-`.git` directory, and regenerable dependency trees.
+`.git` directory, and regenerable dependency trees. When the selected
+repository never checked out in the sandbox's current generation, the bundle
+holds only commits no remote-tracking ref reaches, and is left out when there
+are none: that `.git` is a clone that stopped before its checkout, and its
+history is the repository's own published history.
 If the copy fails, changes during transfer, or exceeds 50 MiB compressed, the
 existing workspace remains untouched. That resource is attached to the work
 stream but **unlisted**: the checkout receipt's `backup.resourceId` still opens
@@ -1523,6 +1527,42 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-25 — Checkout can repair a clone that stopped before its checkout
+
+**What changed:** When the selected repository never checked out in the
+sandbox's current generation, `checkout_repository` asks
+`createTerminalWorkspaceBackup` for `gitHistory: "unpublished"`. The Git bundle
+then holds only commits that no remote-tracking ref reaches
+(`--all --not --remotes`), and is left out when there are none. Working files
+are archived as before. The resource metadata records `gitHistoryScope` and
+`sourceRepository`, the selection the backed-up workspace held.
+
+**Why:** Bootstrap clones with `--no-checkout`, fetches, and then requires
+`origin/<base>` to equal the selected base SHA. On a busy repository the default
+branch can advance while the clone runs, so that test fails and the generation
+is left with a full `.git`, no checkout, and no bootstrap record. From then on
+every Terminal tool fails with `repository_base_changed`, and the error's own
+repair is `checkout_repository`. Checkout backed up the workspace first and
+bundled `--all`, which for a large repository is its whole published history:
+above the 50 MiB limit, so checkout refused with `workspace_backup_too_large`
+and the conversation, or a Sidekick, could not recover through its own tools:
+no command could run to make the workspace smaller.
+
+**Considered and rejected:** Skipping the backup outright for a selection that
+never checked out. Every tool bootstraps first, but `prepareRepository` passes
+over `repository_delegate_unavailable`, so a delegated run can still write
+files there; those files stay in the archive. Raising the size limit, which is
+the team's number and only moves the repository size at which this returns.
+Thin bundles for every backup, which would make an ordinary backup depend on
+the remote to restore.
+
+**Consequences:** An `"unpublished"` bundle needs the repository's published
+history to unbundle; `gitHistoryScope` says so, and `sourceRepository` names
+the repository, which after a switch is not the one the backup's title names. The selection is read again
+under the mutation claim, so a bootstrap that finishes between the first read
+and the claim gets the full bundle. The clone race that leaves the stalled
+generation behind is unchanged; checkout now repairs it.
 
 ### 2026-11-16 — An import row records the run that made it
 

@@ -1,6 +1,11 @@
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString, sha256Hex } from "../src/lib/crypto";
 import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
@@ -648,6 +653,78 @@ describe("Terminal model repository selection", () => {
     )).toEqual({ count: 0 });
   });
 
+  // A clone that stopped before its checkout (the default branch advanced
+  // while it ran) leaves the repository's published history in `.git` and
+  // nothing else. Every Terminal tool then refuses with
+  // `repository_base_changed` and checkout is the only repair, so its backup
+  // must not bundle that history, or a large repository can never recover.
+  it.each([
+    { bootstrapped: null, scope: "unpublished" },
+    { bootstrapped: 1, scope: "all" },
+  ] as const)(
+    "bundles $scope Git history when the selection's bootstrapped generation is $bootstrapped",
+    async ({ bootstrapped, scope }) => {
+      const nextBase = "b".repeat(40);
+      const { database, objectStore, provider, context, selector } = await fixture({ baseSha: nextBase });
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO terminal_repository
+         (id, connection_id, repository_id, repository_full_name, base_ref, base_sha,
+          head_ref, state, bootstrapped_sandbox_generation, selected_by_user_id,
+          created_at, updated_at)
+         VALUES (1, ?, 41, 'acme/widget', 'main', ?, ?, 'selected', ?, ?, ?, ?)`,
+        PERSONAL,
+        "a".repeat(40),
+        "avalon/sequential-aquatic-polished-gibbon",
+        bootstrapped,
+        U,
+        Date.parse("2026-08-13T00:00:00.000Z"),
+        Date.parse("2026-08-13T00:00:00.000Z"),
+      );
+      workstreamObjectRun(
+        objectStore,
+        `INSERT INTO terminal_workspace
+         (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
+          authority_fingerprint, applied_network_revision, version, last_command_at,
+          created_at, updated_at)
+         VALUES (1, 'daytona', 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+        Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"),
+      );
+
+      await expect(selector.checkout(context, {
+        repositoryFullName: "acme/widget",
+        requiredRemoteAccess: "read_only",
+      })).resolves.toMatchObject({ outcome: "selected", baseSha: nextBase });
+
+      const archiveCommand = vi.mocked(provider.runUtilityCommand).mock.calls.find(([, command]) => (
+        command.operation === "lifecycle.backup"
+      ))?.[1].command ?? "";
+      if (scope === "unpublished") {
+        expect(archiveCommand).toContain("unpublished=$(git rev-list -n 1 --all --not --remotes)");
+        expect(archiveCommand).toContain("repository.bundle\" --all --not --remotes;");
+        expect(archiveCommand).not.toContain("repository.bundle\" --all;");
+      } else {
+        expect(archiveCommand).toContain("repository.bundle\" --all;");
+        expect(archiveCommand).not.toContain("--not --remotes");
+      }
+      // Working files go into the archive either way.
+      expect(archiveCommand).toContain("--exclude='*/.git'");
+      const stored = database.prepare(
+        "SELECT metadata_json FROM resources WHERE provider_resource_id = ?",
+      ).get("terminal-workspace-backup:checkout-call") as { metadata_json: string } | undefined;
+      expect(JSON.parse(stored?.metadata_json ?? "{}")).toMatchObject({
+        gitHistoryScope: scope,
+        // The selection being replaced, which an unpublished bundle restores onto.
+        sourceRepository: { fullName: "acme/widget", repositoryId: 41 },
+      });
+      expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+      expect(workstreamObjectGet(
+        objectStore,
+        "SELECT base_sha FROM terminal_repository WHERE id = 1",
+      )).toEqual({ base_sha: nextBase });
+    },
+  );
+
   it("revalidates a personal GitHub user's current repository visibility before App checkout", async () => {
     const { database } = await fixture();
     const credentialKey = "terminal-personal-github-test-key";
@@ -691,4 +768,150 @@ describe("Terminal model repository selection", () => {
     )).rejects.toMatchObject({ status: 422, code: "github_repository_unavailable" });
     expect(fetcher).toHaveBeenCalledOnce();
   });
+});
+
+/**
+ * The unpublished-only backup runs as the sandbox runs it: real bash and Git
+ * over a clone that stopped before its checkout, the way bootstrap leaves one
+ * when the default branch advances during the clone.
+ */
+// The backup script is GNU shell (`stat -c`, `sha256sum`), as the Daytona
+// sandbox is.
+describe.skipIf(process.platform !== "linux")("the unpublished-only Terminal backup over real Git", () => {
+  let root: string;
+  let upstream: string;
+  let workspace: string;
+  const gitEnv = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+  const git = (cwd: string, ...args: string[]): string => {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  const commit = (cwd: string, name: string): void => {
+    writeFileSync(join(cwd, name), `${name}\n`);
+    git(cwd, "add", name);
+    git(cwd, "commit", "-q", "-m", name);
+  };
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "rally-terminal-backup-"));
+    upstream = join(root, "upstream");
+    workspace = join(root, "workspace");
+    mkdirSync(upstream);
+    git(upstream, "init", "-q", "-b", "main");
+    commit(upstream, "one");
+    commit(upstream, "two");
+    git(root, "clone", "-q", "--no-checkout", upstream, workspace);
+    // The default branch advances while the clone runs; bootstrap's fetch
+    // then sees a base it was not planned against and stops short.
+    commit(upstream, "three");
+    git(workspace, "fetch", "-q", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*");
+  });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  // Not async: the caller attaches its expectation to `backup` in the same
+  // tick, so a rejection is never briefly unhandled.
+  function backUp(toolCallId: string, path?: string) {
+    let archive: Uint8Array | null = null;
+    const provider = {
+      readFile: vi.fn(async (_sandboxId: string, filePath: string) => {
+        archive = new Uint8Array(readFileSync(filePath));
+        return archive;
+      }),
+      runUtilityCommand: vi.fn(async (_sandboxId: string, command: { command: string }) => {
+        const result = spawnSync("bash", ["-c", command.command], {
+          cwd: workspace,
+          encoding: "utf8",
+          env: path ? { ...gitEnv, PATH: path } : gitEnv,
+        });
+        return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+      }),
+    } satisfies Pick<TerminalSandboxProvider, "readFile" | "runUtilityCommand">;
+    const regional = preRetirementProductSqliteDatabase();
+    databases.push(regional);
+    const env = withWorkspaceRuntimeDatabase(createTestEnv({
+      DB: sqliteD1(regional),
+      AVALON_REGION: "global",
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn(async () => undefined) }),
+    }), W, async (statements) => statements.map(() => ({ columns: [], rows: [], changes: 1 })));
+    const backup = createTerminalWorkspaceBackup(env, provider, {
+      workspaceId: W,
+      workstreamId: S,
+      toolCallId,
+      repositoryFullName: "acme/widget",
+      providerSandboxId: "provider-1",
+      generation: 1,
+      signal: new AbortController().signal,
+      gitHistory: "unpublished",
+      sourceRepository: { fullName: "acme/widget", repositoryId: 41 },
+    }, vi.fn(async () => undefined));
+    return { backup, archive: () => archive };
+  }
+
+  /** Unpack an archive the backup read, the way a restore would. */
+  function unpack(archive: Uint8Array | null): string {
+    expect(archive).not.toBeNull();
+    const archivePath = join(root, "backup.tar.gz");
+    const restored = join(root, "restored");
+    writeFileSync(archivePath, archive!);
+    mkdirSync(restored);
+    const result = spawnSync("tar", ["-xzf", archivePath, "-C", restored], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    return restored;
+  }
+
+  it("has nothing to back up when the stalled clone is all the workspace holds", async () => {
+    const { backup, archive } = backUp("stalled-clone-only");
+
+    await expect(backup).resolves.toBeNull();
+    expect(archive()).toBeNull();
+  }, 30_000); // Forks real bash and Git on a contended machine.
+
+  it("keeps a file a run wrote and leaves the published history out", async () => {
+    writeFileSync(join(workspace, "notes.txt"), "kept\n");
+    const { backup, archive } = backUp("stalled-clone-with-file");
+
+    await expect(backup).resolves.toMatchObject({ title: "Terminal backup before acme/widget" });
+    const restored = unpack(archive());
+    expect(readFileSync(join(restored, "notes.txt"), "utf8")).toBe("kept\n");
+    expect(existsSync(join(restored, ".avalon-recovery"))).toBe(false);
+    expect(existsSync(join(restored, ".git"))).toBe(false);
+  }, 30_000); // Forks real bash and Git on a contended machine.
+
+  it("keeps a local commit in a bundle that restores onto the published history", async () => {
+    git(workspace, "checkout", "-q", "-b", "avalon/work", "origin/main");
+    commit(workspace, "four");
+    const { backup, archive } = backUp("stalled-clone-with-commit");
+
+    await expect(backup).resolves.not.toBeNull();
+    const bundle = join(unpack(archive()), ".avalon-recovery", "repository.bundle");
+    // Only the local branch; the remote's refs and history stay on the remote.
+    expect(git(root, "bundle", "list-heads", bundle)).not.toContain("refs/remotes/");
+    const restore = join(root, "restore");
+    git(root, "clone", "-q", upstream, restore);
+    git(restore, "fetch", "-q", bundle, "avalon/work:avalon/work");
+    expect(git(restore, "show", "avalon/work:four")).toBe("four");
+  }, 30_000); // Forks real bash and Git on a contended machine.
+
+  it("fails the backup, rather than dropping unpublished commits, when rev-list fails", async () => {
+    git(workspace, "checkout", "-q", "-b", "avalon/work", "origin/main");
+    commit(workspace, "four");
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const realGit = spawnSync("bash", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    writeFileSync(join(bin, "git"), `#!/bin/sh\n[ "$1" = "rev-list" ] && exit 128\nexec '${realGit}' "$@"\n`);
+    chmodSync(join(bin, "git"), 0o755);
+    const { backup, archive } = backUp("stalled-clone-rev-list-fails", `${bin}:${process.env.PATH ?? ""}`);
+
+    await expect(backup).rejects.toMatchObject({ code: "workspace_backup_failed" });
+    expect(archive()).toBeNull();
+  }, 30_000); // Forks real bash and Git on a contended machine.
 });

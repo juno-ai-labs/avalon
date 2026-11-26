@@ -468,6 +468,14 @@ export function createTerminalFinalDiffPreserver(
  * Provider credentials and the live .git directory are excluded; source files,
  * untracked files, databases, generated artifacts, and a portable Git bundle
  * of local refs remain in the archive.
+ *
+ * `gitHistory: "unpublished"` narrows the bundle to commits no remote-tracking
+ * ref reaches, and leaves it out when there are none. Checkout asks for that
+ * only when the selected repository never checked out in this generation: the
+ * `.git` there is a clone that stopped before its checkout, its history is the
+ * repository's own published history, and bundling it whole is what made a
+ * large repository's backup exceed the limit and refuse the only checkout that
+ * could repair it.
  */
 export function createTerminalWorkspaceBackup(
   env: Env,
@@ -480,9 +488,17 @@ export function createTerminalWorkspaceBackup(
     providerSandboxId: string;
     generation: number;
     signal: AbortSignal;
+    gitHistory?: "all" | "unpublished";
+    /**
+     * The Rally selection the backed-up workspace held, if any. The title
+     * names the repository being checked out, and an unpublished-only bundle
+     * can be restored only on top of this one's history.
+     */
+    sourceRepository?: { fullName: string; repositoryId: number } | null;
   },
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
 ): Promise<TerminalWorkspaceBackup | null> {
+  const gitHistory = input.gitHistory ?? "all";
   return createWorkspaceBackup();
 
   async function createWorkspaceBackup(): Promise<TerminalWorkspaceBackup | null> {
@@ -527,7 +543,16 @@ export function createTerminalWorkspaceBackup(
         "rm -rf -- \"$staging\"",
         "mkdir -p -- \"$staging/.avalon-recovery\"",
         "has_bundle=0",
-        "if [ -d .git ] && git show-ref --quiet; then git bundle create \"$staging/.avalon-recovery/repository.bundle\" --all; has_bundle=1; fi",
+        ...(gitHistory === "unpublished" ? [
+          // A standalone assignment, so `set -e` stops on a failed rev-list
+          // instead of reading it as "nothing unpublished".
+          "if [ -d .git ] && git show-ref --quiet; then",
+          "  unpublished=$(git rev-list -n 1 --all --not --remotes)",
+          "  if [ -n \"$unpublished\" ]; then git bundle create \"$staging/.avalon-recovery/repository.bundle\" --all --not --remotes; has_bundle=1; fi",
+          "fi",
+        ] : [
+          "if [ -d .git ] && git show-ref --quiet; then git bundle create \"$staging/.avalon-recovery/repository.bundle\" --all; has_bundle=1; fi",
+        ]),
         "if ! find . -mindepth 1 -maxdepth 1 ! -name .rally ! -name .avalon ! -name .git -print -quit | grep -q . && [ \"$has_bundle\" -eq 0 ]; then rm -rf -- \"$staging\"; printf 'EMPTY\\n'; exit 0; fi",
         "if [ \"$has_bundle\" -eq 1 ]; then",
         "  tar --exclude='./.rally' --exclude='*/.rally' --exclude='./.avalon' --exclude='*/.avalon' --exclude='./.git' --exclude='*/.git' --exclude='./node_modules' --exclude='*/node_modules' --exclude='./.venv' --exclude='*/.venv' --exclude='./vendor/bundle' --exclude='*/vendor/bundle' -czf \"$archive\" . -C \"$staging\" .avalon-recovery",
@@ -621,6 +646,10 @@ export function createTerminalWorkspaceBackup(
           size: bytes.byteLength,
           excluded: [".rally", ".avalon", ".git", "node_modules", ".venv", "vendor/bundle"],
           gitHistory: ".avalon-recovery/repository.bundle",
+          // An "unpublished" bundle needs `sourceRepository`'s published
+          // history to unbundle; see the function's comment.
+          gitHistoryScope: gitHistory,
+          sourceRepository: input.sourceRepository ?? null,
           // Nobody asked for this archive; checkout made it so the workspace it
           // is about to delete stays recoverable. It is still attached, so the
           // checkout receipt's `backup.resourceId` opens and imports it, but the
