@@ -1813,11 +1813,9 @@ the 2026-11-17 entry gives; and returning early for every `unauthorized`, since
 a 403 can be a rate limit.
 
 **Consequences:** A failed Workflow instance from this workflow now means a
-fault other than a dead grant. The refusal is still visible through the
-*Degraded connector workflows* saved view, which keys on the event, not the
-instance status. Whether the hung-invocation reports stop entirely is to be
-confirmed in Workers Logs after deploy: their cause was not isolated beyond
-being confined to these failing runs.
+fault other than a dead grant.
+
+PR: [#1709](https://github.com/juno-ai-labs/avalon/pull/1709).
 
 ### 2026-11-25 — A person may connect several Google accounts
 

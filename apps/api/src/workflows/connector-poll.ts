@@ -33,11 +33,7 @@ interface StoredPollResult {
   streamErrors?: Array<{ streamId: string; code: string; message: string }>;
 }
 
-/**
- * A poll the provider refused on a grant the adapter declared dead. The step
- * returns it rather than throwing, so the run records it and completes: see
- * the 2026-11-27 entry in docs/connectors.md.
- */
+/** A poll the provider refused on a grant the adapter declared dead. */
 interface RefusedPollResult {
   refusedCode: string;
 }

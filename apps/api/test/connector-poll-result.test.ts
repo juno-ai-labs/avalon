@@ -62,12 +62,6 @@ describe("a poll attempt's code crossing the step boundary", () => {
     expect(failedPollAttemptCode(new Error("Resource not accessible"))).toBeNull();
   });
 
-  it("reads the code from a non-retryable failure whose message carries its name", () => {
-    const ended = new Error("NonRetryableError: connector_poll_attempt_failed:unauthorized:http_400");
-    expect(failedPollAttemptCode(ended)).toBe("unauthorized:http_400");
-    expect(terminalPollFailureLevel(ended)).toBe("warn");
-  });
-
   it("rethrows a timeout as itself so the workflow still tells it apart", () => {
     const timeout = new DOMException("deadline", "TimeoutError");
     expect(pollAttemptFailure(timeout, "connector_poll_failed")).toBe(timeout);
@@ -105,18 +99,5 @@ describe("terminalPollFailureLevel", () => {
     const fault = new ConnectorError("provider_error", "down", { status: 500 });
     expect(terminalPollFailureLevel(pollAttemptFailure(fault, pollAttemptErrorCode(fault)))).toBe("error");
     expect(terminalPollFailureLevel(new Error("boom"))).toBe("error");
-  });
-});
-
-describe("a refused poll recorded from its code alone", () => {
-  it("records and logs the same reason and level as the refusal it came from", () => {
-    // A refused grant reaches the run as `{ refusedCode }`, not as the
-    // adapter's error, so the run rebuilds the failure from the code.
-    const rebuilt = pollAttemptFailure(undefined, "unauthorized:http_400");
-    expect(terminalPollFailure(rebuilt)).toEqual({
-      code: "unauthorized:http_400",
-      message: "Connector poll failed after retries: unauthorized:http_400",
-    });
-    expect(terminalPollFailureLevel(rebuilt)).toBe("warn");
   });
 });

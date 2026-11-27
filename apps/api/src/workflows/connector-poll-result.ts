@@ -59,12 +59,8 @@ export function pollAttemptFailure(error: unknown, code: string): unknown {
 
 /** The code `pollAttemptFailure` put on an error, after it crossed the step boundary. */
 export function failedPollAttemptCode(error: unknown): string | null {
-  if (!(error instanceof Error)) return null;
-  // A `NonRetryableError` may cross the step boundary with its name
-  // prefixed to the message; the code is the same either way.
-  const message = error.message.replace(/^NonRetryableError: /, "");
-  if (!message.startsWith(POLL_ATTEMPT_FAILURE)) return null;
-  const code = message.slice(POLL_ATTEMPT_FAILURE.length);
+  if (!(error instanceof Error) || !error.message.startsWith(POLL_ATTEMPT_FAILURE)) return null;
+  const code = error.message.slice(POLL_ATTEMPT_FAILURE.length);
   return isCodeShaped(code) ? code : null;
 }
 
