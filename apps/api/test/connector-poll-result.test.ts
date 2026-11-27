@@ -9,6 +9,8 @@ import {
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
+  refusedPollFailure,
+  refusedPollResult,
   terminalPollFailure,
   terminalPollFailureLevel,
 } from "../src/workflows/connector-poll-result";
@@ -62,12 +64,6 @@ describe("a poll attempt's code crossing the step boundary", () => {
     expect(failedPollAttemptCode(new Error("Resource not accessible"))).toBeNull();
   });
 
-  it("reads the code from a non-retryable failure whose message carries its name", () => {
-    const ended = new Error("NonRetryableError: connector_poll_attempt_failed:unauthorized:http_400");
-    expect(failedPollAttemptCode(ended)).toBe("unauthorized:http_400");
-    expect(terminalPollFailureLevel(ended)).toBe("warn");
-  });
-
   it("rethrows a timeout as itself so the workflow still tells it apart", () => {
     const timeout = new DOMException("deadline", "TimeoutError");
     expect(pollAttemptFailure(timeout, "connector_poll_failed")).toBe(timeout);
@@ -105,5 +101,25 @@ describe("terminalPollFailureLevel", () => {
     const fault = new ConnectorError("provider_error", "down", { status: 500 });
     expect(terminalPollFailureLevel(pollAttemptFailure(fault, pollAttemptErrorCode(fault)))).toBe("error");
     expect(terminalPollFailureLevel(new Error("boom"))).toBe("error");
+  });
+});
+
+describe("a poll attempt refused on its grant", () => {
+  it("completes as a refusal only when the adapter declared the grant dead", () => {
+    const dead = new ConnectorError("unauthorized", "invalid_grant", { status: 400, reconnectRequired: true });
+    expect(refusedPollResult(dead, "unauthorized:http_400")).toEqual({ refusedCode: "unauthorized:http_400" });
+    // A bare 403 can be a rate limit, so it keeps its retries.
+    expect(refusedPollResult(new ConnectorError("unauthorized", "forbidden", { status: 403 }), "unauthorized:http_403"))
+      .toBeNull();
+    expect(refusedPollResult(new ConnectorError("provider_error", "down", { status: 500 }), "provider_error:http_500"))
+      .toBeNull();
+    expect(refusedPollResult(new DOMException("deadline", "TimeoutError"), "connector_poll_timeout")).toBeNull();
+  });
+
+  it("stores the refusal's code without claiming it was retried", () => {
+    expect(refusedPollFailure("unauthorized:http_400")).toEqual({
+      code: "unauthorized:http_400",
+      message: "Connector poll refused: unauthorized:http_400",
+    });
   });
 });

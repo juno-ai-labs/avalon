@@ -3,7 +3,6 @@ import {
   type ConnectorPollWorkflowInput
 } from "@rally/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { NonRetryableError } from "cloudflare:workflows";
 
 import type { Env } from "../env";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
@@ -11,9 +10,9 @@ import {
   advanceOwningPollTarget,
   commitConnectorCursor,
   pollConnectorConnection,
+  recordConnectorPollFailure as recordConnectionPollFailure,
   type ConnectorCursorCommit,
 } from "../services/integrations";
-import { isReconnectRequiredConnectorError } from "../services/connector-connection-access";
 import { recordConnectorPollFailure } from "../services/connector-poll-failure";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service";
@@ -23,7 +22,10 @@ import {
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
+  refusedPollFailure,
+  refusedPollResult,
   terminalPollFailureLevel,
+  type RefusedPollResult,
 } from "./connector-poll-result";
 
 interface StoredPollResult {
@@ -71,15 +73,15 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       return { id: connection.id, provider: connection.connector_type };
     });
 
-    let result: StoredPollResult;
+    let stepResult: StoredPollResult | RefusedPollResult;
     try {
-      result = await step.do(
+      stepResult = await step.do(
         "poll-and-persist-provider-page",
         {
           retries: { limit: 3, delay: "2 seconds", backoff: "exponential" },
           timeout: "25 seconds",
         },
-        async (context): Promise<StoredPollResult> => {
+        async (context): Promise<StoredPollResult | RefusedPollResult> => {
           const startedAt = Date.now();
           logStructuredEvent(this.env, "info", "connector_poll_attempt", {
             workspace_id: input.workspaceId,
@@ -105,12 +107,12 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               error_name: error instanceof Error ? error.name : typeof error,
               error_code: errorCode,
             });
-            const failure = pollAttemptFailure(error, errorCode);
-            // A grant the adapter declared dead is not retried; see docs/connectors.md.
-            if (isReconnectRequiredConnectorError(error) && failure instanceof Error) {
-              throw new NonRetryableError(failure.message);
-            }
-            throw failure;
+            // A grant the adapter declared dead is neither retried nor a
+            // failed run: it is the member's account state, and the next
+            // scheduled poll tries once more. See docs/connectors.md.
+            const refused = refusedPollResult(error, errorCode);
+            if (refused) return refused;
+            throw pollAttemptFailure(error, errorCode);
           }
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,
@@ -147,6 +149,24 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       });
       throw error;
     }
+    if ("refusedCode" in stepResult) {
+      const reason = refusedPollFailure(stepResult.refusedCode);
+      await recordConnectionPollFailure(workspaceEnv.DB, input, { ...reason, source: "connector_poll" }, new Date().toISOString());
+      // `degraded_error` although the run completes: the saved view and
+      // dashboards key on this event, not on the instance status.
+      logStructuredEvent(this.env, "warn", "connector_poll_failed", {
+        workspace_id: input.workspaceId,
+        connection_id: input.connectionId,
+        provider: connection.provider,
+        poll_schedule_id: input.pollScheduleId,
+        workflow_step: "poll-and-persist-provider-page",
+        error_name: "ConnectorError",
+        error_code: reason.code,
+        terminal_outcome: "degraded_error",
+      });
+      return { activityCount: 0 };
+    }
+    const result = stepResult;
 
     // Each normalized event is enqueued by the provider persistence step
     // itself. The ID-only `enqueue-normalized-activities` step served only a

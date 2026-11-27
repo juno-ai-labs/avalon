@@ -1573,12 +1573,16 @@ now guards it.
   raise that for policy and configuration failures that never reached the provider,
   and spending a single-use refresh token on one buys a retry that fails
   identically.
-- **A poll attempt on a grant declared dead is not retried.** `poll-and-persist-provider-page`
-  throws any adapter's failure carrying `reconnectRequired: true`
-  (`isReconnectRequiredConnectorError`) as a `NonRetryableError`: the grant will
-  still be dead seconds later, and the next scheduled poll tries once more. A
-  bare `unauthorized` keeps its retries, because `providerJson` maps every 403
-  to `unauthorized` and a 403 can be a rate limit.
+- **A poll attempt on a grant declared dead is not retried, and does not fail
+  the run.** `poll-and-persist-provider-page` returns any adapter's failure
+  carrying `reconnectRequired: true` (`isReconnectRequiredConnectorError`) as
+  `{ refusedCode }` instead of throwing it: the grant will still be dead
+  seconds later, and the next scheduled poll tries once more. The run records
+  and logs it exactly as a terminal failure (`connector_poll_failed` at `warn`)
+  and then completes, so the Workflow instance and its invocation are not
+  failures. A bare `unauthorized` keeps its retries and still fails the run,
+  because `providerJson` maps every 403 to `unauthorized` and a 403 can be a
+  rate limit.
 - **A token-endpoint failure has three answers, not two.** A code naming a dead
   grant marks; a code naming Rally's own fault does not, whatever the status; an
   unfamiliar code or none at all defers to the status. An unfamiliar word is not
@@ -1788,6 +1792,35 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-27 — A poll refused on its grant completes instead of failing the Workflow
+
+**What changed:** `poll-and-persist-provider-page` returns a
+`reconnectRequired` refusal as a step result rather than throwing it as a
+`NonRetryableError`. The run records it on the connection as
+`Connector poll refused: <code>` and logs `connector_poll_failed` at `warn`,
+then returns `{ activityCount: 0 }`.
+
+**Why:** A log review on 2026-11-27 found five Google connections with revoked
+grants (`invalid_grant`, `unauthorized:http_400`) each leaving an `errored`
+Workflow instance every five minutes, roughly 1,450 a day, and a share of those
+invocations reported by the runtime as uncaught exceptions ("code had hung").
+Those filled the `avalon-api-global` Errors tile with a member's account state
+that the connection already records as `needs_reconnect`; the terminal log was
+already `warn` for that reason. The hung reports were confined to these runs;
+their cause was not isolated.
+
+**Rejected:** skipping polls of `needs_reconnect` connections, for the reason
+"A poll refused on its grant fails once, not four times" gives; and returning early for every `unauthorized`, since
+a 403 can be a rate limit.
+
+**Consequences:** A failed Workflow instance from this workflow now means a
+fault other than a `reconnectRequired` refusal, which also covers Slack's
+missing scopes and some Linear 401s and 403s. The terminal log keeps
+`terminal_outcome: "degraded_error"` though the run completes, because the
+saved view keys on the event.
+
+PR: [#1709](https://github.com/juno-ai-labs/avalon/pull/1709).
 
 ### 2026-11-25 — A person may connect several Google accounts
 
