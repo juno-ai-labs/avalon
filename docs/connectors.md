@@ -1797,23 +1797,28 @@ surface that tells somebody about connector activity reads
 
 **What changed:** `poll-and-persist-provider-page` returns a
 `reconnectRequired` refusal as a step result rather than throwing it as a
-`NonRetryableError`. The run records it on the connection and logs
-`connector_poll_failed` as before, then returns `{ activityCount: 0 }`.
+`NonRetryableError`. The run records it on the connection as
+`Connector poll refused: <code>` and logs `connector_poll_failed` at `warn`,
+then returns `{ activityCount: 0 }`.
 
 **Why:** A log review on 2026-11-27 found five Google connections with revoked
 grants (`invalid_grant`, `unauthorized:http_400`) each leaving an `errored`
 Workflow instance every five minutes, roughly 1,450 a day, and a share of those
 invocations reported by the runtime as uncaught exceptions ("code had hung").
 Those filled the `avalon-api-global` Errors tile with a member's account state
-that the connection already records as `needs_reconnect`, which is what the
-2026-11-17 move of this log to `warn` set out to stop.
+that the connection already records as `needs_reconnect`; the terminal log was
+already `warn` for that reason. The hung reports were confined to these runs;
+their cause was not isolated.
 
 **Rejected:** skipping polls of `needs_reconnect` connections, for the reason
-the 2026-11-17 entry gives; and returning early for every `unauthorized`, since
+"A poll refused on its grant fails once, not four times" gives; and returning early for every `unauthorized`, since
 a 403 can be a rate limit.
 
 **Consequences:** A failed Workflow instance from this workflow now means a
-fault other than a dead grant.
+fault other than a `reconnectRequired` refusal, which also covers Slack's
+missing scopes and some Linear 401s and 403s. The terminal log keeps
+`terminal_outcome: "degraded_error"` though the run completes, because the
+saved view keys on the event.
 
 PR: [#1709](https://github.com/juno-ai-labs/avalon/pull/1709).
 

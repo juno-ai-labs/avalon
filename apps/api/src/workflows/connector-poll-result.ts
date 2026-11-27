@@ -4,6 +4,7 @@ import { DIAGNOSTIC_CODE_MAX_LENGTH, isCodeShaped } from "@rally/contracts/zod-d
 import { z } from "zod";
 
 import { diagnosticErrorCode } from "../observability/logger";
+import { isReconnectRequiredConnectorError } from "../services/connector-connection-access";
 
 /**
  * What a connector poll step hands back to the workflow, as the step result
@@ -62,6 +63,26 @@ export function failedPollAttemptCode(error: unknown): string | null {
   if (!(error instanceof Error) || !error.message.startsWith(POLL_ATTEMPT_FAILURE)) return null;
   const code = error.message.slice(POLL_ATTEMPT_FAILURE.length);
   return isCodeShaped(code) ? code : null;
+}
+
+/** What the poll step returns, instead of throwing, for a poll refused on its grant. */
+export interface RefusedPollResult {
+  refusedCode: string;
+}
+
+/**
+ * The step's answer to a failed attempt: a refusal when the adapter declared
+ * the grant dead (`reconnectRequired`), otherwise `null` for a failure the
+ * step rethrows and retries. A bare `unauthorized` is not a refusal: a 403 can
+ * be a rate limit.
+ */
+export function refusedPollResult(error: unknown, code: string): RefusedPollResult | null {
+  return isReconnectRequiredConnectorError(error) ? { refusedCode: code } : null;
+}
+
+/** The reason a refused poll stores on the connection; it was never retried. */
+export function refusedPollFailure(code: string): { code: string; message: string } {
+  return { code, message: `Connector poll refused: ${code}` };
 }
 
 /** Safe, replay-stable reason stored on the connection as well as logged. */
