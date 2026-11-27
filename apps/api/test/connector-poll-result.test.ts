@@ -107,3 +107,16 @@ describe("terminalPollFailureLevel", () => {
     expect(terminalPollFailureLevel(new Error("boom"))).toBe("error");
   });
 });
+
+describe("a refused poll recorded from its code alone", () => {
+  it("records and logs the same reason and level as the refusal it came from", () => {
+    // A refused grant reaches the run as `{ refusedCode }`, not as the
+    // adapter's error, so the run rebuilds the failure from the code.
+    const rebuilt = pollAttemptFailure(undefined, "unauthorized:http_400");
+    expect(terminalPollFailure(rebuilt)).toEqual({
+      code: "unauthorized:http_400",
+      message: "Connector poll failed after retries: unauthorized:http_400",
+    });
+    expect(terminalPollFailureLevel(rebuilt)).toBe("warn");
+  });
+});

@@ -3,7 +3,6 @@ import {
   type ConnectorPollWorkflowInput
 } from "@rally/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { NonRetryableError } from "cloudflare:workflows";
 
 import type { Env } from "../env";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
@@ -32,6 +31,15 @@ interface StoredPollResult {
   baseCursorJson: string;
   nextPollAt: string | null;
   streamErrors?: Array<{ streamId: string; code: string; message: string }>;
+}
+
+/**
+ * A poll the provider refused on a grant the adapter declared dead. The step
+ * returns it rather than throwing, so the run records it and completes: see
+ * the 2026-11-27 entry in docs/connectors.md.
+ */
+interface RefusedPollResult {
+  refusedCode: string;
 }
 
 /** Static, retryable poll workflow shared by all connector connections. */
@@ -71,15 +79,31 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       return { id: connection.id, provider: connection.connector_type };
     });
 
-    let result: StoredPollResult;
+    const recordTerminalFailure = async (error: unknown): Promise<void> => {
+      const at = new Date().toISOString();
+      const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+      const { code } = await recordConnectorPollFailure(workspaceEnv.DB, input, error, at);
+      logStructuredEvent(this.env, timedOut ? "error" : terminalPollFailureLevel(error), timedOut ? "connector_poll_timeout" : "connector_poll_failed", {
+        workspace_id: input.workspaceId,
+        connection_id: input.connectionId,
+        provider: connection.provider,
+        poll_schedule_id: input.pollScheduleId,
+        workflow_step: "poll-and-persist-provider-page",
+        error_name: error instanceof Error ? error.name : "Error",
+        error_code: timedOut ? code : failedPollAttemptCode(error) ?? diagnosticErrorCode(error, code),
+        terminal_outcome: timedOut ? "degraded_timeout" : "degraded_error",
+      });
+    };
+
+    let stepResult: StoredPollResult | RefusedPollResult;
     try {
-      result = await step.do(
+      stepResult = await step.do(
         "poll-and-persist-provider-page",
         {
           retries: { limit: 3, delay: "2 seconds", backoff: "exponential" },
           timeout: "25 seconds",
         },
-        async (context): Promise<StoredPollResult> => {
+        async (context): Promise<StoredPollResult | RefusedPollResult> => {
           const startedAt = Date.now();
           logStructuredEvent(this.env, "info", "connector_poll_attempt", {
             workspace_id: input.workspaceId,
@@ -105,12 +129,11 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               error_name: error instanceof Error ? error.name : typeof error,
               error_code: errorCode,
             });
-            const failure = pollAttemptFailure(error, errorCode);
-            // A grant the adapter declared dead is not retried; see docs/connectors.md.
-            if (isReconnectRequiredConnectorError(error) && failure instanceof Error) {
-              throw new NonRetryableError(failure.message);
-            }
-            throw failure;
+            // A grant the adapter declared dead is neither retried nor a
+            // failed run: it is the member's account state, and the next
+            // scheduled poll tries once more. See docs/connectors.md.
+            if (isReconnectRequiredConnectorError(error)) return { refusedCode: errorCode };
+            throw pollAttemptFailure(error, errorCode);
           }
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,
@@ -132,21 +155,14 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
         },
       );
     } catch (error) {
-      const at = new Date().toISOString();
-      const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
-      const { code } = await recordConnectorPollFailure(workspaceEnv.DB, input, error, at);
-      logStructuredEvent(this.env, timedOut ? "error" : terminalPollFailureLevel(error), timedOut ? "connector_poll_timeout" : "connector_poll_failed", {
-        workspace_id: input.workspaceId,
-        connection_id: input.connectionId,
-        provider: connection.provider,
-        poll_schedule_id: input.pollScheduleId,
-        workflow_step: "poll-and-persist-provider-page",
-        error_name: error instanceof Error ? error.name : "Error",
-        error_code: timedOut ? code : failedPollAttemptCode(error) ?? diagnosticErrorCode(error, code),
-        terminal_outcome: timedOut ? "degraded_timeout" : "degraded_error",
-      });
+      await recordTerminalFailure(error);
       throw error;
     }
+    if ("refusedCode" in stepResult) {
+      await recordTerminalFailure(pollAttemptFailure(undefined, stepResult.refusedCode));
+      return { activityCount: 0 };
+    }
+    const result = stepResult;
 
     // Each normalized event is enqueued by the provider persistence step
     // itself. The ID-only `enqueue-normalized-activities` step served only a
