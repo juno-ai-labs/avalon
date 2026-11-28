@@ -879,6 +879,10 @@ async function consumeOne(message: Message<unknown>, env: Env,
       logWarn(env, "connector_event_queue_admission_failed", {
         workspace_id: input.request.workspaceId,
         connector_type: input.request.event.connectorType,
+        // A refusal is terminal for an identity reuse, so the event is gone;
+        // the connection and event type are what attribute it to an adapter.
+        connection_id: input.request.event.activity.connectionId,
+        event_type: input.request.event.activity.eventType,
         ingress_event_id: input.request.ingressEventId,
         requested_attempt: input.attempt,
         queue_attempts: message.attempts,

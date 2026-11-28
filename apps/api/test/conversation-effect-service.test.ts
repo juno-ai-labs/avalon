@@ -1038,7 +1038,7 @@ describe("the activity Queue consumer's connector ingress", () => {
       WORKSPACE_DOS: refusingWorkspace(new Error("connector_event_identity_reused_with_different_content")),
     });
     const { batch, ack, retry } = queued(await ingressMessage());
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       // The ledger answers the same way on every delivery: the id belongs to
       // another payload. Retrying only repeats the refusal with backoff until
@@ -1046,6 +1046,14 @@ describe("the activity Queue consumer's connector ingress", () => {
       await consumeActivityQueue(batch, env);
       expect(ack).toHaveBeenCalledOnce();
       expect(retry).not.toHaveBeenCalled();
+      // The event is gone, so the log is the only record of which adapter
+      // re-emitted an identity: it names the connection and the event type.
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+        event: "connector_event_queue_admission_failed",
+        reason: "connector_event_identity_reused_with_different_content",
+        connection_id: "00000000-0000-7000-8000-0000000000e2",
+        event_type: "github.workflow_run.completed",
+      }));
     } finally {
       database.close();
     }
