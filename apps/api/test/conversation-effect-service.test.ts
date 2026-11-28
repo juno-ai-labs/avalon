@@ -1046,8 +1046,6 @@ describe("the activity Queue consumer's connector ingress", () => {
       await consumeActivityQueue(batch, env);
       expect(ack).toHaveBeenCalledOnce();
       expect(retry).not.toHaveBeenCalled();
-      // The event is gone, so the log is the only record of which adapter
-      // re-emitted an identity: it names the connection and the event type.
       expect(warn).toHaveBeenCalledWith(expect.objectContaining({
         event: "connector_event_queue_admission_failed",
         reason: "connector_event_identity_reused_with_different_content",
