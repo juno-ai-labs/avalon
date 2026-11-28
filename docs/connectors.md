@@ -3650,8 +3650,10 @@ came out differently depending on where the page boundary fell.
 The second is that the activity's content must be identical in every chunk. The
 same identity is re-emitted on later polls and WorkspaceDO refuses a repeated
 identity whose payload hash differs
-(`connector_event_identity_reused_with_different_content`), which sends the
-affected chunk to the dead-letter queue after the cursor has already advanced.
+(`connector_event_identity_reused_with_different_content`), which the activity
+consumer treats as terminal: the chunk is acknowledged and dropped, logged once
+as `connector_event_queue_admission_failed` with its connection and event type,
+after the cursor has already advanced.
 So the payload carries only what is the same for every occurrence of one edit,
 and a per-instance or per-batch value must never be added to it — not an
 instance count, not the occurrence's own times or link, and not a guest's
